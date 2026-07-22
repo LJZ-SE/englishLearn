@@ -60,7 +60,8 @@ def test_translation_stage_checkpoints_success_and_flags_number_loss(tmp_path: P
     [
         ("Hello there.", "", "empty_translation"),
         ("Hello there.", "Hello there.", "low_chinese_ratio"),
-        ("Please pay $20.", "请支付20。", "money_mismatch"),
+        ("Please pay $20.", "请支付20元。", "currency_mismatch"),
+        ("It costs 20 dollars.", "价格是20欧元。", "currency_mismatch"),
         ("The discount is 20%.", "折扣是20。", "percent_mismatch"),
         ("This train arrives shortly.", "这是 a train arriving shortly。", "english_residue"),
         (
@@ -74,6 +75,16 @@ def test_validate_translation_covers_required_quality_checks(
     source: str, translation: str, expected_issue: str
 ) -> None:
     assert expected_issue in validate_translation(source, translation)
+
+
+def test_validate_translation_checks_short_sentence_length_and_currency_identity() -> None:
+    assert "abnormal_length" in validate_translation(
+        "Hi.",
+        "这是一段明显过长而且不应被短句长度门禁放行的中文翻译内容。",
+    )
+    assert validate_translation("Hi.", "你好。") == ()
+    assert validate_translation("Please pay $20.", "请支付20美元。") == ()
+    assert validate_translation("The fare is EUR 20.", "票价是20欧元。") == ()
 
 
 def test_failed_draft_is_exported_and_only_valid_repair_completes_stage(tmp_path: Path) -> None:
@@ -110,7 +121,9 @@ def test_failed_draft_is_exported_and_only_valid_repair_completes_stage(tmp_path
         ).fetchone()
     assert json.loads(payload_json) == {
         "issues": [],
+        "repair_processor_version": "llm-repair",
         "review_note": "补回时间",
+        "source_model_version": "fake-1",
         "translation_zh": "火车在9:30到达。",
     }
     assert model_version == "llm-repair"
@@ -179,6 +192,36 @@ def test_import_rejects_unknown_fields_without_exposing_record_contents(tmp_path
     assert "do-not-echo" not in str(captured.value)
 
 
+def test_stale_selection_generation_cannot_checkpoint_translation(tmp_path: Path) -> None:
+    database = _selected_database(tmp_path, ("The train arrives at nine.",))
+    claimed = database.claim_translation_batch(1)
+    assert claimed is not None
+
+    database.replace_stage(
+        "select",
+        [(1, {"top_scene": "travel", "sub_scene": "travel_rail"})],
+        model_version="selector-v2",
+    )
+
+    with pytest.raises(ValueError, match="选择快照已变化"):
+        database.checkpoint_translation_batch(
+            [(1, "火车九点到达。", ())],
+            model_version="fake-1",
+            selection_generation=claimed.selection_generation,
+        )
+
+    assert database.stage_counts().get("translate", 0) == 0
+    assert database.translation_repairs() == []
+
+
+def test_mark_stage_rejects_partial_select_snapshot_write(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+
+    with pytest.raises(ValueError, match="replace_stage"):
+        database.mark_stage(1, "select", payload={})
+
+
 def _selected_database(tmp_path: Path, texts: tuple[str, ...]) -> WorkDatabase:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
@@ -201,10 +244,12 @@ def _selected_database(tmp_path: Path, texts: tuple[str, ...]) -> WorkDatabase:
             payload={"top_scene": "travel", "sub_scene": "travel_transport"},
         )
         item_ids.append(item_id)
-    for item_id in item_ids:
-        database.mark_stage(
-            item_id,
-            "select",
-            payload={"top_scene": "travel", "sub_scene": "travel_transport"},
-        )
+    database.replace_stage(
+        "select",
+        [
+            (item_id, {"top_scene": "travel", "sub_scene": "travel_transport"})
+            for item_id in item_ids
+        ],
+        model_version="selector-v1",
+    )
     return database

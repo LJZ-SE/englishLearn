@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -48,6 +49,13 @@ class TranslationRepair:
     top_scene: str
     sub_scene: str
     review_note: str
+    selection_generation: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationBatch:
+    selection_generation: str
+    items: tuple[WorkItem, ...]
 
 
 class WorkDatabase:
@@ -65,6 +73,7 @@ class WorkDatabase:
             for statement in _schema_statements():
                 connection.execute(statement)
             _migrate_raw_scene_columns(connection)
+            _migrate_translation_generation(connection)
 
     def upsert_raw(
         self,
@@ -275,6 +284,9 @@ class WorkDatabase:
         if len(set(item_ids)) != len(item_ids):
             raise ValueError(f"阶段 {stage} 的批量结果包含重复条目")
         proposed = {item_id: (payload_json, model_version) for item_id, payload_json in serialized}
+        proposed_generation = (
+            _selection_generation(serialized, model_version) if stage == "select" else None
+        )
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = {
@@ -288,7 +300,15 @@ class WorkDatabase:
                     (stage,),
                 )
             }
-            if existing == proposed:
+            existing_generation_row = connection.execute(
+                "SELECT generation_id FROM stage_generations WHERE stage = ?", (stage,)
+            ).fetchone()
+            existing_generation = (
+                str(existing_generation_row[0]) if existing_generation_row is not None else None
+            )
+            if existing == proposed and (
+                stage != "select" or existing_generation == proposed_generation
+            ):
                 return False
             if previous_stage is None:
                 eligible = {int(row[0]) for row in connection.execute("SELECT id FROM raw_items")}
@@ -306,6 +326,7 @@ class WorkDatabase:
 
             for descendant in _stage_descendants(stage):
                 connection.execute("DELETE FROM stage_results WHERE stage = ?", (descendant,))
+                connection.execute("DELETE FROM stage_generations WHERE stage = ?", (descendant,))
             if stage in {"clean", "dedupe", "classify", "select"}:
                 connection.execute("DELETE FROM translation_repairs")
             connection.execute("DELETE FROM stage_results WHERE stage = ?", (stage,))
@@ -321,12 +342,27 @@ class WorkDatabase:
                     for item_id, payload_json in serialized
                 ],
             )
+            if proposed_generation is not None:
+                connection.execute(
+                    """
+                    INSERT INTO stage_generations(stage, generation_id, updated_at)
+                    VALUES ('select', ?, ?)
+                    ON CONFLICT(stage) DO UPDATE SET
+                        generation_id = excluded.generation_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (proposed_generation, updated_at),
+                )
         return True
 
-    def claim_translation_batch(self, limit: int) -> list[WorkItem]:
+    def claim_translation_batch(self, limit: int) -> TranslationBatch | None:
         if limit < 1:
-            return []
+            return None
         with self.connect() as connection:
+            connection.execute("BEGIN")
+            generation_row = connection.execute(
+                "SELECT generation_id FROM stage_generations WHERE stage = 'select'"
+            ).fetchone()
             rows = connection.execute(
                 """
                 SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
@@ -347,19 +383,32 @@ class WorkDatabase:
                 """,
                 (limit,),
             ).fetchall()
-        return [_work_item(row) for row in rows]
+        if not rows:
+            return None
+        if generation_row is None:
+            raise RuntimeError("当前选择快照缺少 generation，无法领取翻译批次")
+        return TranslationBatch(
+            selection_generation=str(generation_row[0]),
+            items=tuple(_work_item(row) for row in rows),
+        )
 
     def checkpoint_translation_batch(
         self,
         results: list[tuple[int, str, tuple[str, ...]]],
         *,
         model_version: str,
+        selection_generation: str,
     ) -> None:
         item_ids = [item_id for item_id, _, _ in results]
         if len(set(item_ids)) != len(item_ids):
             raise ValueError("翻译批次包含重复条目")
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            current_generation = connection.execute(
+                "SELECT generation_id FROM stage_generations WHERE stage = 'select'"
+            ).fetchone()
+            if current_generation != (selection_generation,):
+                raise ValueError("选择快照已变化，拒绝写入旧 generation 的翻译批次")
             eligible = {
                 int(row[0])
                 for row in connection.execute(
@@ -385,16 +434,25 @@ class WorkDatabase:
                     connection.execute(
                         """
                         INSERT INTO translation_repairs(
-                            item_id, draft, issues_json, model_version, review_note, updated_at
-                        ) VALUES (?, ?, ?, ?, '', ?)
+                            item_id, draft, issues_json, model_version, review_note,
+                            selection_generation, updated_at
+                        ) VALUES (?, ?, ?, ?, '', ?, ?)
                         ON CONFLICT(item_id) DO UPDATE SET
                             draft = excluded.draft,
                             issues_json = excluded.issues_json,
                             model_version = excluded.model_version,
                             review_note = '',
+                            selection_generation = excluded.selection_generation,
                             updated_at = excluded.updated_at
                         """,
-                        (item_id, translation, json.dumps(issues), model_version, updated_at),
+                        (
+                            item_id,
+                            translation,
+                            json.dumps(issues),
+                            model_version,
+                            selection_generation,
+                            updated_at,
+                        ),
                     )
                     continue
                 connection.execute("DELETE FROM translation_repairs WHERE item_id = ?", (item_id,))
@@ -423,11 +481,15 @@ class WorkDatabase:
                 SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
                        r.license_name, r.license_url, r.text, r.protected,
                        r.top_scene, r.sub_scene, repair.draft, repair.issues_json,
-                       repair.model_version, selected.payload_json, repair.review_note
+                       repair.model_version, selected.payload_json, repair.review_note,
+                       repair.selection_generation
                 FROM translation_repairs AS repair
                 JOIN raw_items AS r ON r.id = repair.item_id
                 JOIN stage_results AS selected
                   ON selected.item_id = r.id AND selected.stage = 'select'
+                JOIN stage_generations AS generation
+                  ON generation.stage = 'select'
+                 AND generation.generation_id = repair.selection_generation
                 ORDER BY r.id
                 """
             ).fetchall()
@@ -443,6 +505,7 @@ class WorkDatabase:
                     top_scene=str(selected.get("top_scene") or ""),
                     sub_scene=str(selected.get("sub_scene") or ""),
                     review_note=str(row[15]),
+                    selection_generation=str(row[16]),
                 )
             )
         return repairs
@@ -458,10 +521,20 @@ class WorkDatabase:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             repair = connection.execute(
-                "SELECT 1 FROM translation_repairs WHERE item_id = ?", (item_id,)
+                """
+                SELECT model_version, selection_generation
+                FROM translation_repairs
+                WHERE item_id = ?
+                """,
+                (item_id,),
             ).fetchone()
             if repair is None:
                 raise ValueError(f"条目 {item_id} 不在待修正队列中")
+            current_generation = connection.execute(
+                "SELECT generation_id FROM stage_generations WHERE stage = 'select'"
+            ).fetchone()
+            if current_generation != (str(repair[1]),):
+                raise ValueError(f"条目 {item_id} 的选择快照已变化")
             selected = connection.execute(
                 "SELECT 1 FROM stage_results WHERE item_id = ? AND stage = 'select'", (item_id,)
             ).fetchone()
@@ -496,6 +569,8 @@ class WorkDatabase:
                             "translation_zh": translation,
                             "issues": [],
                             "review_note": review_note,
+                            "source_model_version": str(repair[0]),
+                            "repair_processor_version": "llm-repair",
                         }
                     ),
                     updated_at,
@@ -511,6 +586,8 @@ class WorkDatabase:
         payload: dict[str, Any],
         model_version: str = "",
     ) -> None:
+        if stage == "select":
+            raise ValueError("select 阶段必须使用 replace_stage 写入完整原子快照")
         previous_stage = _previous_stage(stage)
         payload_json = _dump_payload(payload)
         with self.connect() as connection:
@@ -640,6 +717,14 @@ def _schema_statements() -> tuple[str, ...]:
             issues_json TEXT NOT NULL,
             model_version TEXT NOT NULL,
             review_note TEXT NOT NULL DEFAULT '',
+            selection_generation TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS stage_generations(
+            stage TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """,
@@ -695,9 +780,65 @@ def _migrate_raw_scene_columns(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE raw_items ADD COLUMN sub_scene TEXT")
 
 
+def _migrate_translation_generation(connection: sqlite3.Connection) -> None:
+    repair_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(translation_repairs)")
+    }
+    if "selection_generation" not in repair_columns:
+        connection.execute(
+            "ALTER TABLE translation_repairs "
+            "ADD COLUMN selection_generation TEXT NOT NULL DEFAULT ''"
+        )
+    selected = [
+        (int(item_id), str(payload_json))
+        for item_id, payload_json in connection.execute(
+            "SELECT item_id, payload_json FROM stage_results WHERE stage = 'select'"
+        )
+    ]
+    if not selected:
+        connection.execute("DELETE FROM translation_repairs")
+        return
+    model_versions = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT DISTINCT model_version FROM stage_results WHERE stage = 'select'"
+        )
+    }
+    if len(model_versions) != 1:
+        raise RuntimeError("历史 select 快照包含不一致的 model_version")
+    model_version = model_versions.pop()
+    generation = _selection_generation(selected, model_version)
+    connection.execute(
+        """
+        INSERT INTO stage_generations(stage, generation_id, updated_at)
+        VALUES ('select', ?, ?)
+        ON CONFLICT(stage) DO UPDATE SET generation_id = excluded.generation_id
+        """,
+        (generation, _now()),
+    )
+    connection.execute(
+        """
+        UPDATE translation_repairs
+        SET selection_generation = ?
+        WHERE selection_generation = ''
+        """,
+        (generation,),
+    )
+
+
+def _selection_generation(serialized: list[tuple[int, str]], model_version: str) -> str:
+    target = [
+        {"item_id": item_id, "payload_json": payload_json, "model_version": model_version}
+        for item_id, payload_json in sorted(serialized)
+    ]
+    canonical = json.dumps(target, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _invalidate_selection_snapshot(connection: sqlite3.Connection) -> None:
     connection.executemany(
         "DELETE FROM stage_results WHERE stage = ?",
         ((stage,) for stage in ("select", "translate", "variants")),
     )
     connection.execute("DELETE FROM translation_repairs")
+    connection.execute("DELETE FROM stage_generations WHERE stage = 'select'")

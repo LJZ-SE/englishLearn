@@ -12,10 +12,15 @@ OPUS_MT_MODEL = "Helsinki-NLP/opus-mt-en-zh"
 _NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]{2,}")
-_CURRENCY_WORDS = re.compile(
-    r"(?:[$€£¥￥]|\b(?:USD|EUR|GBP|CNY|RMB|dollars?|euros?|pounds?|yuan)\b|美元|美金|欧元|英镑|人民币|元)",
-    re.IGNORECASE,
-)
+_CURRENCY_PATTERNS = {
+    "USD": re.compile(r"(?:\$|\b(?:USD|US dollars?|dollars?)\b|美元|美金)", re.IGNORECASE),
+    "EUR": re.compile(r"(?:€|\b(?:EUR|euros?)\b|欧元)", re.IGNORECASE),
+    "GBP": re.compile(r"(?:£|\b(?:GBP|pounds?)\b|英镑)", re.IGNORECASE),
+    "CNY": re.compile(
+        r"(?:[¥￥]|\b(?:CNY|RMB|yuan|renminbi)\b|人民币|(?<![美欧日])元)",
+        re.IGNORECASE,
+    ),
+}
 _PERCENT = re.compile(r"(?:%|％|\bpercent(?:age)?\b|百分之)", re.IGNORECASE)
 _IMPORT_FIELDS = {"item_id", "translation_zh", "review_note"}
 
@@ -101,8 +106,9 @@ def validate_translation(source: str, translation: str) -> tuple[str, ...]:
         issues.append("low_chinese_ratio")
     if _NUMBER.findall(source) != _NUMBER.findall(translation):
         issues.append("number_mismatch")
-    if _CURRENCY_WORDS.search(source) and not _CURRENCY_WORDS.search(translation):
-        issues.append("money_mismatch")
+    source_currencies = _currency_categories(source)
+    if source_currencies and source_currencies != _currency_categories(translation):
+        issues.append("currency_mismatch")
     if _PERCENT.search(source) and not _PERCENT.search(translation):
         issues.append("percent_mismatch")
 
@@ -112,9 +118,10 @@ def validate_translation(source: str, translation: str) -> tuple[str, ...]:
 
     source_length = len(re.sub(r"\s+", "", source))
     translation_length = len(re.sub(r"\s+", "", translation))
-    if source_length >= 20:
+    if source_length:
         length_ratio = translation_length / source_length
-        if length_ratio < 0.12 or length_ratio > 3.0:
+        too_long = length_ratio > 3.0 and (source_length >= 20 or translation_length > 24)
+        if length_ratio < 0.12 or too_long:
             issues.append("abnormal_length")
     return tuple(issues)
 
@@ -128,7 +135,8 @@ def run_translation_stage(
     if batch_size < 1:
         raise ValueError("翻译批次大小必须大于零")
     processed = 0
-    while batch := database.claim_translation_batch(batch_size):
+    while claimed := database.claim_translation_batch(batch_size):
+        batch = claimed.items
         translations = translator.translate_batch([item.text for item in batch])
         if len(translations) != len(batch):
             raise RuntimeError(
@@ -140,6 +148,7 @@ def run_translation_stage(
                 for item, translation in zip(batch, translations, strict=True)
             ],
             model_version=translator.model_version,
+            selection_generation=claimed.selection_generation,
         )
         processed += len(batch)
     return processed
@@ -187,6 +196,12 @@ def import_llm_repairs(database: WorkDatabase, path: str | Path) -> int:
                 raise TranslationImportError(f"第 {line_number} 行引用的条目不可修正") from error
             completed += int(accepted)
     return completed
+
+
+def _currency_categories(text: str) -> frozenset[str]:
+    return frozenset(
+        currency for currency, pattern in _CURRENCY_PATTERNS.items() if pattern.search(text)
+    )
 
 
 def _parse_import_record(line: str, line_number: int) -> dict[str, int | str]:
