@@ -8,6 +8,9 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
+from tools.content_pipeline import production_sources
 from tools.content_pipeline.production_sources import (
     import_all_sources,
     import_legacy_database,
@@ -108,6 +111,27 @@ def test_import_all_downloads_locks_and_resumes_four_source_kinds(tmp_path: Path
         assert entry["downloaded_at"].endswith("+00:00")
         cached = lock.parent / entry["cache_path"]
         assert cached.stat().st_size == entry["size_bytes"]
+
+
+def test_import_all_checkpoints_download_lock_before_source_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    manifest = _write_source_fixtures(tmp_path)
+    lock = tmp_path / "source-lock.json"
+
+    def interrupt_import(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(production_sources, "_iter_source", interrupt_import)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        import_all_sources(database, manifest, lock)
+
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    assert [entry["key"] for entry in payload["sources"]] == ["tatoeba-eng"]
+    cached = lock.parent / payload["sources"][0]["cache_path"]
+    assert cached.is_file()
 
 
 def _write_legacy_database(path: Path) -> None:

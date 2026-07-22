@@ -58,15 +58,11 @@ def import_all_sources(
         cache_path = cache_root / _cache_filename(key, url)
         entry = _download_locked(key, kind, url, cache_path, existing.get(key))
         locked.append(entry)
+        _checkpoint_source_lock(lock_path, manifest_path, locked, existing)
         items = _iter_source(kind, cache_path, source)
         imported[kind] += _import_items(database, items, source.get("max_items"))
 
-    payload = {
-        "version": 1,
-        "manifest": str(manifest_path),
-        "sources": locked,
-    }
-    _atomic_write_json(lock_path, payload)
+    _checkpoint_source_lock(lock_path, manifest_path, locked, {})
     return dict(imported)
 
 
@@ -377,6 +373,27 @@ def _read_lock(path: Path) -> dict[str, dict[str, Any]]:
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
     return {str(entry["key"]): entry for entry in payload.get("sources", [])}
+
+
+def _checkpoint_source_lock(
+    lock_path: Path,
+    manifest_path: Path,
+    locked: list[dict[str, Any]],
+    existing: dict[str, dict[str, Any]],
+) -> None:
+    completed_keys = {str(entry["key"]) for entry in locked}
+    sources = [
+        *locked,
+        *(entry for key, entry in existing.items() if key not in completed_keys),
+    ]
+    _atomic_write_json(
+        lock_path,
+        {
+            "version": 1,
+            "manifest": str(manifest_path),
+            "sources": sources,
+        },
+    )
 
 
 def _required_string(source: dict[str, Any], field: str) -> str:
