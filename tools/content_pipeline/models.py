@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,3 +36,6 @@ class BuildResult:
     sentence_count: int
     variant_count: int
     rejected_count: int
+    database: Path
+    report: Path
+    sources: Path
