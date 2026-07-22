@@ -131,8 +131,14 @@ def test_import_all_checkpoints_download_lock_before_source_import(
 
     payload = json.loads(lock.read_text(encoding="utf-8"))
     assert [entry["key"] for entry in payload["sources"]] == ["tatoeba-eng"]
+    assert payload["complete"] is False
     cached = lock.parent / payload["sources"][0]["cache_path"]
     assert cached.is_file()
+    monkeypatch.undo()
+
+    import_all_sources(database, manifest, lock)
+
+    assert json.loads(lock.read_text(encoding="utf-8"))["complete"] is True
 
 
 def test_import_all_rejects_manifest_drift_without_refresh(tmp_path: Path) -> None:
@@ -147,6 +153,62 @@ def test_import_all_rejects_manifest_drift_without_refresh(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="manifest 已漂移"):
         import_all_sources(database, manifest, lock)
+
+
+def test_refresh_lock_replaces_rows_when_v2_max_items_changes(tmp_path: Path) -> None:
+    manifest = _write_source_fixtures(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    tatoeba_path = Path(urllib.parse.urlparse(payload[0]["url"]).path)
+    with bz2.open(tatoeba_path, "wt", encoding="utf-8") as stream:
+        stream.write("1\teng\tFirst sentence is here.\talice\n")
+        stream.write("2\teng\tSecond sentence is here.\tbob\n")
+    payload[0]["max_items"] = 2
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    payload[0]["max_items"] = 1
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    import_all_sources(database, manifest, lock, refresh_lock=True)
+
+    with database.connect() as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM raw_items WHERE source_name = 'Tatoeba'"
+        ).fetchone()[0]
+    assert count == 1
+    locked = json.loads(lock.read_text(encoding="utf-8"))["sources"][0]
+    assert locked["config"]["max_items"] == 1
+
+
+def test_refresh_convokit_rebuilds_extracted_cache_from_new_archive(tmp_path: Path) -> None:
+    manifest = _write_source_fixtures(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    replacement = tmp_path / "replacement.zip"
+    with zipfile.ZipFile(replacement, "w") as archive:
+        archive.writestr(
+            "utterances.jsonl",
+            json.dumps({"id": "new", "text": "This comes from the new archive.", "speaker": "n"})
+            + "\n",
+        )
+    payload[1]["url"] = replacement.as_uri()
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    import_all_sources(database, manifest, lock, refresh_lock=True)
+
+    with database.connect() as connection:
+        rows = connection.execute(
+            "SELECT source_item_id, text FROM raw_items WHERE source_name='cornell-movie-dialogs'"
+        ).fetchall()
+    assert rows == [("new", "This comes from the new archive.")]
+    entry = json.loads(lock.read_text(encoding="utf-8"))["sources"][1]
+    extracted = lock.parent / "downloads" / "cornell-movie-dialogs-extracted"
+    assert (extracted / "archive-sha256.txt").read_text().strip() == entry["sha256"]
 
 
 @pytest.mark.parametrize("unsafe_key", ["../escape", "Uppercase", "two--dashes"])

@@ -217,24 +217,28 @@ class WorkDatabase:
     def delete_raw_source(self, source_name: str) -> int:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            item_ids = [
-                int(row[0])
-                for row in connection.execute(
-                    "SELECT id FROM raw_items WHERE source_name = ?", (source_name,)
-                )
-            ]
-            if not item_ids:
+            count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM raw_items WHERE source_name = ?", (source_name,)
+                ).fetchone()[0]
+            )
+            if not count:
                 return 0
-            placeholders = ",".join("?" for _ in item_ids)
             for table in ("stage_results", "rejections", "translation_repairs"):
                 connection.execute(
-                    f"DELETE FROM {table} WHERE item_id IN ({placeholders})", item_ids
+                    f"""
+                    DELETE FROM {table}
+                    WHERE item_id IN (
+                        SELECT id FROM raw_items WHERE source_name = ?
+                    )
+                    """,
+                    (source_name,),
                 )
             connection.execute(
-                f"DELETE FROM raw_items WHERE id IN ({placeholders})", item_ids
+                "DELETE FROM raw_items WHERE source_name = ?", (source_name,)
             )
             _invalidate_selection_snapshot(connection)
-        return len(item_ids)
+        return count
 
     def stage_inputs(
         self,

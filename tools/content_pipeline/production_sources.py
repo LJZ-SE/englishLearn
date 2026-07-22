@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -85,6 +88,13 @@ def import_all_sources(
         if changed and not refresh_lock:
             raise ValueError(f"冻结来源配置已漂移: {key}")
         requires_refresh = bool(changed and refresh_lock and not compatible_migration)
+        if requires_refresh and previous:
+            old_identity = _locked_raw_source_name(previous)
+            new_identity = _raw_source_name(source)
+            if old_identity != new_identity:
+                raise ValueError(
+                    f"refresh-lock 禁止改变来源 identity: {old_identity} -> {new_identity}"
+                )
         entry = _download_locked(
             key,
             kind,
@@ -393,9 +403,7 @@ def _iter_source(
         return iter_tatoeba_detailed(cache_path)
     if kind == "convokit":
         extracted = cache_path.parent / f"{cache_path.stem}-extracted"
-        utterances = extracted / "utterances.jsonl"
-        if not utterances.is_file():
-            _extract_convokit(cache_path, extracted)
+        _ensure_convokit_extracted(cache_path, extracted)
         source_name = _required_string(source, "key")
         return iter_convokit_utterances(extracted, source_name)
     if kind == "wikinews":
@@ -415,6 +423,36 @@ def _extract_convokit(archive_path: Path, output: Path) -> None:
             (output / basename).write_bytes(archive.read(name))
     if not (output / "utterances.jsonl").is_file():
         raise ValueError(f"ConvoKit 压缩包缺少 utterances.jsonl: {archive_path}")
+
+
+def _ensure_convokit_extracted(archive_path: Path, output: Path) -> None:
+    _, archive_sha = _file_fingerprint(archive_path)
+    marker = output / "archive-sha256.txt"
+    if (
+        marker.is_file()
+        and marker.read_text(encoding="utf-8").strip() == archive_sha
+        and (output / "utterances.jsonl").is_file()
+    ):
+        return
+    temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}-", dir=output.parent))
+    backup = output.with_name(f".{output.name}-old")
+    try:
+        _extract_convokit(archive_path, temporary)
+        (temporary / "archive-sha256.txt").write_text(archive_sha + "\n", encoding="utf-8")
+        if backup.exists():
+            shutil.rmtree(backup)
+        if output.exists():
+            os.replace(output, backup)
+        os.replace(temporary, output)
+        if backup.exists():
+            shutil.rmtree(backup)
+    except BaseException:
+        if not output.exists() and backup.exists():
+            os.replace(backup, output)
+        raise
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
 
 
 def _import_items(
@@ -583,6 +621,8 @@ def _config_fingerprint(source: dict[str, Any], url: str) -> str:
 def _legacy_lock_compatible(
     entry: dict[str, Any], kind: str, url: str, source: dict[str, Any]
 ) -> bool:
+    if entry.get("config_fingerprint"):
+        return False
     if entry.get("kind") != kind:
         return False
     if kind == "wikinews":
@@ -599,6 +639,13 @@ def _raw_source_name(source: dict[str, Any]) -> str:
     if kind == "gutenberg":
         return "Project Gutenberg"
     return str(source["key"])
+
+
+def _locked_raw_source_name(entry: dict[str, Any]) -> str:
+    config = entry.get("config")
+    if not isinstance(config, dict):
+        return _raw_source_name({"kind": entry["kind"], "key": entry["key"]})
+    return _raw_source_name(config)
 
 
 def _required_string(source: dict[str, Any], field: str) -> str:

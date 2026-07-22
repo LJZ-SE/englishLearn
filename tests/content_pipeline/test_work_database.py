@@ -57,6 +57,52 @@ def test_upsert_raw_does_not_write_when_source_fields_are_unchanged(tmp_path: Pa
     assert add_raw_item(database) == item_id
 
 
+def test_delete_raw_source_handles_more_than_sqlite_variable_limit(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    with database.connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO raw_items(
+                source_name, source_item_id, source_url, source_author, license_name,
+                license_url, text, protected, created_at
+            ) VALUES ('bulk', ?, 'https://example.test', 'a', 'license',
+                      'https://example.test/license', 'text', 0, 'now')
+            """,
+            [(str(index),) for index in range(35000)],
+        )
+        connection.execute(
+            """
+            INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
+            SELECT id, 'clean', '{}', '', 'now' FROM raw_items WHERE source_name='bulk'
+            """
+        )
+
+    assert database.delete_raw_source("bulk") == 35000
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM stage_results").fetchone()[0] == 0
+
+
+def test_delete_raw_source_rolls_back_related_deletes_on_failure(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.mark_stage(item_id, "clean", payload={})
+    with database.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TRIGGER fail_raw_delete BEFORE DELETE ON raw_items
+            BEGIN SELECT RAISE(ABORT, 'simulated delete failure'); END;
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="simulated delete failure"):
+        database.delete_raw_source("Tatoeba")
+
+    assert database.stage_counts() == {"raw": 1, "clean": 1, "rejected": 0}
+
+
 def test_work_database_preserves_provenance_and_excludes_rejected_rows(tmp_path: Path) -> None:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
