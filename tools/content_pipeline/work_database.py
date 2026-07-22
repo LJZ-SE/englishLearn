@@ -11,6 +11,7 @@ from typing import Any
 
 from tools.content_pipeline.clean import normalized_hash
 from tools.content_pipeline.dedupe import jaccard_similarity, simhash64
+from tools.content_pipeline.scenes import SUB_SCENES
 
 STAGE_PREDECESSORS = {
     "clean": None,
@@ -20,6 +21,24 @@ STAGE_PREDECESSORS = {
     "translate": "select",
     "variants": "translate",
 }
+
+_POSITIVE_CLASSIFICATION_METHODS = frozenset(
+    {
+        "source_explicit",
+        "keyword",
+        "context_keywords",
+        "candidate_source",
+        "single_keyword_whitelist",
+        "llm_repair",
+        "historical_review_replay",
+    }
+)
+_NULL_CLASSIFICATION_METHODS = frozenset(
+    {"llm_required", "llm_rejected", "out_of_candidate_pool"}
+)
+_CLASSIFICATION_REASON_METHODS = frozenset(
+    {"llm_repair", "llm_rejected", "historical_review_replay"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -700,6 +719,128 @@ class WorkDatabase:
                 _invalidate_selection_snapshot(connection)
         return len(results)
 
+    def apply_historical_classifications(
+        self,
+        decisions: list[tuple[str, str, str, str, str, str]],
+    ) -> dict[str, int]:
+        """按来源、作者和原文唯一映射，并原子回放历史正向分类。"""
+        identities = [(row[0], row[1], row[2]) for row in decisions]
+        if len(identities) != len(set(identities)):
+            raise ValueError("历史分类决定包含重复内容身份")
+        if not decisions:
+            return {"applied": 0, "skipped_rejected": 0, "noop": 0}
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                CREATE TEMP TABLE historical_replay_decisions(
+                    ordinal INTEGER PRIMARY KEY,
+                    source_name TEXT NOT NULL,
+                    source_author TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    top_scene TEXT NOT NULL,
+                    sub_scene TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    UNIQUE(source_name, source_author, text)
+                )
+                """
+            )
+            connection.executemany(
+                """
+                INSERT INTO historical_replay_decisions(
+                    ordinal, source_name, source_author, text,
+                    top_scene, sub_scene, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (ordinal, *decision)
+                    for ordinal, decision in enumerate(decisions)
+                ],
+            )
+            # 固定从 raw_items 扫描一次，再用临时表的身份索引筛选，避免逐项全库查找。
+            rows = connection.execute(
+                """
+                SELECT requested.ordinal, raw.id, rejected.item_id,
+                       classified.payload_json, classified.model_version
+                FROM raw_items AS raw NOT INDEXED
+                CROSS JOIN historical_replay_decisions AS requested
+                LEFT JOIN rejections AS rejected ON rejected.item_id=raw.id
+                LEFT JOIN stage_results AS classified
+                  ON classified.item_id=raw.id AND classified.stage='classify'
+                WHERE raw.source_name=requested.source_name
+                  AND raw.source_author=requested.source_author
+                  AND raw.text=requested.text
+                ORDER BY requested.ordinal, raw.id
+                """
+            ).fetchall()
+            matches: dict[int, list[tuple[Any, ...]]] = {
+                ordinal: [] for ordinal in range(len(decisions))
+            }
+            for row in rows:
+                matches[int(row[0])].append(tuple(row[1:]))
+
+            updates: list[tuple[str, str, int]] = []
+            skipped_rejected = 0
+            noop = 0
+            updated_at = _now()
+            for ordinal, decision in enumerate(decisions):
+                source_name, source_author, text, top_scene, sub_scene, reason = decision
+                identity_matches = [row for row in matches[ordinal] if row[0] is not None]
+                if len(identity_matches) != 1:
+                    raise ValueError(
+                        "历史内容身份无法在当前 raw_items 唯一映射: "
+                        f"source_name={source_name!r}, source_author={source_author!r}, "
+                        f"text={text!r}, matches={len(identity_matches)}"
+                    )
+                item_id, rejected_item_id, payload_json, _model_version = identity_matches[0]
+                if rejected_item_id is not None:
+                    skipped_rejected += 1
+                    continue
+                if payload_json is None:
+                    raise ValueError(
+                        f"历史内容身份对应条目 {item_id} 未完成 classify，无法唯一映射"
+                    )
+                current = _validate_classification_payload(int(item_id), str(payload_json))
+                current_top = current.get("top_scene")
+                current_sub = current.get("sub_scene")
+                current_method = current.get("method")
+                if current_top == top_scene and current_sub == sub_scene:
+                    noop += 1
+                    continue
+                if current_method != "out_of_candidate_pool":
+                    raise ValueError(
+                        f"条目 {item_id} 已有分类冲突: "
+                        f"current=({current_top!r}, {current_sub!r}, {current_method!r}), "
+                        f"historical=({top_scene!r}, {sub_scene!r})"
+                    )
+                payload = _dump_payload(
+                    {
+                        "top_scene": top_scene,
+                        "sub_scene": sub_scene,
+                        "confidence": 1.0,
+                        "method": "historical_review_replay",
+                        "reason": reason,
+                    }
+                )
+                updates.append((payload, updated_at, int(item_id)))
+
+            if updates:
+                connection.executemany(
+                    """
+                    UPDATE stage_results
+                    SET payload_json=?, model_version='historical-review-replay-v1', updated_at=?
+                    WHERE item_id=? AND stage='classify'
+                    """,
+                    updates,
+                )
+                _invalidate_selection_snapshot(connection)
+        return {
+            "applied": len(updates),
+            "skipped_rejected": skipped_rejected,
+            "noop": noop,
+        }
+
     def bounded_selection_candidates(
         self,
         sub_scene: str,
@@ -1357,6 +1498,50 @@ def _work_item(row: tuple[Any, ...]) -> WorkItem:
 
 def _dump_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _validate_classification_payload(item_id: int, payload_json: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"条目 {item_id} 的 classify 载荷损坏") from error
+    if not isinstance(payload, dict):
+        raise ValueError(f"条目 {item_id} 的 classify 载荷必须是对象")
+    if not {"top_scene", "sub_scene", "method", "confidence"} <= set(payload):
+        raise ValueError(f"条目 {item_id} 的 classify 载荷缺少状态字段")
+    top_scene = payload["top_scene"]
+    sub_scene = payload["sub_scene"]
+    method = payload["method"]
+    if not isinstance(method, str) or not method.strip():
+        raise ValueError(f"条目 {item_id} 的 classify 载荷 method 非法")
+    allowed_methods = _POSITIVE_CLASSIFICATION_METHODS | _NULL_CLASSIFICATION_METHODS
+    if method not in allowed_methods:
+        raise ValueError(f"条目 {item_id} 的 classify 载荷 method 未知")
+    confidence = payload["confidence"]
+    try:
+        confidence_value = float(confidence)
+    except (OverflowError, TypeError, ValueError):
+        confidence_value = math.nan
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not (
+        math.isfinite(confidence_value) and 0.0 <= confidence_value <= 1.0
+    ):
+        raise ValueError(f"条目 {item_id} 的 classify 载荷 confidence 非法")
+    if method in _CLASSIFICATION_REASON_METHODS:
+        reason = payload.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"条目 {item_id} 的 classify 载荷 reason 非法")
+    if (top_scene is None) != (sub_scene is None):
+        raise ValueError(f"条目 {item_id} 的 classify 载荷场景状态不完整")
+    if top_scene is None:
+        if method not in _NULL_CLASSIFICATION_METHODS:
+            raise ValueError(f"条目 {item_id} 的 classify 载荷 method 与空场景不一致")
+        return payload
+    scene = SUB_SCENES.get(sub_scene) if isinstance(sub_scene, str) else None
+    if not isinstance(top_scene, str) or scene is None or scene.top_key != top_scene:
+        raise ValueError(f"条目 {item_id} 的 classify 载荷包含非法场景")
+    if method not in _POSITIVE_CLASSIFICATION_METHODS:
+        raise ValueError(f"条目 {item_id} 的 classify 载荷 method 与正向场景不一致")
+    return payload
 
 
 def _stage_descendants(stage: str) -> tuple[str, ...]:

@@ -15,6 +15,10 @@ from tools.content_pipeline.classification import (
 from tools.content_pipeline.clean import clean_sentence, rejection_reason
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
+from tools.content_pipeline.historical_replay import (
+    HistoricalReplayError,
+    replay_classifications,
+)
 from tools.content_pipeline.lexical_recall import run_lexical_conflict_recall
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.production_sources import (
@@ -95,6 +99,16 @@ def main() -> None:
     classification_import = subparsers.add_parser("import-classifications")
     classification_import.add_argument("work_db", type=Path)
     classification_import.add_argument("paths", nargs="+", type=Path)
+    replay_parser = subparsers.add_parser("replay-classifications")
+    replay_parser.add_argument("work_db", type=Path)
+    replay_parser.add_argument(
+        "--exchange",
+        action="append",
+        nargs=2,
+        metavar=("REQUEST", "RESULT"),
+        type=Path,
+        required=True,
+    )
     select_parser = subparsers.add_parser("select")
     select_parser.add_argument("work_db", type=Path)
     select_parser.add_argument("--exact-quotas", action="store_true")
@@ -224,6 +238,15 @@ def main() -> None:
                 ensure_ascii=False,
             )
         )
+    elif arguments.command == "replay-classifications":
+        try:
+            summary = replay_classifications(
+                database,
+                [(request, result) for request, result in arguments.exchange],
+            )
+        except HistoricalReplayError as error:
+            parser.error(str(error))
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     elif arguments.command == "select":
         summary = _select_items(database, bounded=arguments.exact_quotas)
         if summary is not None:
