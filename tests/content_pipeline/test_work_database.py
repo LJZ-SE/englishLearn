@@ -51,6 +51,8 @@ def test_work_database_preserves_provenance_and_excludes_rejected_rows(tmp_path:
         license_url="https://creativecommons.org/licenses/by/2.5/",
         text="The library opened its doors today.",
         protected=True,
+        top_scene="travel",
+        sub_scene="travel_hotel",
     )
 
     [item] = database.claim_batch("clean", limit=1)
@@ -58,6 +60,8 @@ def test_work_database_preserves_provenance_and_excludes_rejected_rows(tmp_path:
     assert item.source_author == "reporter"
     assert item.license_name == "CC BY 2.5"
     assert item.protected is True
+    assert item.top_scene == "travel"
+    assert item.sub_scene == "travel_hotel"
 
     database.record_rejection(item_id, "clean", "sensitive")
 
@@ -135,6 +139,7 @@ def test_mark_stage_requires_the_immediately_previous_successful_stage(tmp_path:
         {"license_name": "CC BY 4.0"},
         {"license_url": "https://creativecommons.org/licenses/by/4.0/"},
         {"protected": True},
+        {"top_scene": "travel", "sub_scene": "travel_hotel"},
     ],
 )
 def test_upsert_raw_invalidates_derived_state_only_when_source_fields_change(
@@ -151,6 +156,8 @@ def test_upsert_raw_invalidates_derived_state_only_when_source_fields_change(
         "license_url": "https://creativecommons.org/licenses/by/2.0/fr/",
         "text": "The train arrives at nine o'clock.",
         "protected": False,
+        "top_scene": None,
+        "sub_scene": None,
     }
     item_id = database.upsert_raw(**raw)
     database.mark_stage(item_id, "clean", payload={"clean_text": raw["text"]})
@@ -195,3 +202,69 @@ def test_mark_stage_rejects_items_already_rejected_at_any_stage(tmp_path: Path) 
         database.mark_stage(item_id, "clean", payload={"clean_text": "Unexpected result"})
 
     assert database.stage_counts() == {"raw": 1, "rejected": 1}
+
+
+def test_stage_inputs_can_include_completed_rows_and_predecessor_payload(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.mark_stage(item_id, "clean", payload={"clean_text": "Normalized text."})
+    database.mark_stage(item_id, "dedupe", payload={"simhash64": "abc"})
+
+    pending = database.stage_inputs("dedupe")
+    completed = database.stage_inputs("dedupe", include_completed=True)
+
+    assert pending == []
+    assert len(completed) == 1
+    assert completed[0].item.id == item_id
+    assert completed[0].predecessor_payload == {"clean_text": "Normalized text."}
+    assert completed[0].stage_payload == {"simhash64": "abc"}
+
+
+def test_replace_stage_is_noop_for_same_set_and_atomic_on_insert_failure(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    first = add_raw_item(database, source_item_id="1")
+    second = add_raw_item(database, source_item_id="2")
+    for item_id in (first, second):
+        database.mark_stage(item_id, "clean", payload={})
+        database.mark_stage(item_id, "dedupe", payload={})
+        database.mark_stage(item_id, "classify", payload={})
+    original = [(first, {"sub_scene": "travel_hotel"})]
+    assert database.replace_stage("select", original) is True
+    with database.connect() as connection:
+        before = connection.execute(
+            "SELECT item_id, payload_json, updated_at FROM stage_results WHERE stage = ?",
+            ("select",),
+        ).fetchall()
+
+    assert database.replace_stage("select", original) is False
+    with database.connect() as connection:
+        unchanged = connection.execute(
+            "SELECT item_id, payload_json, updated_at FROM stage_results WHERE stage = ?",
+            ("select",),
+        ).fetchall()
+        connection.execute(
+            """
+            CREATE TRIGGER fail_select_insert
+            BEFORE INSERT ON stage_results
+            WHEN NEW.stage = 'select' AND NEW.item_id = 2
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated batch interruption');
+            END
+            """
+        )
+    assert unchanged == before
+
+    with pytest.raises(sqlite3.IntegrityError, match="simulated batch interruption"):
+        database.replace_stage(
+            "select",
+            [(first, {"sub_scene": "travel_hotel"}), (second, {"sub_scene": "travel_hotel"})],
+        )
+
+    with database.connect() as connection:
+        after = connection.execute(
+            "SELECT item_id, payload_json, updated_at FROM stage_results WHERE stage = ?",
+            ("select",),
+        ).fetchall()
+    assert after == before

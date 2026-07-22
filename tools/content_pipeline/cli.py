@@ -111,6 +111,8 @@ def _import_items(database: WorkDatabase, items: Iterable[CollectedSentence]) ->
             license_name=item.license_name,
             license_url=item.license_url,
             text=item.text,
+            top_scene=item.top_scene,
+            sub_scene=item.sub_scene,
         )
 
 
@@ -125,24 +127,16 @@ def _clean_items(database: WorkDatabase, limit: int) -> None:
 
 def _dedupe_items(database: WorkDatabase, limit: int) -> None:
     index = NearDuplicateIndex()
-    with database.connect() as connection:
-        completed = connection.execute(
-            """
-            SELECT clean.payload_json, raw.text
-            FROM stage_results AS dedupe
-            JOIN stage_results AS clean ON clean.item_id = dedupe.item_id AND clean.stage = 'clean'
-            JOIN raw_items AS raw ON raw.id = dedupe.item_id
-            WHERE dedupe.stage = 'dedupe'
-            ORDER BY dedupe.item_id
-            """
-        ).fetchall()
-    for payload_json, raw_text in completed:
-        payload = json.loads(payload_json)
-        index.add(str(payload.get("clean_text") or raw_text))
+    completed = database.stage_inputs("dedupe", include_completed=True, include_rejected=True)
+    for stage_input in completed:
+        if stage_input.stage_payload is None:
+            continue
+        text = str(stage_input.predecessor_payload.get("clean_text") or stage_input.item.text)
+        index.add(text, force=stage_input.item.protected)
 
     for item in database.claim_batch("dedupe", limit=limit):
         text = _clean_text(database, item)
-        unique = index.add(text)
+        unique = index.add(text, force=item.protected)
         if unique or item.protected:
             database.mark_stage(
                 item.id,
@@ -160,7 +154,11 @@ def _dedupe_items(database: WorkDatabase, limit: int) -> None:
 def _classify_items(database: WorkDatabase, limit: int) -> None:
     classifier = SceneClassifier()
     for item in database.claim_batch("classify", limit=limit):
-        result = classifier.classify(_clean_text(database, item))
+        result = classifier.classify(
+            _clean_text(database, item),
+            top_scene=item.top_scene,
+            sub_scene=item.sub_scene,
+        )
         database.mark_stage(
             item.id,
             "classify",
@@ -174,55 +172,42 @@ def _classify_items(database: WorkDatabase, limit: int) -> None:
 
 
 def _select_items(database: WorkDatabase) -> None:
-    with database.connect() as connection:
-        rows = connection.execute(
-            """
-            SELECT raw.id, raw.text, raw.source_name, raw.source_author, raw.protected,
-                   classify.payload_json
-            FROM raw_items AS raw
-            JOIN stage_results AS classify
-              ON classify.item_id = raw.id AND classify.stage = 'classify'
-            LEFT JOIN stage_results AS selected
-              ON selected.item_id = raw.id AND selected.stage = 'select'
-            LEFT JOIN rejections ON rejections.item_id = raw.id
-            WHERE selected.item_id IS NULL AND rejections.item_id IS NULL
-            ORDER BY raw.id
-            """
-        ).fetchall()
     candidates: list[_SelectionRow] = []
-    for item_id, text, source_name, source_author, protected, payload_json in rows:
-        payload = json.loads(payload_json)
+    for stage_input in database.stage_inputs("select", include_completed=True):
+        item = stage_input.item
+        payload = stage_input.predecessor_payload
         top_scene = payload.get("top_scene")
         sub_scene = payload.get("sub_scene")
         if not isinstance(top_scene, str) or not isinstance(sub_scene, str):
             continue
         candidates.append(
             _SelectionRow(
-                id=int(item_id),
-                text=str(text),
-                source_name=str(source_name),
-                source_author=str(source_author),
+                id=item.id,
+                text=item.text,
+                source_name=item.source_name,
+                source_author=item.source_author,
                 top_scene=top_scene,
                 sub_scene=sub_scene,
-                protected=bool(protected),
+                protected=item.protected,
             )
         )
 
     selected = select_scene_quotas(candidates)
-    for sub_scene, scene_rows in selected.items():
-        for row in scene_rows:
-            database.mark_stage(
-                row.id,
-                "select",
-                payload={"top_scene": row.top_scene, "sub_scene": sub_scene},
-            )
+    database.replace_stage(
+        "select",
+        [
+            (row.id, {"top_scene": row.top_scene, "sub_scene": sub_scene})
+            for sub_scene, scene_rows in selected.items()
+            for row in scene_rows
+        ],
+    )
 
 
 def _clean_text(database: WorkDatabase, item: WorkItem) -> str:
     with database.connect() as connection:
         row = connection.execute(
-            "SELECT payload_json FROM stage_results WHERE item_id = ? AND stage = 'clean'",
-            (item.id,),
+            "SELECT payload_json FROM stage_results WHERE item_id = ? AND stage = ?",
+            (item.id, "clean"),
         ).fetchone()
     if row is None:
         return clean_sentence(item.text)

@@ -102,9 +102,7 @@ _SCENE_KEYWORDS = {
         "train bus taxi airport flight station ticket commute platform"
     ),
     "travel_directions": _scene_words("direction turn left right map route locate near street"),
-    "travel_hotel": _scene_words(
-        "hotel room reserve reservation double night nights check-in stay"
-    ),
+    "travel_hotel": _scene_words("hotel room reserve reservation double night nights check stay"),
     "travel_tourism": _scene_words(
         "tour travel vacation journey museum landmark sightseeing tourist"
     ),

@@ -74,7 +74,7 @@ class NearDuplicateIndex:
         self._items: list[_IndexedText] = []
         self._bands: dict[tuple[int, int], list[int]] = {}
 
-    def add(self, text: str) -> bool:
+    def add(self, text: str, *, force: bool = False) -> bool:
         fingerprint = simhash64(text)
         band_keys = tuple((band, (fingerprint >> (band * 16)) & 0xFFFF) for band in range(4))
         candidate_ids: set[int] = set()
@@ -84,11 +84,14 @@ class NearDuplicateIndex:
             candidate = self._items[item_id]
             if jaccard_similarity(text, candidate.text) >= self.threshold:
                 self.duplicate_hash = candidate.normalized_hash
-                return False
+                if not force:
+                    return False
+                break
 
-        self.duplicate_hash = None
+        else:
+            self.duplicate_hash = None
         item_id = len(self._items)
         self._items.append(_IndexedText(text=text, normalized_hash=normalized_hash(text)))
         for key in band_keys:
             self._bands.setdefault(key, []).append(item_id)
-        return True
+        return self.duplicate_hash is None
