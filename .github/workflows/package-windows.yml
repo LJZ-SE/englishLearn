@@ -72,9 +72,13 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          & "dist/ListeningCloze/ListeningCloze.exe" --smoke-test
-          if ($LASTEXITCODE -ne 0) {
-            throw "打包产物离线冒烟检查失败：$LASTEXITCODE"
+          $smoke = Start-Process `
+            -FilePath "dist/ListeningCloze/ListeningCloze.exe" `
+            -ArgumentList "--smoke-test" `
+            -Wait `
+            -PassThru
+          if ($smoke.ExitCode -ne 0) {
+            throw "打包产物离线冒烟检查失败：$($smoke.ExitCode)"
           }
 
       - name: 安装固定版本 Inno Setup

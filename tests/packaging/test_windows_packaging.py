@@ -65,6 +65,10 @@ def test_workflow_builds_and_uploads_a_verified_installer() -> None:
         "build-manifest.json",
         "--smoke-test",
         "QT_QPA_PLATFORM",
+        "Start-Process",
+        "-Wait",
+        "-PassThru",
+        ".ExitCode",
     )
     for fragment in required_fragments:
         assert fragment in workflow
