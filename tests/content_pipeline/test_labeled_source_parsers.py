@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import tarfile
 import zipfile
 from pathlib import Path
@@ -192,6 +193,53 @@ def test_sgd_rejects_frame_service_outside_dialogue_services(tmp_path: Path) -> 
         list(iter_sgd_utterances(archive_path))
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("dialogue_id", 7),
+        ("services_item", 7),
+        ("speaker", 7),
+        ("utterance", 7),
+        ("frame_service", 7),
+    ],
+)
+def test_sgd_rejects_non_string_json_fields(
+    tmp_path: Path, field: str, invalid_value: object
+) -> None:
+    from tools.content_pipeline.sgd_source import iter_sgd_utterances
+
+    dialogue = {
+        "dialogue_id": "strict",
+        "services": ["Flights_1"],
+        "turns": [
+            {
+                "speaker": "USER",
+                "utterance": "Book a flight.",
+                "frames": [{"service": "Flights_1"}],
+            }
+        ],
+    }
+    if field == "dialogue_id":
+        dialogue["dialogue_id"] = invalid_value
+    elif field == "services_item":
+        dialogue["services"] = [invalid_value]
+    elif field == "speaker":
+        dialogue["turns"][0]["speaker"] = invalid_value
+    elif field == "utterance":
+        dialogue["turns"][0]["utterance"] = invalid_value
+    else:
+        dialogue["turns"][0]["frames"][0]["service"] = invalid_value
+    archive_path = tmp_path / "strict.zip"
+    _write_sgd_archive(
+        archive_path,
+        [dialogue],
+        [{"service_name": "Flights_1", "description": "Flights"}],
+    )
+
+    with pytest.raises(ValueError, match="必须是非空字符串"):
+        list(iter_sgd_utterances(archive_path))
+
+
 def test_sgd_rejects_path_drift_empty_archives_and_duplicate_ids(tmp_path: Path) -> None:
     from tools.content_pipeline.sgd_source import iter_sgd_utterances
 
@@ -225,6 +273,48 @@ def test_sgd_rejects_path_drift_empty_archives_and_duplicate_ids(tmp_path: Path)
         )
     with pytest.raises(ValueError, match="重复稳定 ID"):
         list(iter_sgd_utterances(duplicate))
+
+
+@pytest.mark.parametrize("unsafe_root", ["..", ".", "root\\escape", "/absolute"])
+def test_sgd_rejects_unsafe_member_paths(tmp_path: Path, unsafe_root: str) -> None:
+    from tools.content_pipeline.sgd_source import iter_sgd_utterances
+
+    archive_path = tmp_path / "unsafe.zip"
+    dialogue = {
+        "dialogue_id": "one",
+        "services": ["Flights_1"],
+        "turns": [{"speaker": "USER", "utterance": "Book a flight.", "frames": []}],
+    }
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            f"{unsafe_root}/train/schema.json",
+            json.dumps([{"service_name": "Flights_1", "description": "Flights"}]),
+        )
+        archive.writestr(
+            f"{unsafe_root}/train/dialogues_001.json", json.dumps([dialogue])
+        )
+
+    with pytest.raises(ValueError, match="不安全路径"):
+        list(iter_sgd_utterances(archive_path))
+
+
+@pytest.mark.parametrize("member_kind", ["symlink", "fifo"])
+def test_sgd_rejects_non_regular_matching_zip_members(
+    tmp_path: Path, member_kind: str
+) -> None:
+    from tools.content_pipeline.sgd_source import iter_sgd_utterances
+
+    archive_path = tmp_path / "special.zip"
+    info = zipfile.ZipInfo("root/train/schema.json")
+    info.create_system = 3
+    file_type = stat.S_IFLNK if member_kind == "symlink" else stat.S_IFIFO
+    info.external_attr = (file_type | 0o644) << 16
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(info, "target")
+        archive.writestr("root/train/dialogues_001.json", "[]")
+
+    with pytest.raises(ValueError, match="普通文件"):
+        list(iter_sgd_utterances(archive_path))
 
 
 def test_sgd_rejects_mixed_archive_roots(tmp_path: Path) -> None:
@@ -303,45 +393,77 @@ def test_clinc_imports_only_allowlisted_in_scope_rows_and_appends_punctuation(
     assert all("oos" not in item.source_item_id for item in items)
 
 
-def test_labeled_allowlists_cover_only_explicit_requested_scene_directions() -> None:
+def test_clinc_allowlist_matches_the_25_live_fixed_archive_intents() -> None:
     from tools.content_pipeline.clinc_source import CLINC_INTENT_SCENES
+
+    assert CLINC_INTENT_SCENES == {
+        "book_flight": "travel_transport",
+        "book_hotel": "travel_hotel",
+        "car_rental": "travel_transport",
+        "carry_on": "travel_transport",
+        "change_volume": "technology_devices",
+        "definition": "study_language",
+        "directions": "travel_directions",
+        "exchange_rate": "news_business",
+        "flight_status": "travel_transport",
+        "jump_start": "technology_engineering",
+        "meal_suggestion": "daily_food",
+        "meeting_schedule": "work_meetings",
+        "oil_change_how": "technology_engineering",
+        "order_status": "daily_shopping",
+        "payday": "work_jobs",
+        "pto_request": "work_office",
+        "recipe": "daily_food",
+        "schedule_meeting": "work_meetings",
+        "shopping_list": "daily_shopping",
+        "smart_home": "daily_home",
+        "spelling": "study_language",
+        "sync_device": "technology_devices",
+        "tire_change": "technology_engineering",
+        "tire_pressure": "technology_engineering",
+        "translate": "study_language",
+    }
+
+
+def test_dead_clinc_intents_from_the_fixed_archive_are_not_allowlisted() -> None:
+    from tools.content_pipeline.clinc_source import CLINC_INTENT_SCENES
+
+    dead_intents = {
+        "balance_not_updated_after_bank_transfer",
+        "balance_not_updated_after_cheque_or_cash_deposit",
+        "benefits",
+        "cancel_meeting",
+        "cancel_order",
+        "car_manual",
+        "card_payment_fee_charged",
+        "cash_withdrawal",
+        "connect_device",
+        "email_contact",
+        "engineering_support",
+        "gas_station",
+        "hotel_check_in",
+        "hotel_check_out",
+        "install_software",
+        "job_application",
+        "pending_transfer",
+        "public_transport",
+        "receiving_money",
+        "restaurant",
+        "return_item",
+        "send_email",
+        "software_update",
+        "tourist_attraction",
+        "transfer_fee_charged",
+        "visa_or_passport",
+    }
+    assert dead_intents.isdisjoint(CLINC_INTENT_SCENES)
+
+
+def test_massive_allowlist_excludes_reviewed_mixed_semantics() -> None:
     from tools.content_pipeline.massive_source import MASSIVE_LABEL_SCENES
 
-    assert {
-        intent: CLINC_INTENT_SCENES[intent]
-        for intent in (
-            "directions",
-            "car_rental",
-            "oil_change_how",
-            "exchange_rate",
-            "smart_home",
-            "shopping_list",
-            "recipe",
-            "book_hotel",
-            "tourist_attraction",
-            "translate",
-            "sync_device",
-            "schedule_meeting",
-            "pto_request",
-        )
-    } == {
-        "directions": "travel_directions",
-        "car_rental": "travel_transport",
-        "oil_change_how": "technology_engineering",
-        "exchange_rate": "news_business",
-        "smart_home": "daily_home",
-        "shopping_list": "daily_shopping",
-        "recipe": "daily_food",
-        "book_hotel": "travel_hotel",
-        "tourist_attraction": "travel_tourism",
-        "translate": "study_language",
-        "sync_device": "technology_devices",
-        "schedule_meeting": "work_meetings",
-        "pto_request": "work_office",
-    }
     assert MASSIVE_LABEL_SCENES[("iot", "iot_hue_lighton")] == "technology_devices"
     assert MASSIVE_LABEL_SCENES[("cooking", "cooking_recipe")] == "daily_food"
-    assert MASSIVE_LABEL_SCENES[("email", "email_sendemail")] == "work_contact"
     assert MASSIVE_LABEL_SCENES[("play", "play_music")] == "culture_music"
     assert MASSIVE_LABEL_SCENES[("news", "news_query")] == "news_current"
     assert MASSIVE_LABEL_SCENES[("social", "social_post")] == "daily_social"
@@ -349,9 +471,7 @@ def test_labeled_allowlists_cover_only_explicit_requested_scene_directions() -> 
     assert MASSIVE_LABEL_SCENES[("play", "play_audiobook")] == "culture_books"
     assert MASSIVE_LABEL_SCENES[("recommendation", "recommendation_movies")] == "culture_movies"
     assert MASSIVE_LABEL_SCENES[("qa", "qa_stock")] == "news_business"
-    assert MASSIVE_LABEL_SCENES[("qa", "qa_definition")] == "study_language"
     assert MASSIVE_LABEL_SCENES[("transport", "transport_directions")] == "travel_directions"
-    assert MASSIVE_LABEL_SCENES[("transport", "transport_query")] == "travel_transport"
 
     for unsafe_pair in (
         ("alarm", "alarm_set"),
@@ -364,20 +484,14 @@ def test_labeled_allowlists_cover_only_explicit_requested_scene_directions() -> 
         ("recommendation", "recommendation_locations"),
         ("qa", "qa_factoid"),
         ("qa", "qa_maths"),
+        ("qa", "qa_definition"),
+        ("transport", "transport_query"),
+        ("email", "email_addcontact"),
+        ("email", "email_query"),
+        ("email", "email_querycontact"),
+        ("email", "email_sendemail"),
     ):
         assert unsafe_pair not in MASSIVE_LABEL_SCENES
-    for unsafe_intent in (
-        "todo_list",
-        "change_language",
-        "change_user_name",
-        "change_speed",
-        "reset_settings",
-        "contact_support",
-        "travel_notification",
-        "order",
-        "exchange_via_app",
-    ):
-        assert unsafe_intent not in CLINC_INTENT_SCENES
 
 
 def test_clinc_rejects_schema_drift_empty_and_duplicate_data_members(tmp_path: Path) -> None:
@@ -410,6 +524,39 @@ def test_clinc_rejects_schema_drift_empty_and_duplicate_data_members(tmp_path: P
         )
     with pytest.raises(ValueError, match="结构漂移"):
         list(iter_clinc150_utterances(duplicate, normalization_version=1))
+
+
+@pytest.mark.parametrize("unsafe_root", ["..", ".", "root\\escape", "/absolute"])
+def test_clinc_rejects_unsafe_member_paths(tmp_path: Path, unsafe_root: str) -> None:
+    from tools.content_pipeline.clinc_source import iter_clinc150_utterances
+
+    archive_path = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            f"{unsafe_root}/data/data_full.json",
+            json.dumps({"train": [["where", "directions"]], "val": [], "test": []}),
+        )
+
+    with pytest.raises(ValueError, match="不安全路径"):
+        list(iter_clinc150_utterances(archive_path, normalization_version=1))
+
+
+@pytest.mark.parametrize("member_kind", ["symlink", "fifo"])
+def test_clinc_rejects_non_regular_matching_zip_member(
+    tmp_path: Path, member_kind: str
+) -> None:
+    from tools.content_pipeline.clinc_source import iter_clinc150_utterances
+
+    archive_path = tmp_path / "special.zip"
+    info = zipfile.ZipInfo("root/data/data_full.json")
+    info.create_system = 3
+    file_type = stat.S_IFLNK if member_kind == "symlink" else stat.S_IFIFO
+    info.external_attr = (file_type | 0o644) << 16
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(info, "target")
+
+    with pytest.raises(ValueError, match="普通文件"):
+        list(iter_clinc150_utterances(archive_path, normalization_version=1))
 
 
 def _write_massive_archive(
@@ -517,6 +664,85 @@ def test_massive_rejects_path_drift_symlinks_empty_data_and_duplicate_ids(tmp_pa
     _write_massive_archive(duplicate, [row, row])
     with pytest.raises(ValueError, match="重复稳定 ID"):
         list(iter_massive_utterances(duplicate, normalization_version=1))
+
+
+def test_massive_rejects_non_regular_fifo_member(tmp_path: Path) -> None:
+    from tools.content_pipeline.massive_source import iter_massive_utterances
+
+    archive_path = tmp_path / "fifo.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        info = tarfile.TarInfo("1.0/data/en-US.jsonl")
+        info.type = tarfile.FIFOTYPE
+        archive.addfile(info)
+
+    with pytest.raises(ValueError, match="普通文件"):
+        list(iter_massive_utterances(archive_path, normalization_version=1))
+
+
+@pytest.mark.parametrize("unsafe_root", ["..", ".", "root\\escape", "/absolute"])
+def test_massive_rejects_unsafe_member_paths(tmp_path: Path, unsafe_root: str) -> None:
+    from tools.content_pipeline.massive_source import iter_massive_utterances
+
+    archive_path = tmp_path / "unsafe.tar.gz"
+    _write_massive_archive(
+        archive_path,
+        [],
+        member=f"{unsafe_root}/1.0/data/en-US.jsonl",
+    )
+
+    with pytest.raises(ValueError, match="不安全路径"):
+        list(iter_massive_utterances(archive_path, normalization_version=1))
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("id", 7),
+        ("locale", 7),
+        ("scenario", 7),
+        ("intent", 7),
+        ("utt", 7),
+        ("worker_id", 7),
+    ],
+)
+def test_massive_rejects_invalid_json_field_types(
+    tmp_path: Path, field: str, invalid_value: object
+) -> None:
+    from tools.content_pipeline.massive_source import iter_massive_utterances
+
+    row = {
+        "id": "strict",
+        "locale": "en-US",
+        "scenario": "play",
+        "intent": "play_music",
+        "utt": "Play music.",
+        "worker_id": "w1",
+    }
+    row[field] = invalid_value
+    archive_path = tmp_path / "strict.tar.gz"
+    _write_massive_archive(archive_path, [row])
+
+    with pytest.raises(ValueError, match="字段类型错误"):
+        list(iter_massive_utterances(archive_path, normalization_version=1))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('He said “hello”', 'He said “hello.”'),
+        ("Ask 'where'", "Ask 'where.'"),
+        ('He asked “where?”', 'He asked “where?”'),
+        ("She shouted “stop!”", "She shouted “stop!”"),
+    ],
+)
+def test_labeled_normalization_inserts_punctuation_before_closing_quotes(
+    text: str, expected: str
+) -> None:
+    from tools.content_pipeline.clinc_source import _append_terminal_punctuation as clinc
+    from tools.content_pipeline.massive_source import _append_terminal_punctuation as massive
+
+    assert clinc(text) == expected
+    assert massive(text) == expected
 
 
 def test_import_all_integrates_labeled_sources_with_lock_and_scene_metadata(

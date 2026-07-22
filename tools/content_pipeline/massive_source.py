@@ -6,6 +6,7 @@ import tarfile
 from collections.abc import Iterator
 from pathlib import Path
 
+from tools.content_pipeline.archive_safety import validate_archive_member_path
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.scenes import scene_by_key
 
@@ -30,10 +31,6 @@ MASSIVE_LABEL_SCENES = {
     ("cooking", "cooking_recipe"): "daily_food",
     ("takeaway", "takeaway_order"): "daily_food",
     ("takeaway", "takeaway_query"): "daily_food",
-    ("email", "email_addcontact"): "work_contact",
-    ("email", "email_query"): "work_contact",
-    ("email", "email_querycontact"): "work_contact",
-    ("email", "email_sendemail"): "work_contact",
     ("music", "music_dislikeness"): "culture_music",
     ("music", "music_likeness"): "culture_music",
     ("music", "music_query"): "culture_music",
@@ -47,9 +44,7 @@ MASSIVE_LABEL_SCENES = {
     ("recommendation", "recommendation_movies"): "culture_movies",
     ("qa", "qa_currency"): "news_business",
     ("qa", "qa_stock"): "news_business",
-    ("qa", "qa_definition"): "study_language",
     ("transport", "transport_directions"): "travel_directions",
-    ("transport", "transport_query"): "travel_transport",
     ("transport", "transport_taxi"): "travel_transport",
     ("transport", "transport_ticket"): "travel_transport",
     ("transport", "transport_traffic"): "travel_transport",
@@ -75,7 +70,14 @@ def iter_massive_utterances(
 def _iter_archive(
     archive: tarfile.TarFile, archive_path: Path
 ) -> Iterator[CollectedSentence]:
-    members = [member for member in archive.getmembers() if _DATA_PATH.fullmatch(member.name)]
+    candidates = [
+        member
+        for member in archive.getmembers()
+        if member.name.endswith("1.0/data/en-US.jsonl")
+    ]
+    for member in candidates:
+        validate_archive_member_path(member.name, label="MASSIVE")
+    members = [member for member in candidates if _DATA_PATH.fullmatch(member.name)]
     if len(members) != 1:
         raise ValueError(f"MASSIVE 压缩包结构漂移: {archive_path}")
     member = members[0]
@@ -93,16 +95,21 @@ def _iter_archive(
             raise ValueError(f"MASSIVE JSONL 第 {line_number} 行无效") from error
         if not isinstance(row, dict):
             raise ValueError(f"MASSIVE JSONL 第 {line_number} 行不是对象")
-        locale = str(row.get("locale", "")).strip()
+        required_fields = ("id", "locale", "scenario", "intent", "utt")
+        if any(not isinstance(row.get(field), str) for field in required_fields):
+            raise ValueError(f"MASSIVE 第 {line_number} 行字段类型错误")
+        raw_worker_id = row.get("worker_id")
+        if raw_worker_id is not None and not isinstance(raw_worker_id, str):
+            raise ValueError(f"MASSIVE 第 {line_number} 行 worker_id 字段类型错误")
+        locale = row["locale"].strip()
         if locale != "en-US":
             continue
-        item_id = str(row.get("id", "")).strip()
-        scenario = str(row.get("scenario", "")).strip()
-        intent = str(row.get("intent", "")).strip()
-        utterance = row.get("utt")
-        raw_worker_id = row.get("worker_id")
-        worker_id = str(raw_worker_id).strip() if raw_worker_id is not None else ""
-        if not item_id or not scenario or not intent or not isinstance(utterance, str):
+        item_id = row["id"].strip()
+        scenario = row["scenario"].strip()
+        intent = row["intent"].strip()
+        utterance = row["utt"]
+        worker_id = raw_worker_id.strip() if raw_worker_id is not None else ""
+        if not item_id or not scenario or not intent:
             raise ValueError(f"MASSIVE en-US 第 {line_number} 行 schema 漂移")
         sub_scene = MASSIVE_LABEL_SCENES.get((scenario, intent))
         if not sub_scene:
@@ -135,6 +142,6 @@ def _iter_archive(
 def _append_terminal_punctuation(text: str) -> str:
     stripped = text.strip()
     sentence_end = stripped.rstrip("\"'”’")
-    if stripped and (not sentence_end or sentence_end[-1] not in ".?!"):
-        return stripped + "."
-    return stripped
+    if not sentence_end or sentence_end[-1] in ".?!":
+        return stripped
+    return f"{sentence_end}.{stripped[len(sentence_end):]}"

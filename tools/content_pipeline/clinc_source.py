@@ -6,6 +6,10 @@ import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
+from tools.content_pipeline.archive_safety import (
+    validate_archive_member_path,
+    validate_regular_zip_member,
+)
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.scenes import scene_by_key
 
@@ -17,57 +21,31 @@ _SPLITS = ("train", "val", "test")
 
 # 只有语义与现有场景一一对应的意图才进入题库，未知意图一律跳过。
 CLINC_INTENT_SCENES = {
-    "directions": "travel_directions",
-    "public_transport": "travel_transport",
-    "car_rental": "travel_transport",
-    "gas_station": "travel_transport",
-    "flight_status": "travel_transport",
     "book_flight": "travel_transport",
-    "carry_on": "travel_transport",
     "book_hotel": "travel_hotel",
-    "hotel_check_in": "travel_hotel",
-    "hotel_check_out": "travel_hotel",
-    "tourist_attraction": "travel_tourism",
-    "visa_or_passport": "travel_tourism",
-    "restaurant": "daily_food",
-    "recipe": "daily_food",
-    "meal_suggestion": "daily_food",
-    "order_status": "daily_shopping",
-    "cancel_order": "daily_shopping",
-    "return_item": "daily_shopping",
-    "exchange_rate": "news_business",
-    "cash_withdrawal": "news_business",
-    "card_payment_fee_charged": "news_business",
-    "transfer_fee_charged": "news_business",
-    "pending_transfer": "news_business",
-    "receiving_money": "news_business",
-    "balance_not_updated_after_bank_transfer": "news_business",
-    "balance_not_updated_after_cheque_or_cash_deposit": "news_business",
-    "schedule_meeting": "work_meetings",
-    "meeting_schedule": "work_meetings",
-    "cancel_meeting": "work_meetings",
-    "send_email": "work_contact",
-    "email_contact": "work_contact",
-    "pto_request": "work_office",
-    "payday": "work_jobs",
-    "benefits": "work_jobs",
-    "job_application": "work_jobs",
-    "smart_home": "daily_home",
-    "shopping_list": "daily_shopping",
-    "translate": "study_language",
-    "spelling": "study_language",
-    "definition": "study_language",
+    "car_rental": "travel_transport",
+    "carry_on": "travel_transport",
     "change_volume": "technology_devices",
-    "sync_device": "technology_devices",
-    "connect_device": "technology_devices",
-    "software_update": "technology_software",
-    "install_software": "technology_software",
-    "engineering_support": "technology_engineering",
-    "car_manual": "technology_engineering",
+    "definition": "study_language",
+    "directions": "travel_directions",
+    "exchange_rate": "news_business",
+    "flight_status": "travel_transport",
     "jump_start": "technology_engineering",
+    "meal_suggestion": "daily_food",
+    "meeting_schedule": "work_meetings",
     "oil_change_how": "technology_engineering",
+    "order_status": "daily_shopping",
+    "payday": "work_jobs",
+    "pto_request": "work_office",
+    "recipe": "daily_food",
+    "schedule_meeting": "work_meetings",
+    "shopping_list": "daily_shopping",
+    "smart_home": "daily_home",
+    "spelling": "study_language",
+    "sync_device": "technology_devices",
     "tire_change": "technology_engineering",
     "tire_pressure": "technology_engineering",
+    "translate": "study_language",
 }
 
 
@@ -81,9 +59,17 @@ def iter_clinc150_utterances(
     if not zipfile.is_zipfile(archive_path):
         raise ValueError(f"CLINC150 下载内容不是有效 ZIP: {archive_path}")
     with zipfile.ZipFile(archive_path) as archive:
-        members = [info for info in archive.infolist() if _DATA_PATH.fullmatch(info.filename)]
+        candidates = [
+            info
+            for info in archive.infolist()
+            if info.filename.endswith("data/data_full.json")
+        ]
+        for info in candidates:
+            validate_archive_member_path(info.filename, label="CLINC150")
+        members = [info for info in candidates if _DATA_PATH.fullmatch(info.filename)]
         if len(members) != 1 or members[0].is_dir():
             raise ValueError(f"CLINC150 压缩包结构漂移: {archive_path}")
+        validate_regular_zip_member(members[0], label="CLINC150")
         payload = json.loads(archive.read(members[0]))
     if not isinstance(payload, dict) or any(
         not isinstance(payload.get(split), list) for split in _SPLITS
@@ -129,6 +115,6 @@ def iter_clinc150_utterances(
 def _append_terminal_punctuation(text: str) -> str:
     stripped = text.strip()
     sentence_end = stripped.rstrip("\"'”’")
-    if stripped and (not sentence_end or sentence_end[-1] not in ".?!"):
-        return stripped + "."
-    return stripped
+    if not sentence_end or sentence_end[-1] in ".?!":
+        return stripped
+    return f"{sentence_end}.{stripped[len(sentence_end):]}"

@@ -6,6 +6,10 @@ import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
+from tools.content_pipeline.archive_safety import (
+    validate_archive_member_path,
+    validate_regular_zip_member,
+)
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.scenes import scene_by_key
 
@@ -63,22 +67,26 @@ def iter_sgd_utterances(archive_path: Path) -> Iterator[CollectedSentence]:
             for dialogue in payload:
                 if not isinstance(dialogue, dict):
                     raise ValueError(f"SGD 对话条目不是对象: {name}")
-                dialogue_id = str(dialogue.get("dialogue_id", "")).strip()
+                dialogue_id = _required_json_string(
+                    dialogue.get("dialogue_id"), "SGD dialogue_id"
+                )
                 services = dialogue.get("services")
                 turns = dialogue.get("turns")
-                if not dialogue_id or not isinstance(services, list) or not isinstance(turns, list):
-                    raise ValueError(f"SGD 对话缺少稳定 ID、services 或 turns: {name}")
+                if not isinstance(services, list) or not isinstance(turns, list):
+                    raise ValueError(f"SGD 对话缺少 services 或 turns 数组: {name}")
                 dialogue_services = _clean_services(services)
                 for turn_index, turn in enumerate(turns):
                     if not isinstance(turn, dict):
                         raise ValueError(f"SGD turn 不是对象: {dialogue_id}")
-                    text = str(turn.get("utterance", "")).strip()
-                    speaker = str(turn.get("speaker", "")).strip()
+                    text = _required_json_string(
+                        turn.get("utterance"), f"SGD utterance: {dialogue_id}"
+                    )
+                    _required_json_string(
+                        turn.get("speaker"), f"SGD speaker: {dialogue_id}"
+                    )
                     frames = turn.get("frames")
-                    if not speaker or not isinstance(frames, list):
-                        raise ValueError(f"SGD turn 缺少 speaker 或 frames: {dialogue_id}")
-                    if not text:
-                        continue
+                    if not isinstance(frames, list):
+                        raise ValueError(f"SGD turn 缺少 frames 数组: {dialogue_id}")
                     service = _unambiguous_service(frames, dialogue_services)
                     sub_scene = _service_scene(service, schemas[split]) if service else None
                     if not sub_scene:
@@ -110,10 +118,13 @@ def _matched_paths(
     matches: list[tuple[str, str]] = []
     seen: set[str] = set()
     for info in archive.infolist():
+        if not info.is_dir():
+            validate_archive_member_path(info.filename, label="SGD")
         match = pattern.fullmatch(info.filename)
         if not match:
             continue
-        if info.is_dir() or info.filename in seen:
+        validate_regular_zip_member(info, label=label)
+        if info.filename in seen:
             raise ValueError(f"{label}存在重复或非文件成员: {info.filename}")
         seen.add(info.filename)
         matches.append((match.group(1), info.filename))
@@ -140,10 +151,12 @@ def _read_schemas(
         for service in payload:
             if not isinstance(service, dict):
                 raise ValueError(f"SGD schema 服务不是对象: {name}")
-            service_name = str(service.get("service_name", "")).strip()
-            description = str(service.get("description", "")).strip()
-            if not service_name or not description:
-                raise ValueError(f"SGD schema 缺少 service_name 或 description: {name}")
+            service_name = _required_json_string(
+                service.get("service_name"), f"SGD schema service_name: {name}"
+            )
+            description = _required_json_string(
+                service.get("description"), f"SGD schema description: {name}"
+            )
             previous = descriptions.get(service_name)
             if previous is not None and previous != description:
                 raise ValueError(f"SGD schema 服务描述冲突: {service_name}")
@@ -152,7 +165,9 @@ def _read_schemas(
 
 
 def _clean_services(values: list[object]) -> set[str]:
-    services = {str(value).strip() for value in values if str(value).strip()}
+    services = {
+        _required_json_string(value, "SGD services 每项") for value in values
+    }
     if len(services) != len(values):
         raise ValueError("SGD services 包含空值或重复值")
     return services
@@ -163,9 +178,7 @@ def _unambiguous_service(frames: list[object], dialogue_services: set[str]) -> s
     for frame in frames:
         if not isinstance(frame, dict):
             raise ValueError("SGD frame 不是对象")
-        service = str(frame.get("service", "")).strip()
-        if not service:
-            raise ValueError("SGD frame 缺少 service")
+        service = _required_json_string(frame.get("service"), "SGD frame.service")
         if service not in dialogue_services:
             raise ValueError(
                 f"SGD frame service 不属于 dialogue services: {service}"
@@ -178,6 +191,12 @@ def _unambiguous_service(frames: list[object], dialogue_services: set[str]) -> s
     if len(dialogue_services) == 1:
         return next(iter(dialogue_services))
     return None
+
+
+def _required_json_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} 必须是非空字符串")
+    return value.strip()
 
 
 def _service_scene(service: str, descriptions: dict[str, str]) -> str | None:
