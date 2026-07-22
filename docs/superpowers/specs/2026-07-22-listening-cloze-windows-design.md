@@ -227,6 +227,7 @@ QML 不直接访问 SQLite、文件系统或 Supertonic。QML 只调用公开的
 - 第一次提交错误：立即记为错误，后续修改正确不改变本题统计结果。
 - 主动查看答案：本题记为错误。
 - 答错后可无限重听和修改，直到答对或查看答案。
+- 精灵与界面反馈始终反映本次提交：第一次答错时播放答错反馈，随后修改正确时播放答对反馈，但持久化的首次结果仍为错误。
 
 ## 10. 练习模式
 
@@ -293,6 +294,8 @@ QML 不直接访问 SQLite、文件系统或 Supertonic。QML 只调用公开的
 - 第二次失败后显示原因、“重新生成”和“跳过本题”。
 - 磁盘空间不足时暂停后台预生成并提示用户。
 - TTS 工作不得阻塞 QML 主线程。
+- 因 TTS 技术故障跳过的题目不计入正确、错误或难度连续计数。定量练习在队尾补入一道同分类、同难度题以维持用户选择的题量；无尽模式直接补入下一题。
+- TTS 工作线程使用受限的 CPU 线程预算，至少为界面主线程保留一个逻辑核心。
 
 ## 13. 声波精灵
 
@@ -432,4 +435,3 @@ QML 不直接访问 SQLite、文件系统或 Supertonic。QML 只调用公开的
 - Qt Quick Controls 自定义：https://doc.qt.io/qt-6/qtquickcontrols-customize.html
 - Qt Quick MultiEffect：https://doc.qt.io/qt-6/qml-qtquick-effects-multieffect.html
 - Qt Multimedia MediaPlayer：https://doc.qt.io/qt-6/qml-qtmultimedia-mediaplayer.html
-
