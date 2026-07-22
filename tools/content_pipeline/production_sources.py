@@ -20,14 +20,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from tools.content_pipeline.ami_source import iter_ami_utterances
 from tools.content_pipeline.clinc_source import iter_clinc150_utterances
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.dailydialog_source import iter_dailydialog_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.massive_source import iter_massive_utterances
+from tools.content_pipeline.medquad_source import iter_medquad_questions
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.mts_dialog_source import iter_mts_dialog_utterances
 from tools.content_pipeline.multiwoz_source import iter_multiwoz_utterances
+from tools.content_pipeline.sciq_source import iter_sciq_questions
 from tools.content_pipeline.sgd_source import iter_sgd_utterances
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
@@ -438,6 +441,9 @@ def _validate_downloaded_source(
         "sgd",
         "clinc150",
         "massive",
+        "ami",
+        "medquad",
+        "sciq",
     }:
         return
     if kind == "massive":
@@ -449,6 +455,10 @@ def _validate_downloaded_source(
             )
         ):
             raise ValueError(f"来源压缩包没有有效记录: {source['key']}")
+        return
+    if kind == "sciq":
+        if not _iterator_has_record(iter_sciq_questions(path)):
+            raise ValueError(f"来源 Parquet 没有有效记录: {source['key']}")
         return
     if not zipfile.is_zipfile(path):
         raise ValueError(f"来源下载内容不是有效 ZIP: {source['key']}")
@@ -478,6 +488,10 @@ def _validate_downloaded_source(
             valid = _mts_dialog_archive_has_record(archive, names)
         elif kind == "sgd":
             valid = _iterator_has_record(iter_sgd_utterances(path))
+        elif kind == "ami":
+            valid = _iterator_has_record(iter_ami_utterances(path))
+        elif kind == "medquad":
+            valid = _iterator_has_record(iter_medquad_questions(path))
         else:
             valid = _iterator_has_record(
                 iter_clinc150_utterances(
@@ -678,6 +692,12 @@ def _iter_source(
             cache_path,
             normalization_version=int(source.get("normalization_version", 0)),
         )
+    if kind == "ami":
+        return iter_ami_utterances(cache_path)
+    if kind == "medquad":
+        return iter_medquad_questions(cache_path)
+    if kind == "sciq":
+        return iter_sciq_questions(cache_path)
     raise ValueError(f"不支持的来源类型: {kind}")
 
 
@@ -791,6 +811,9 @@ def _source_kind(source_name: str) -> str:
         "English Wikinews": "wikinews",
         "Project Gutenberg": "gutenberg",
         "legacy-content": "legacy",
+        "ami-meeting-corpus-v1.6.2": "ami",
+        "medquad": "medquad",
+        "SciQ": "sciq",
     }
     if source_name in {"cornell-movie-dialogs", "switchboard"}:
         return "convokit"
@@ -919,6 +942,10 @@ def _raw_source_name(source: dict[str, Any]) -> str:
         return "Project Gutenberg"
     if kind == "massive":
         return "massive-1.0"
+    if kind == "ami":
+        return "ami-meeting-corpus-v1.6.2"
+    if kind == "sciq":
+        return "SciQ"
     return str(source["key"])
 
 

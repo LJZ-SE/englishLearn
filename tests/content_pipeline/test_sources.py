@@ -81,6 +81,9 @@ def test_source_manifest_preserves_initial_sources_and_adds_dialogue_sources() -
         ("sgd", "sgd"),
         ("clinc150", "clinc150"),
         ("massive-1-0", "massive"),
+        ("ami-manual-v1-6-2", "ami"),
+        ("medquad", "medquad"),
+        ("sciq-train", "sciq"),
     ]
 
 

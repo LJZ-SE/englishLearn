@@ -85,5 +85,29 @@
     "normalization_version": 1,
     "license_name": "CC BY 4.0",
     "license_url": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  {
+    "key": "ami-manual-v1-6-2",
+    "kind": "ami",
+    "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
+    "expected_sha256": "b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d",
+    "license_name": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  {
+    "key": "medquad",
+    "kind": "medquad",
+    "url": "https://github.com/abachaa/MedQuAD/archive/577bd37b96c02d1833b2c9eed2de9f96964e96cb.zip",
+    "expected_sha256": "161d948f8ce8f82accca1f5769a512dff2a01af2b3004d48f2b3da2758a38a09",
+    "license_name": "CC BY 4.0",
+    "license_url": "https://github.com/abachaa/MedQuAD/blob/577bd37b96c02d1833b2c9eed2de9f96964e96cb/LICENSE.txt"
+  },
+  {
+    "key": "sciq-train",
+    "kind": "sciq",
+    "url": "https://huggingface.co/datasets/allenai/sciq/resolve/2c94ad3e1aafab77146f384e23536f97a4849815/data/train-00000-of-00001.parquet",
+    "expected_sha256": "19644360954006d06e9ad3df07bddb34f8535c081b831d48f604603c713ac167",
+    "license_name": "CC BY-NC 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc/3.0/"
   }
 ]
