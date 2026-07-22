@@ -1,0 +1,288 @@
+{
+  "generated_at_utc": "2026-07-22T23:14:27.443390+00:00",
+  "purpose": "Residual semantic recall input audit; historical IDs are never reused directly.",
+  "database": {
+    "path": "work/content-library/content-work.db",
+    "candidate_pool_fingerprint": "7f43f12ab29a23183ef3cc037d8f9ffc8efa68fe286326375c1f9b9c47f42d4f",
+    "eligible_count": 306568,
+    "max_raw_item_id": 2391715,
+    "max_eligible_item_id": 1931560
+  },
+  "residual": {
+    "by_scene": {
+      "daily_home": 218,
+      "travel_directions": 127,
+      "travel_tourism": 70,
+      "work_office": 10,
+      "work_jobs": 134,
+      "study_campus": 23,
+      "study_exams": 74,
+      "study_academic": 390,
+      "health_pharmacy": 145,
+      "health_fitness": 329,
+      "health_wellbeing": 33,
+      "technology_software": 116,
+      "technology_engineering": 220,
+      "technology_science": 151,
+      "culture_books": 59,
+      "culture_sports": 50,
+      "news_current": 226
+    },
+    "total": 2375
+  },
+  "config": {
+    "path": "work/content-library/semantic-recall-residual-20260723-config.json",
+    "scene_count": 17,
+    "top_k_total": 3200,
+    "sha256": "ae4d83836ef45fecd3b8f33ffe4641452578a51fc906598489244b9e7298381e"
+  },
+  "historical_review_mapping": {
+    "identity_fields": [
+      "source_name",
+      "source_author",
+      "text"
+    ],
+    "direct_old_id_reuse": false,
+    "total_reviewed_rows": 3750,
+    "unique_reviewed_identities": 3702,
+    "uniquely_mapped_current_identities": 3699,
+    "unique_mapped_current_item_ids": 3699,
+    "old_id_equals_current_id_rows": 0,
+    "old_id_equals_current_id_unique_identities": 0,
+    "not_found_identity_count": 0,
+    "ambiguous_identity_count": 3,
+    "current_rejected_unique_item_count": 1,
+    "mapping_sha256": "e7c5f72b41ae617164741add7838d9f301c2395f7ee19ca4b707556fafea7137"
+  },
+  "scene_exclusion_counts": {
+    "daily_home": 0,
+    "daily_social": 0,
+    "daily_shopping": 0,
+    "daily_food": 0,
+    "travel_transport": 0,
+    "travel_directions": 0,
+    "travel_hotel": 930,
+    "travel_tourism": 400,
+    "work_office": 0,
+    "work_meetings": 700,
+    "work_contact": 0,
+    "work_jobs": 0,
+    "study_campus": 0,
+    "study_exams": 768,
+    "study_academic": 0,
+    "study_language": 0,
+    "health_clinic": 0,
+    "health_pharmacy": 249,
+    "health_fitness": 0,
+    "health_wellbeing": 0,
+    "technology_devices": 399,
+    "technology_software": 300,
+    "technology_engineering": 0,
+    "technology_science": 0,
+    "culture_movies": 0,
+    "culture_music": 0,
+    "culture_books": 0,
+    "culture_sports": 0,
+    "news_current": 0,
+    "news_business": 0,
+    "news_public": 0,
+    "news_environment": 0
+  },
+  "input_pairs": [
+    {
+      "request_path": "work/content-library/classification-review-0001.jsonl",
+      "request_rows": 500,
+      "request_sha256": "513c19d9f9aac5c2ed5c349c73e2688cadcc1479346868f0a055eb358e86fdf1",
+      "result_path": "work/content-library/classification-review-0001.result.jsonl",
+      "result_rows": 500,
+      "result_sha256": "113cf59f9729e3eff8d122e39277c1f262af2732c084169db8b4f3669be2007c",
+      "suggested_scene_counts": {
+        "study_exams": 220,
+        "travel_hotel": 280
+      }
+    },
+    {
+      "request_path": "work/content-library/classification-review-0002.jsonl",
+      "request_rows": 500,
+      "request_sha256": "f52159c02c27f1f4461e806f16dba481472dd18b0c30c105fb779621cca7c4e2",
+      "result_path": "work/content-library/classification-review-0002.result.jsonl",
+      "result_rows": 500,
+      "result_sha256": "a448370f4d77849831f7a4770f427fc8e2fb5d14ced2fad692fb87130c4a5d8d",
+      "suggested_scene_counts": {
+        "technology_devices": 200,
+        "work_meetings": 300
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-probe-top50.jsonl",
+      "request_rows": 100,
+      "request_sha256": "16a60a1034f846063a10c4ef1d203a66d719c6eab41c5b411071f3bdbbdeaf15",
+      "result_path": "work/content-library/semantic-recall-probe-top50.result.jsonl",
+      "result_rows": 100,
+      "result_sha256": "a60a5fd439db64916b02a62f7194629f3faee99c317951eb5bf348845d9f04aa",
+      "suggested_scene_counts": {
+        "study_exams": 50,
+        "travel_hotel": 50
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/health_pharmacy.jsonl",
+      "request_rows": 250,
+      "request_sha256": "1021d25bc4b6ee4dd0adffe8bd1b79cc434910c4fc64edb62afad0f460c69933",
+      "result_path": "work/content-library/semantic-recall-production/health_pharmacy.result.jsonl",
+      "result_rows": 250,
+      "result_sha256": "622443c55eda1e4961b7d1f1e47c414914ded9fda1859576ba2a10efd0de4a24",
+      "suggested_scene_counts": {
+        "health_pharmacy": 250
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/study_exams.jsonl",
+      "request_rows": 500,
+      "request_sha256": "3c44819aceb13c6397f3ad4bfcdd977be8e951c378e8cc819e08eb98db2d4610",
+      "result_path": "work/content-library/semantic-recall-production/study_exams.result.jsonl",
+      "result_rows": 500,
+      "result_sha256": "8a73b61906f5ec27726e7d613a813f8d96972623467d79c29584988cdad0a858",
+      "suggested_scene_counts": {
+        "study_exams": 500
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/technology_devices.jsonl",
+      "request_rows": 200,
+      "request_sha256": "b53f9ae00164addea488d7186514f9b33e16cb69d2963c6bf791486ad7982842",
+      "result_path": "work/content-library/semantic-recall-production/technology_devices.result.jsonl",
+      "result_rows": 200,
+      "result_sha256": "1ed04384b45a34031b0644e54059443451064509bf0d4fcddf747d25876bd886",
+      "suggested_scene_counts": {
+        "technology_devices": 200
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/technology_software.jsonl",
+      "request_rows": 300,
+      "request_sha256": "ee0cc8af012197f5cb7503633da2bf496039cda9f5124f82a28d5ffde3384642",
+      "result_path": "work/content-library/semantic-recall-production/technology_software.result.jsonl",
+      "result_rows": 300,
+      "result_sha256": "eda569a81f44d51f44fbf1352b63f76f530781f9c33ccf6c9d45439811f0e8ec",
+      "suggested_scene_counts": {
+        "technology_software": 300
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/travel_hotel.jsonl",
+      "request_rows": 500,
+      "request_sha256": "51ca3f47c4fe36dc455d27c8dc99383151acf1f35b8447a652aede9a99ea6685",
+      "result_path": "work/content-library/semantic-recall-production/travel_hotel.result.jsonl",
+      "result_rows": 500,
+      "result_sha256": "8b41ea57fcbeadef6b69ff4f684167a652cac2286974296d15b67e82522ded4c",
+      "suggested_scene_counts": {
+        "travel_hotel": 500
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/travel_hotel.lexical-top100.jsonl",
+      "request_rows": 100,
+      "request_sha256": "41b4d2f03ee5b976fbb244123a2edd9df89cf2b91fb6018930a24a9ccbf15c9f",
+      "result_path": "work/content-library/semantic-recall-production/travel_hotel.lexical-top100.audit.jsonl",
+      "result_rows": 100,
+      "result_sha256": "5ea4c5afacc7046cdb2baf4c644a4accd69e22bd0479056de652c8503eb3ac69",
+      "suggested_scene_counts": {
+        "travel_hotel": 100
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/travel_tourism.jsonl",
+      "request_rows": 400,
+      "request_sha256": "62aa6046711df4114843e74068aabc3f6de1a049c4cfb5a73aa007cefb6235bc",
+      "result_path": "work/content-library/semantic-recall-production/travel_tourism.result.jsonl",
+      "result_rows": 400,
+      "result_sha256": "cd377e253d2d8a98d93bfcaaf56edbc7c97ace884a8423925a61b892d436971d",
+      "suggested_scene_counts": {
+        "travel_tourism": 400
+      }
+    },
+    {
+      "request_path": "work/content-library/semantic-recall-production/work_meetings.jsonl",
+      "request_rows": 400,
+      "request_sha256": "8401bf421d548d442754febc53a8fed9a10fa091f4fedc61d9bff6def0ae109c",
+      "result_path": "work/content-library/semantic-recall-production/work_meetings.result.jsonl",
+      "result_rows": 400,
+      "result_sha256": "256394a55c1e3cb66dbdb41b432a8a85ac4b3743c10d6bddfd532aaf15750fc5",
+      "suggested_scene_counts": {
+        "work_meetings": 400
+      }
+    }
+  ],
+  "mapping_issues": {
+    "not_found": [],
+    "ambiguous": [
+      {
+        "source_name": "Project Gutenberg",
+        "source_author": "Herman Melville",
+        "text": "Of the Monstrous Pictures of Whales.",
+        "occurrences": [
+          {
+            "request_path": "work/content-library/classification-review-0002.jsonl",
+            "old_item_id": 614732,
+            "suggested_scene": "technology_devices"
+          }
+        ],
+        "current_item_ids": [
+          1069824,
+          1074128
+        ]
+      },
+      {
+        "source_name": "cornell-movie-dialogs",
+        "source_author": "u3186",
+        "text": "What did they give you?",
+        "occurrences": [
+          {
+            "request_path": "work/content-library/semantic-recall-production/health_pharmacy.jsonl",
+            "old_item_id": 258079,
+            "suggested_scene": "health_pharmacy"
+          }
+        ],
+        "current_item_ids": [
+          1351732,
+          1351734
+        ]
+      },
+      {
+        "source_name": "cornell-movie-dialogs",
+        "source_author": "u4929",
+        "text": "Did they try and fail?",
+        "occurrences": [
+          {
+            "request_path": "work/content-library/classification-review-0001.jsonl",
+            "old_item_id": 320274,
+            "suggested_scene": "study_exams"
+          }
+        ],
+        "current_item_ids": [
+          1413927,
+          1413935
+        ]
+      }
+    ],
+    "current_rejections": [
+      {
+        "current_item_id": 1154560,
+        "stage": "dedupe",
+        "reason": "exact_duplicate:005013cce98075e8de5ccafac5dddadb6e5eedefc37b33b0329ee6b055cf9001",
+        "reviewed_scenes": [
+          "study_exams"
+        ],
+        "request_paths": [
+          "work/content-library/semantic-recall-production/study_exams.jsonl"
+        ]
+      }
+    ]
+  },
+  "hashes": {
+    "config_file_sha256": "ae4d83836ef45fecd3b8f33ffe4641452578a51fc906598489244b9e7298381e",
+    "report_payload_sha256_scope": "Canonical UTF-8 JSON of this report before adding hashes.report_payload_sha256.",
+    "report_payload_sha256": "1914a79d3464e6162a8c17e4c3d4883c236b27cf57f508910061efe2b5d151b7"
+  }
+}
