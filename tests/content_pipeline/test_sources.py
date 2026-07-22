@@ -78,6 +78,9 @@ def test_source_manifest_preserves_initial_sources_and_adds_dialogue_sources() -
         ("multiwoz-2-2", "multiwoz"),
         ("daily-dialog", "dailydialog"),
         ("mts-dialog", "mts-dialog"),
+        ("sgd", "sgd"),
+        ("clinc150", "clinc150"),
+        ("massive-1-0", "massive"),
     ]
 
 

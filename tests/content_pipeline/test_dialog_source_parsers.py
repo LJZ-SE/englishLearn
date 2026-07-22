@@ -235,3 +235,39 @@ def test_source_manifest_adds_three_official_dialogue_archives() -> None:
         "license_name": "CC BY 4.0",
         "license_url": "https://creativecommons.org/licenses/by/4.0/",
     }
+
+
+def test_source_manifest_adds_three_fixed_labeled_archives() -> None:
+    manifest_path = Path(__file__).parents[2] / "tools/content_pipeline/source_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_key = {str(source["key"]): source for source in manifest}
+
+    assert by_key["sgd"] == {
+        "key": "sgd",
+        "kind": "sgd",
+        "url": (
+            "https://github.com/google-research-datasets/dstc8-schema-guided-dialogue/archive/"
+            "e852981ae34990f4358979625854259302feaa78.zip"
+        ),
+        "expected_sha256": "19da4aa3159d113a073ae1bce75ae46c290323d73e512df7d58c8e616dc776b9",
+        "license_name": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    }
+    assert by_key["clinc150"] == {
+        "key": "clinc150",
+        "kind": "clinc150",
+        "url": "https://github.com/clinc/oos-eval/archive/828f8093932c8fe6ca7936c3d2e52903b1c523de.zip",
+        "expected_sha256": "52b7b0b7067b1ee5d94a94e8e5d02de47f821fee2bdd753e18a26e7500288d2b",
+        "normalization_version": 1,
+        "license_name": "CC BY 3.0",
+        "license_url": "https://creativecommons.org/licenses/by/3.0/",
+    }
+    assert by_key["massive-1-0"] == {
+        "key": "massive-1-0",
+        "kind": "massive",
+        "url": "https://amazon-massive-nlu-dataset.s3.amazonaws.com/amazon-massive-dataset-1.0.tar.gz",
+        "expected_sha256": "7df623fd2d300a4d235d6ee5bd396c9a28258d3a0ccb29abdb054506eba153f8",
+        "normalization_version": 1,
+        "license_name": "CC BY 4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    }

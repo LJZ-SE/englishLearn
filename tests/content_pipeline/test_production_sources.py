@@ -21,6 +21,37 @@ from tools.content_pipeline.production_sources import (
 from tools.content_pipeline.work_database import WorkDatabase
 
 
+def test_labeled_sources_use_archive_cache_suffix_and_normalization_in_fingerprint() -> None:
+    clinc = {
+        "key": "clinc150",
+        "kind": "clinc150",
+        "url": "https://example.test/source.zip",
+        "normalization_version": 1,
+    }
+    massive = {
+        "key": "massive-1-0",
+        "kind": "massive",
+        "url": "https://example.test/source.tar.gz",
+        "normalization_version": 1,
+    }
+
+    assert production_sources._cache_filename("clinc150", clinc["url"]) == "clinc150.zip"
+    assert production_sources._cache_filename("massive-1-0", massive["url"]) == "massive-1-0.tar.gz"
+    assert production_sources._source_config(clinc, clinc["url"])["normalization_version"] == 1
+    before = production_sources._config_fingerprint(clinc, clinc["url"])
+    clinc["normalization_version"] = 2
+    assert production_sources._config_fingerprint(clinc, clinc["url"]) != before
+
+    legacy_source = {
+        "key": "multiwoz-2-2",
+        "kind": "multiwoz",
+        "url": "https://example.test/source.zip",
+    }
+    assert "normalization_version" not in production_sources._source_config(
+        legacy_source, legacy_source["url"]
+    )
+
+
 def _write_source_fixtures(tmp_path: Path) -> Path:
     downloads = tmp_path / "fixtures"
     downloads.mkdir()

@@ -20,12 +20,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from tools.content_pipeline.clinc_source import iter_clinc150_utterances
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.dailydialog_source import iter_dailydialog_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
+from tools.content_pipeline.massive_source import iter_massive_utterances
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.mts_dialog_source import iter_mts_dialog_utterances
 from tools.content_pipeline.multiwoz_source import iter_multiwoz_utterances
+from tools.content_pipeline.sgd_source import iter_sgd_utterances
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
 from tools.content_pipeline.work_database import WorkDatabase
@@ -427,7 +430,25 @@ def _validate_downloaded_source(
             f"来源 SHA-256 不匹配: {source['key']}，"
             f"期望 {expected_sha256}，实际 {digest}"
         )
-    if kind not in {"convokit", "multiwoz", "dailydialog", "mts-dialog"}:
+    if kind not in {
+        "convokit",
+        "multiwoz",
+        "dailydialog",
+        "mts-dialog",
+        "sgd",
+        "clinc150",
+        "massive",
+    }:
+        return
+    if kind == "massive":
+        # 解析器只读取固定成员，不解包到文件系统；同时完成 gzip/tar/schema 校验。
+        if not _iterator_has_record(
+            iter_massive_utterances(
+                path,
+                normalization_version=int(source.get("normalization_version", 0)),
+            )
+        ):
+            raise ValueError(f"来源压缩包没有有效记录: {source['key']}")
         return
     if not zipfile.is_zipfile(path):
         raise ValueError(f"来源下载内容不是有效 ZIP: {source['key']}")
@@ -453,8 +474,17 @@ def _validate_downloaded_source(
             valid = "data/dialogues.json" in names and _dailydialog_payload_has_record(
                 json.loads(archive.read("data/dialogues.json"))
             )
-        else:
+        elif kind == "mts-dialog":
             valid = _mts_dialog_archive_has_record(archive, names)
+        elif kind == "sgd":
+            valid = _iterator_has_record(iter_sgd_utterances(path))
+        else:
+            valid = _iterator_has_record(
+                iter_clinc150_utterances(
+                    path,
+                    normalization_version=int(source.get("normalization_version", 0)),
+                )
+            )
     if not valid:
         raise ValueError(f"来源 ZIP 缺少最低数据结构；缺少有效记录: {source['key']}")
 
@@ -527,6 +557,13 @@ def _mts_dialog_archive_has_record(
             ):
                 return True
     return False
+
+
+def _iterator_has_record(items: Iterable[CollectedSentence]) -> bool:
+    count = 0
+    for _item in items:
+        count += 1
+    return count > 0
 
 
 def _download_url(url: str, target_path: Path) -> str:
@@ -629,6 +666,18 @@ def _iter_source(
         return iter_dailydialog_utterances(cache_path)
     if kind == "mts-dialog":
         return iter_mts_dialog_utterances(cache_path)
+    if kind == "sgd":
+        return iter_sgd_utterances(cache_path)
+    if kind == "clinc150":
+        return iter_clinc150_utterances(
+            cache_path,
+            normalization_version=int(source.get("normalization_version", 0)),
+        )
+    if kind == "massive":
+        return iter_massive_utterances(
+            cache_path,
+            normalization_version=int(source.get("normalization_version", 0)),
+        )
     raise ValueError(f"不支持的来源类型: {kind}")
 
 
@@ -824,7 +873,7 @@ def _validate_expanded_sources(sources: list[dict[str, Any]], cache_root: Path) 
 
 
 def _source_config(source: dict[str, Any], url: str) -> dict[str, Any]:
-    return {
+    config = {
         "config_version": 2,
         "key": source["key"],
         "kind": source["kind"],
@@ -838,6 +887,9 @@ def _source_config(source: dict[str, Any], url: str) -> dict[str, Any]:
         "snapshot_version": source.get("snapshot_version"),
         "expected_sha256": source.get("expected_sha256"),
     }
+    if "normalization_version" in source:
+        config["normalization_version"] = source["normalization_version"]
+    return config
 
 
 def _config_fingerprint(source: dict[str, Any], url: str) -> str:
@@ -865,6 +917,8 @@ def _raw_source_name(source: dict[str, Any]) -> str:
         return "English Wikinews"
     if kind == "gutenberg":
         return "Project Gutenberg"
+    if kind == "massive":
+        return "massive-1.0"
     return str(source["key"])
 
 
