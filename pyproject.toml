@@ -17,7 +17,7 @@ dependencies = [
 
 [project.scripts]
 listening-cloze = "listening_cloze.__main__:main"
-listening-cloze-content = "tools.content_pipeline.cli:main"
+listening-cloze-content = "listening_cloze.content_cli:main"
 
 [dependency-groups]
 dev = [

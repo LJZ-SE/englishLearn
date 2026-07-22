@@ -229,3 +229,16 @@ def test_production_source_cli_exposes_import_and_report_commands(tmp_path: Path
     assert json.loads(imported.stdout)["source_kinds"] == 4
     assert json.loads(protected.stdout) == {"legacy_sentences": 1}
     assert json.loads(reported.stdout)["source_kind_count"] == 5
+
+
+def test_installed_content_entrypoint_loads_repository_tools(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from listening_cloze.content_cli import main
+
+    database = tmp_path / "work.db"
+    monkeypatch.setattr(sys, "argv", ["listening-cloze-content", "init", str(database)])
+    main()
+
+    assert database.is_file()
+    assert capsys.readouterr().err == ""
