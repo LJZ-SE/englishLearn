@@ -1,3 +1,4 @@
+import random
 from dataclasses import replace
 
 import pytest
@@ -9,8 +10,59 @@ from PySide6.QtWidgets import QApplication
 
 from listening_cloze.application.controller import PracticeController
 from listening_cloze.application.practice_engine import PracticeEngine
-from listening_cloze.infrastructure.database import ContentQuestion, UserRepository
+from listening_cloze.infrastructure.database import (
+    ContentQuestion,
+    SceneMetadata,
+    UserRepository,
+)
 from listening_cloze.runtime import ui_path
+
+
+class _FakeContentRepository:
+    def __init__(self, questions: list[ContentQuestion]) -> None:
+        self._questions = questions
+
+    def sample_questions(
+        self,
+        *,
+        top_scene: str | None,
+        sub_scene: str | None,
+        difficulty: str,
+        limit: int,
+        exclude_ids: frozenset[str],
+        seed: int,
+    ) -> list[ContentQuestion]:
+        legacy_top_scenes = {"news_podcasts": "news"}
+        candidates = [
+            question
+            for question in self._questions
+            if (
+                top_scene is None
+                or (
+                    question.top_scene
+                    or legacy_top_scenes.get(question.category, question.category)
+                )
+                == top_scene
+            )
+            and (sub_scene is None or question.sub_scene == sub_scene)
+            and question.difficulty == difficulty
+            and question.id not in exclude_ids
+        ]
+        random.Random(seed).shuffle(candidates)
+        return candidates[:limit]
+
+    def get_questions_by_ids(
+        self,
+        ids: list[str] | tuple[str, ...],
+    ) -> list[ContentQuestion]:
+        by_id = {question.id: question for question in self._questions}
+        return [by_id[question_id] for question_id in ids if question_id in by_id]
+
+    def list_scenes(self) -> list[SceneMetadata]:
+        return [
+            SceneMetadata(key="daily", label="日常生活"),
+            SceneMetadata(key="news", label="新闻社会"),
+        ]
 
 
 @pytest.mark.qt_serial
@@ -110,15 +162,11 @@ def test_practice_layout_never_expands_beyond_the_window(tmp_path, qtbot) -> Non
         translation_zh="我们想谈谈汤姆。",
     )
 
-    class SingleQuestionRepository:
-        def list_questions(self, **_filters):
-            return [question]
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            SingleQuestionRepository(),
+            _FakeContentRepository([question]),
             UserRepository(tmp_path / "user.db"),
         )
     )
@@ -195,15 +243,11 @@ def test_practice_clears_reused_answer_fields_when_question_changes(tmp_path, qt
         for index in range(3)
     )
 
-    class TwoQuestionRepository:
-        def list_questions(self, **_filters):
-            return questions
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            TwoQuestionRepository(),
+            _FakeContentRepository(questions),
             UserRepository(tmp_path / "user.db"),
         )
     )
@@ -262,15 +306,11 @@ def test_space_moves_focus_to_the_next_answer_field_without_being_entered(
         aliases=(),
     )
 
-    class SingleQuestionRepository:
-        def list_questions(self, **_filters):
-            return [question]
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            SingleQuestionRepository(),
+            _FakeContentRepository([question]),
             UserRepository(tmp_path / "user.db"),
         )
     )
@@ -340,15 +380,11 @@ def test_overflowing_practice_content_can_scroll_until_submit_button_is_visible(
         translation_zh="布朗回应说，一百万人来自欧洲，但有一百万英国人进入了欧洲。",
     )
 
-    class SingleQuestionRepository:
-        def list_questions(self, **_filters):
-            return [question]
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            SingleQuestionRepository(),
+            _FakeContentRepository([question]),
             UserRepository(tmp_path / "user.db"),
         )
     )
@@ -401,15 +437,11 @@ def test_home_round_trip_keeps_the_unsubmitted_answer_draft(tmp_path, qtbot) -> 
         aliases=(),
     )
 
-    class SingleQuestionRepository:
-        def list_questions(self, **_filters):
-            return [question]
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            SingleQuestionRepository(),
+            _FakeContentRepository([question]),
             UserRepository(tmp_path / "user.db"),
         )
     )
@@ -473,15 +505,11 @@ def test_replay_shortcut_invokes_replay_without_using_the_mouse(tmp_path, qtbot)
         aliases=(),
     )
 
-    class SingleQuestionRepository:
-        def list_questions(self, **_filters):
-            return [question]
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            SingleQuestionRepository(),
+            _FakeContentRepository([question]),
             UserRepository(tmp_path / "user.db"),
         )
     )
@@ -524,15 +552,11 @@ def test_correct_answer_reveals_the_full_sentence_translation(tmp_path, qtbot) -
         translation_zh="他们今天听了。",
     )
 
-    class SingleQuestionRepository:
-        def list_questions(self, **_filters):
-            return [question]
-
     application = QApplication.instance() or QApplication([])
     assert application is not None
     controller = PracticeController(
         PracticeEngine(
-            SingleQuestionRepository(),
+            _FakeContentRepository([question]),
             UserRepository(tmp_path / "user.db"),
         )
     )
