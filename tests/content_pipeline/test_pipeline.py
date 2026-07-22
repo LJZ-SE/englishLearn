@@ -9,7 +9,7 @@ import pytest
 
 from tools.content_pipeline.builder import BuildError, build_database
 from tools.content_pipeline.candidates import generate_variants
-from tools.content_pipeline.categorize import CategoryClassifier
+from tools.content_pipeline.categorize import CategoryClassifier, SceneClassifier
 from tools.content_pipeline.clean import clean_sentence, normalized_hash, rejection_reason
 from tools.content_pipeline.collector import SourceConfig, collect_sources, load_source_configs
 from tools.content_pipeline.models import CollectedSentence
@@ -112,6 +112,34 @@ def test_classifier_handles_plural_news_terms_and_open_news_provenance() -> None
 
     assert classifier.classify(newspapers) == "news_podcasts"
     assert classifier.classify(voa) == "news_podcasts"
+
+
+def test_scene_classifier_honors_valid_source_scene_before_keyword_scoring() -> None:
+    item = sentence("The hotel reservation was confirmed.")
+    item = CollectedSentence(
+        **{
+            field: getattr(item, field)
+            for field in (
+                "text",
+                "source_url",
+                "source_name",
+                "license_name",
+                "license_url",
+                "category_hint",
+                "source_author",
+            )
+        },
+        top_scene="work",
+        sub_scene="work_office",
+    )
+
+    result = SceneClassifier().classify(item)
+
+    assert (result.top_scene, result.sub_scene, result.method) == (
+        "work",
+        "work_office",
+        "source_explicit",
+    )
 
 
 def test_generate_variants_returns_three_distinct_exact_spans_with_increasing_scores() -> None:

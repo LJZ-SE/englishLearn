@@ -3,15 +3,30 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
+from tools.content_pipeline.categorize import SceneClassifier
 from tools.content_pipeline.clean import clean_sentence, rejection_reason
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
+from tools.content_pipeline.dedupe import NearDuplicateIndex, simhash64
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.models import CollectedSentence
+from tools.content_pipeline.selection import select_scene_quotas
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
-from tools.content_pipeline.work_database import WorkDatabase
+from tools.content_pipeline.work_database import WorkDatabase, WorkItem
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectionRow:
+    id: int
+    text: str
+    source_name: str
+    source_author: str
+    top_scene: str
+    sub_scene: str
+    protected: bool
 
 
 def main() -> None:
@@ -29,6 +44,12 @@ def main() -> None:
     clean_parser = subparsers.add_parser("clean")
     clean_parser.add_argument("work_db", type=Path)
     clean_parser.add_argument("--limit", type=int, default=1000)
+    for command in ("dedupe", "classify"):
+        stage_parser = subparsers.add_parser(command)
+        stage_parser.add_argument("work_db", type=Path)
+        stage_parser.add_argument("--limit", type=int, default=1000)
+    select_parser = subparsers.add_parser("select")
+    select_parser.add_argument("work_db", type=Path)
     arguments = parser.parse_args()
     database = WorkDatabase(arguments.work_db)
 
@@ -47,8 +68,14 @@ def main() -> None:
         _import_items(database, iter_wikinews_extracts(arguments.path))
     elif arguments.command == "import-gutenberg":
         _import_items(database, iter_gutenberg_text(arguments.path, arguments.ebook_id))
-    else:
+    elif arguments.command == "clean":
         _clean_items(database, arguments.limit)
+    elif arguments.command == "dedupe":
+        _dedupe_items(database, arguments.limit)
+    elif arguments.command == "classify":
+        _classify_items(database, arguments.limit)
+    else:
+        _select_items(database)
 
 
 def _add_import_parser(
@@ -94,6 +121,113 @@ def _clean_items(database: WorkDatabase, limit: int) -> None:
             database.record_rejection(item.id, "clean", reason)
             continue
         database.mark_stage(item.id, "clean", payload={"clean_text": clean_sentence(item.text)})
+
+
+def _dedupe_items(database: WorkDatabase, limit: int) -> None:
+    index = NearDuplicateIndex()
+    with database.connect() as connection:
+        completed = connection.execute(
+            """
+            SELECT clean.payload_json, raw.text
+            FROM stage_results AS dedupe
+            JOIN stage_results AS clean ON clean.item_id = dedupe.item_id AND clean.stage = 'clean'
+            JOIN raw_items AS raw ON raw.id = dedupe.item_id
+            WHERE dedupe.stage = 'dedupe'
+            ORDER BY dedupe.item_id
+            """
+        ).fetchall()
+    for payload_json, raw_text in completed:
+        payload = json.loads(payload_json)
+        index.add(str(payload.get("clean_text") or raw_text))
+
+    for item in database.claim_batch("dedupe", limit=limit):
+        text = _clean_text(database, item)
+        unique = index.add(text)
+        if unique or item.protected:
+            database.mark_stage(
+                item.id,
+                "dedupe",
+                payload={"simhash64": f"{simhash64(text):016x}"},
+            )
+            continue
+        database.record_rejection(
+            item.id,
+            "dedupe",
+            f"near_duplicate:{index.duplicate_hash}",
+        )
+
+
+def _classify_items(database: WorkDatabase, limit: int) -> None:
+    classifier = SceneClassifier()
+    for item in database.claim_batch("classify", limit=limit):
+        result = classifier.classify(_clean_text(database, item))
+        database.mark_stage(
+            item.id,
+            "classify",
+            payload={
+                "top_scene": result.top_scene,
+                "sub_scene": result.sub_scene,
+                "confidence": result.confidence,
+                "method": result.method,
+            },
+        )
+
+
+def _select_items(database: WorkDatabase) -> None:
+    with database.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT raw.id, raw.text, raw.source_name, raw.source_author, raw.protected,
+                   classify.payload_json
+            FROM raw_items AS raw
+            JOIN stage_results AS classify
+              ON classify.item_id = raw.id AND classify.stage = 'classify'
+            LEFT JOIN stage_results AS selected
+              ON selected.item_id = raw.id AND selected.stage = 'select'
+            LEFT JOIN rejections ON rejections.item_id = raw.id
+            WHERE selected.item_id IS NULL AND rejections.item_id IS NULL
+            ORDER BY raw.id
+            """
+        ).fetchall()
+    candidates: list[_SelectionRow] = []
+    for item_id, text, source_name, source_author, protected, payload_json in rows:
+        payload = json.loads(payload_json)
+        top_scene = payload.get("top_scene")
+        sub_scene = payload.get("sub_scene")
+        if not isinstance(top_scene, str) or not isinstance(sub_scene, str):
+            continue
+        candidates.append(
+            _SelectionRow(
+                id=int(item_id),
+                text=str(text),
+                source_name=str(source_name),
+                source_author=str(source_author),
+                top_scene=top_scene,
+                sub_scene=sub_scene,
+                protected=bool(protected),
+            )
+        )
+
+    selected = select_scene_quotas(candidates)
+    for sub_scene, scene_rows in selected.items():
+        for row in scene_rows:
+            database.mark_stage(
+                row.id,
+                "select",
+                payload={"top_scene": row.top_scene, "sub_scene": sub_scene},
+            )
+
+
+def _clean_text(database: WorkDatabase, item: WorkItem) -> str:
+    with database.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM stage_results WHERE item_id = ? AND stage = 'clean'",
+            (item.id,),
+        ).fetchone()
+    if row is None:
+        return clean_sentence(item.text)
+    payload = json.loads(row[0])
+    return str(payload.get("clean_text") or clean_sentence(item.text))
 
 
 if __name__ == "__main__":
