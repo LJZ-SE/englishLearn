@@ -1,0 +1,37 @@
+[
+  {
+    "key": "tatoeba-eng",
+    "kind": "tatoeba",
+    "url": "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences_detailed.tsv.bz2",
+    "license_name": "CC BY 2.0 FR",
+    "license_url": "https://creativecommons.org/licenses/by/2.0/fr/"
+  },
+  {
+    "key": "cornell-movie-dialogs",
+    "kind": "convokit",
+    "download_name": "movie-corpus",
+    "license_name": "source terms",
+    "license_url": "https://convokit.cornell.edu/documentation/movie.html"
+  },
+  {
+    "key": "switchboard",
+    "kind": "convokit",
+    "download_name": "switchboard-corpus",
+    "license_name": "source terms",
+    "license_url": "https://convokit.cornell.edu/documentation/switchboard.html"
+  },
+  {
+    "key": "english-wikinews",
+    "kind": "wikinews",
+    "url": "https://en.wikinews.org/w/api.php",
+    "license_name": "per-item license",
+    "license_url": "https://en.wikinews.org/wiki/Wikinews:Copyright"
+  },
+  {
+    "key": "gutenberg",
+    "kind": "gutenberg",
+    "ebook_ids": [11, 74, 76, 84, 98, 1342, 1661, 2701, 345, 174],
+    "license_name": "per-item terms",
+    "license_url": "https://www.gutenberg.org/policy/license.html"
+  }
+]

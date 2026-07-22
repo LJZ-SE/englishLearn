@@ -293,6 +293,7 @@ def test_tatoeba_detailed_reader_maps_id_text_and_author_to_attributed_items(
             license_name="CC BY 2.0 FR",
             license_url="https://creativecommons.org/licenses/by/2.0/fr/",
             source_author="alice",
+            source_item_id="42",
         )
     ]
 
@@ -331,6 +332,10 @@ def test_wikinews_reader_splits_article_intro_and_keeps_article_attribution(
     ]
     assert all(item.category_hint == "news_podcasts" for item in items)
     assert all(item.source_author == "Wikinews" for item in items)
+    assert [item.source_item_id for item in items] == [
+        "Council approves new rail plan:1",
+        "Council approves new rail plan:2",
+    ]
     assert all(item.license_name == "CC BY 4.0" for item in items)
 
 

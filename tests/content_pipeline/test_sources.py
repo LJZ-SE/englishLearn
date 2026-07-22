@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from tools.content_pipeline.clean import clean_sentence, rejection_reason
+from tools.content_pipeline.convokit_source import iter_convokit_utterances
+from tools.content_pipeline.gutenberg import iter_gutenberg_text
+from tools.content_pipeline.models import CollectedSentence
+from tools.content_pipeline.work_database import WorkDatabase
+
+
+def test_clean_rejects_subtitle_metadata_and_accepts_complete_dialogue() -> None:
+    assert rejection_reason("00:01:14,000 --> 00:01:17,000") == "subtitle_metadata"
+    assert rejection_reason("[Door slams]") == "stage_direction"
+    assert rejection_reason("SPEAKER 2: We need to leave now.") == "speaker_label"
+    assert rejection_reason("We need to leave before the last train.") is None
+    assert clean_sentence("Mia: We need to leave before the last train.") == (
+        "We need to leave before the last train."
+    )
+
+
+def test_source_manifest_declares_the_fixed_initial_source_set() -> None:
+    manifest_path = Path(__file__).parents[2] / "tools/content_pipeline/source_manifest.json"
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert [(item["key"], item["kind"]) for item in manifest] == [
+        ("tatoeba-eng", "tatoeba"),
+        ("cornell-movie-dialogs", "convokit"),
+        ("switchboard", "convokit"),
+        ("english-wikinews", "wikinews"),
+        ("gutenberg", "gutenberg"),
+    ]
+    assert manifest[-1]["ebook_ids"] == [11, 74, 76, 84, 98, 1342, 1661, 2701, 345, 174]
+
+
+def test_convokit_reader_preserves_stable_id_author_and_source_url(tmp_path: Path) -> None:
+    payload = tmp_path / "utterances.jsonl"
+    payload.write_text(
+        json.dumps(
+            {
+                "id": "movie-utt-17",
+                "text": "SPEAKER 2: Please meet me outside after class today.",
+                "speaker": {"id": "s-2", "meta": {"name": "Mia"}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert list(iter_convokit_utterances(payload, "cornell-movie-dialogs")) == [
+        CollectedSentence(
+            text="SPEAKER 2: Please meet me outside after class today.",
+            source_item_id="movie-utt-17",
+            source_author="Mia",
+            source_url="https://convokit.cornell.edu/documentation/movie.html",
+            source_name="cornell-movie-dialogs",
+            license_name="source terms",
+            license_url="https://convokit.cornell.edu/documentation/movie.html",
+        )
+    ]
+
+
+def test_gutenberg_reader_preserves_stable_id_author_and_source_url(tmp_path: Path) -> None:
+    text = tmp_path / "11.txt"
+    text.write_text(
+        "Header material\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK 11 ***\n"
+        "Title: Alice's Adventures in Wonderland\n"
+        "Author: Lewis Carroll\n\n"
+        "Alice was beginning to get very tired of sitting by her sister on the bank.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK 11 ***\n",
+        encoding="utf-8",
+    )
+
+    assert list(iter_gutenberg_text(text, 11)) == [
+        CollectedSentence(
+            text="Alice was beginning to get very tired of sitting by her sister on the bank.",
+            source_item_id="11:1",
+            source_author="Lewis Carroll",
+            source_url="https://www.gutenberg.org/ebooks/11",
+            source_name="Project Gutenberg",
+            license_name="per-item terms",
+            license_url="https://www.gutenberg.org/policy/license.html",
+        )
+    ]
+
+
+def test_cli_imports_raw_items_and_clean_records_explicit_rejection(tmp_path: Path) -> None:
+    work_db = tmp_path / "work.db"
+    utterances = tmp_path / "utterances.jsonl"
+    utterances.write_text(
+        json.dumps(
+            {
+                "id": "switchboard-1",
+                "text": "[Door slams]",
+                "speaker": {"id": "caller-a"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    command = [sys.executable, "-m", "tools.content_pipeline.cli"]
+
+    subprocess.run([*command, "init", str(work_db)], check=True)
+    subprocess.run(
+        [*command, "import-convokit", str(work_db), str(utterances), "switchboard"],
+        check=True,
+    )
+    subprocess.run([*command, "clean", str(work_db)], check=True)
+
+    database = WorkDatabase(work_db)
+    with database.connect() as connection:
+        raw_item = connection.execute("SELECT source_item_id FROM raw_items").fetchone()
+        rejection = connection.execute("SELECT stage, reason FROM rejections").fetchone()
+    assert raw_item == ("switchboard-1",)
+    assert rejection == ("clean", "stage_direction")
