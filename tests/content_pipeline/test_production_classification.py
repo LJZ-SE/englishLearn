@@ -204,6 +204,83 @@ def test_classification_import_rejects_result_file_larger_than_500(
         import_classification_repairs(database, [path])
 
 
+def test_classification_import_atomically_records_explicit_out_of_pool_decisions(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    accepted = _ready_item(database, "accepted", "We booked a hotel room for tonight.")
+    rejected = _ready_item(database, "rejected", "That idea never crossed my mind.")
+    for item_id in (accepted, rejected):
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={"method": "llm_required", "top_scene": None, "sub_scene": None},
+        )
+    result_path = tmp_path / "result.jsonl"
+    result_path.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "item_id": accepted,
+                        "top_scene": "travel",
+                        "sub_scene": "travel_hotel",
+                        "reason": "explicit hotel booking",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "item_id": rejected,
+                        "top_scene": None,
+                        "sub_scene": None,
+                        "reason": "no reliable scene evidence",
+                    }
+                ),
+            )
+        )
+        + "\n"
+    )
+
+    assert import_classification_repairs(database, [result_path]) == 2
+    assert database.pending_classification_repairs() == 0
+    with database.connect() as connection:
+        methods = dict(
+            connection.execute(
+                "SELECT item_id, json_extract(payload_json, '$.method') "
+                "FROM stage_results WHERE stage='classify' ORDER BY item_id"
+            )
+        )
+    assert methods == {accepted: "llm_repair", rejected: "out_of_candidate_pool"}
+
+
+def test_classification_import_rejects_half_null_scene_decision(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = _ready_item(database, "pending", "The sentence has no reliable scene.")
+    database.mark_stage(
+        item_id,
+        "classify",
+        payload={"method": "llm_required", "top_scene": None, "sub_scene": None},
+    )
+    result_path = tmp_path / "result.jsonl"
+    result_path.write_text(
+        json.dumps(
+            {
+                "item_id": item_id,
+                "top_scene": "daily",
+                "sub_scene": None,
+                "reason": "invalid half-null decision",
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(ClassificationImportError, match="同时为 null"):
+        import_classification_repairs(database, [result_path])
+    assert database.pending_classification_repairs() == 1
+
+
 def test_dedupe_uses_persistent_index_without_loading_all_stage_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -272,6 +349,76 @@ def test_candidate_pool_uses_wikinews_fallback_without_restoring_broad_keywords(
     assert current.method == "out_of_candidate_pool"
     assert current.sub_scene is None
     assert (wikinews.method, wikinews.sub_scene) == ("candidate_source", "news_current")
+
+
+@pytest.mark.parametrize(
+    ("text", "wrong_scene"),
+    (
+        ("Would you like your ears to show?", "culture_movies"),
+        ("As it is cold, you may keep your overcoat on.", "health_pharmacy"),
+        ("Can you account for his disappearance in any way?", "technology_software"),
+        ("You won't be able to stay mad at me, right?", "travel_hotel"),
+        ("Well, he sure seems fired up all of a sudden.", "work_jobs"),
+        (
+            "The record was set in Athens before another athlete came close to meeting it twice.",
+            "work_meetings",
+        ),
+        ("That runs against my principles.", "health_fitness"),
+        ("She admired the straight hair of their dumpling heads.", "travel_directions"),
+        ("She went to the market for tomatoes.", "news_business"),
+        ("He has lived in this city since childhood.", "travel_tourism"),
+        ("It was a cold winter morning.", "health_pharmacy"),
+        ("Please stay at your desk until I return.", "travel_hotel"),
+        ("She decided to switch jobs after lunch.", "technology_devices"),
+        ("There was no news from the family that evening.", "news_current"),
+        ("Sounds like you're not leaving much room for discussion.", "work_meetings"),
+    ),
+)
+def test_candidate_pool_rejects_reviewed_ambiguous_single_word_false_positives(
+    text: str, wrong_scene: str
+) -> None:
+    result = SceneClassifier().classify_candidate(text)
+
+    assert result.method == "out_of_candidate_pool"
+    assert result.sub_scene is None
+    assert result.sub_scene != wrong_scene
+
+
+def test_candidate_pool_accepts_two_consistent_context_signals() -> None:
+    result = SceneClassifier().classify_candidate(
+        "They study every evening to prepare carefully."
+    )
+
+    assert (result.method, result.sub_scene) == ("context_keywords", "study_exams")
+    assert result.confidence >= 0.6
+
+
+def test_stage_options_reject_non_positive_and_conflicting_batch_controls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "work.db"
+    invalid_options = (
+        ("--batch-size", "0"),
+        ("--batch-size", "-1"),
+        ("--limit", "0"),
+        ("--limit", "-1"),
+        ("--limit", "1", "--batch-size", "1"),
+    )
+
+    for options in invalid_options:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["listening-cloze-content", "clean", str(database_path), *options],
+        )
+        with pytest.raises(SystemExit):
+            cli.main()
+
+
+def test_stage_options_preserve_positive_legacy_limit() -> None:
+    arguments = type("Arguments", (), {"batch_size": None, "limit": 7})()
+
+    assert cli._stage_options(arguments) == (7, False)
 
 
 def test_clean_stage_preserves_protected_legacy_even_when_normal_filter_rejects(

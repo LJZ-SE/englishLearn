@@ -36,6 +36,7 @@ class Candidate:
     top_scene: str
     sub_scene: str
     protected: bool = False
+    confidence: float = 0.0
 
 
 def _candidates(*, protected_ids: frozenset[int] = frozenset()) -> list[Candidate]:
@@ -301,6 +302,40 @@ def test_quota_selection_finds_feasible_cross_source_author_assignment(
     selected = select_scene_quotas([*protected, *regular])["travel_hotel"]
 
     assert {row.id for row in selected if not row.protected} == {302, 303}
+
+
+def test_quota_selection_globally_prefers_confidence_across_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        selection,
+        "SCENES",
+        (SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 5),),
+    )
+    rows = [
+        Candidate(
+            id=index,
+            text=f"Hotel candidate {index} has distinct wording for this fixture.",
+            source_name=source,
+            source_author=f"author-{index}",
+            top_scene="travel",
+            sub_scene="travel_hotel",
+            confidence=confidence,
+        )
+        for index, source, confidence in (
+            (1, "source-a", 0.5),
+            (2, "source-a", 0.5),
+            (3, "source-b", 0.5),
+            (4, "source-b", 0.5),
+            (5, "source-c", 0.9),
+            (6, "source-c", 0.9),
+        )
+    ]
+
+    selected = select_scene_quotas(rows)["travel_hotel"]
+
+    assert {5, 6} <= {row.id for row in selected}
+    assert sum(row.confidence for row in selected) == pytest.approx(3.3)
 
 
 def test_quota_error_reports_every_scene_shortage() -> None:

@@ -15,14 +15,22 @@ from tools.content_pipeline.classification import (
 from tools.content_pipeline.clean import clean_sentence, rejection_reason
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
+from tools.content_pipeline.lexical_recall import run_lexical_conflict_recall
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.production_sources import (
     import_all_sources,
     import_legacy_database,
     report_sources,
 )
-from tools.content_pipeline.scenes import SCENES
+from tools.content_pipeline.scenes import SCENES, SUB_SCENES
 from tools.content_pipeline.selection import select_scene_quota, select_scene_quotas
+from tools.content_pipeline.semantic_recall import (
+    ModelMetadata,
+    RecallScene,
+    SentenceTransformerEmbedder,
+    run_semantic_recall,
+    run_semantic_recall_many,
+)
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.translation import (
     OpusMtTranslator,
@@ -73,13 +81,15 @@ def main() -> None:
     gutenberg_parser.add_argument("ebook_id", type=int)
     clean_parser = subparsers.add_parser("clean")
     clean_parser.add_argument("work_db", type=Path)
-    clean_parser.add_argument("--limit", type=int)
-    clean_parser.add_argument("--batch-size", type=int)
+    clean_batch_group = clean_parser.add_mutually_exclusive_group()
+    clean_batch_group.add_argument("--limit", type=_positive_int)
+    clean_batch_group.add_argument("--batch-size", type=_positive_int)
     for command in ("dedupe", "classify"):
         stage_parser = subparsers.add_parser(command)
         stage_parser.add_argument("work_db", type=Path)
-        stage_parser.add_argument("--limit", type=int)
-        stage_parser.add_argument("--batch-size", type=int)
+        stage_batch_group = stage_parser.add_mutually_exclusive_group()
+        stage_batch_group.add_argument("--limit", type=_positive_int)
+        stage_batch_group.add_argument("--batch-size", type=_positive_int)
         if command == "classify":
             stage_parser.add_argument("--export-llm", type=Path)
     classification_import = subparsers.add_parser("import-classifications")
@@ -88,6 +98,39 @@ def main() -> None:
     select_parser = subparsers.add_parser("select")
     select_parser.add_argument("work_db", type=Path)
     select_parser.add_argument("--exact-quotas", action="store_true")
+    recall_parser = subparsers.add_parser("recall-classification")
+    recall_parser.add_argument("work_db", type=Path)
+    recall_parser.add_argument("--sub-scene", required=True)
+    recall_parser.add_argument("--prototypes", type=Path, required=True)
+    recall_parser.add_argument("--model-path", type=Path, required=True)
+    recall_parser.add_argument("--model-name", default="sentence-transformers/all-MiniLM-L6-v2")
+    recall_parser.add_argument("--model-revision", required=True)
+    recall_parser.add_argument("--model-sha256", required=True)
+    recall_parser.add_argument("--device", choices=("cpu", "mps"), default="cpu")
+    recall_parser.add_argument("--output", type=Path, required=True)
+    recall_parser.add_argument("--checkpoint", type=Path, required=True)
+    recall_parser.add_argument("--exclude", type=Path, nargs="*", default=[])
+    recall_parser.add_argument("--top-k", type=_positive_int, required=True)
+    recall_parser.add_argument("--batch-size", type=_positive_int, default=512)
+    recalls_parser = subparsers.add_parser("recall-classifications")
+    recalls_parser.add_argument("work_db", type=Path)
+    recalls_parser.add_argument("--config", type=Path, required=True)
+    recalls_parser.add_argument("--model-path", type=Path, required=True)
+    recalls_parser.add_argument(
+        "--model-name", default="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    recalls_parser.add_argument("--model-revision", required=True)
+    recalls_parser.add_argument("--model-sha256", required=True)
+    recalls_parser.add_argument("--device", choices=("cpu", "mps"), default="cpu")
+    recalls_parser.add_argument("--output-dir", type=Path, required=True)
+    recalls_parser.add_argument("--checkpoint", type=Path, required=True)
+    recalls_parser.add_argument("--exclude", type=Path, nargs="*", default=[])
+    recalls_parser.add_argument("--batch-size", type=_positive_int, default=512)
+    lexical_recall_parser = subparsers.add_parser("recall-lexical-conflicts")
+    lexical_recall_parser.add_argument("work_db", type=Path)
+    lexical_recall_parser.add_argument("--config", type=Path, required=True)
+    lexical_recall_parser.add_argument("--output", type=Path, required=True)
+    lexical_recall_parser.add_argument("--exclude", type=Path, nargs="*", default=[])
     translate_parser = subparsers.add_parser("translate")
     translate_parser.add_argument("work_db", type=Path)
     translate_parser.add_argument("--batch-size", type=int, default=32)
@@ -185,6 +228,61 @@ def main() -> None:
         summary = _select_items(database, bounded=arguments.exact_quotas)
         if summary is not None:
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    elif arguments.command == "recall-classification":
+        prototypes = _load_recall_prototypes(arguments.prototypes, arguments.sub_scene)
+        excluded_ids = _load_recall_excluded_ids(arguments.exclude)
+        embedder = SentenceTransformerEmbedder(
+            arguments.model_path,
+            ModelMetadata(
+                arguments.model_name,
+                arguments.model_revision,
+                arguments.model_sha256,
+            ),
+            device=arguments.device,
+        )
+        summary = run_semantic_recall(
+            database,
+            sub_scene=arguments.sub_scene,
+            prototypes=prototypes,
+            embedder=embedder,
+            output_path=arguments.output,
+            checkpoint_path=arguments.checkpoint,
+            exclude_ids=excluded_ids,
+            top_k=arguments.top_k,
+            batch_size=arguments.batch_size,
+        )
+        print(json.dumps(summary, ensure_ascii=False))
+    elif arguments.command == "recall-classifications":
+        scenes = _load_recall_scenes(arguments.config)
+        excluded_ids = _load_recall_excluded_ids(arguments.exclude)
+        embedder = SentenceTransformerEmbedder(
+            arguments.model_path,
+            ModelMetadata(
+                arguments.model_name,
+                arguments.model_revision,
+                arguments.model_sha256,
+            ),
+            device=arguments.device,
+        )
+        summary = run_semantic_recall_many(
+            database,
+            scenes=scenes,
+            embedder=embedder,
+            output_dir=arguments.output_dir,
+            checkpoint_path=arguments.checkpoint,
+            exclude_ids=excluded_ids,
+            batch_size=arguments.batch_size,
+        )
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    elif arguments.command == "recall-lexical-conflicts":
+        lexical_config = _load_lexical_recall_config(arguments.config)
+        summary = run_lexical_conflict_recall(
+            database,
+            **lexical_config,
+            output_path=arguments.output,
+            exclude_ids=_load_recall_excluded_ids(arguments.exclude),
+        )
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     elif arguments.command == "translate":
         translator = OpusMtTranslator(
             batch_size=arguments.batch_size,
@@ -201,10 +299,130 @@ def main() -> None:
 
 
 def _stage_options(arguments: argparse.Namespace) -> tuple[int, bool]:
-    batch_size = arguments.batch_size or arguments.limit or 1000
-    if batch_size < 1:
-        raise ValueError("批次大小必须大于 0")
-    return batch_size, arguments.batch_size is not None
+    if arguments.batch_size is not None and arguments.limit is not None:
+        raise ValueError("--batch-size 与 --limit 不能同时使用")
+    if arguments.batch_size is not None:
+        return arguments.batch_size, True
+    if arguments.limit is not None:
+        return arguments.limit, False
+    return 1000, False
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("必须是大于 0 的整数")
+    return parsed
+
+
+def _load_recall_prototypes(path: Path, sub_scene: str) -> tuple[str, ...]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"无法读取语义召回原型文件 {path}: {error}") from error
+    if not isinstance(payload, dict) or set(payload) != {"sub_scene", "prototypes"}:
+        raise ValueError("语义召回原型文件字段必须精确为 sub_scene/prototypes")
+    prototypes = payload["prototypes"]
+    if payload["sub_scene"] != sub_scene:
+        raise ValueError("语义召回原型文件的 sub_scene 与命令参数不匹配")
+    if (
+        not isinstance(prototypes, list)
+        or not prototypes
+        or any(not isinstance(text, str) or not text.strip() for text in prototypes)
+    ):
+        raise ValueError("语义召回 prototypes 必须是非空字符串列表")
+    return tuple(text.strip() for text in prototypes)
+
+
+def _load_recall_scenes(path: Path) -> tuple[RecallScene, ...]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"无法读取多场景语义召回配置 {path}: {error}") from error
+    if not isinstance(payload, dict) or set(payload) != {"scenes"}:
+        raise ValueError("多场景语义召回配置字段必须精确为 scenes")
+    raw_scenes = payload["scenes"]
+    if not isinstance(raw_scenes, list) or not raw_scenes:
+        raise ValueError("多场景语义召回 scenes 必须是非空列表")
+    scenes: list[RecallScene] = []
+    for index, raw_scene in enumerate(raw_scenes, start=1):
+        if not isinstance(raw_scene, dict) or set(raw_scene) != {
+            "sub_scene",
+            "prototypes",
+            "top_k",
+        }:
+            raise ValueError(f"多场景语义召回 scenes[{index}] 字段非法")
+        sub_scene = raw_scene["sub_scene"]
+        prototypes = raw_scene["prototypes"]
+        top_k = raw_scene["top_k"]
+        if not isinstance(sub_scene, str) or sub_scene not in SUB_SCENES:
+            raise ValueError(f"多场景语义召回 scenes[{index}] 场景非法")
+        if (
+            not isinstance(prototypes, list)
+            or not prototypes
+            or any(not isinstance(text, str) or not text.strip() for text in prototypes)
+        ):
+            raise ValueError(f"多场景语义召回 scenes[{index}] prototypes 非法")
+        if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 1:
+            raise ValueError(f"多场景语义召回 scenes[{index}] top_k 非法")
+        scenes.append(
+            RecallScene(
+                sub_scene=sub_scene,
+                prototypes=tuple(text.strip() for text in prototypes),
+                top_k=top_k,
+            )
+        )
+    return tuple(scenes)
+
+
+def _load_recall_excluded_ids(paths: list[Path]) -> set[int]:
+    item_ids: set[int] = set()
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as error:
+            raise ValueError(f"无法读取语义召回排除文件 {path}: {error}") from error
+        for line_number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"{path}:{line_number} 不是合法 JSON") from error
+            item_id = row.get("item_id") if isinstance(row, dict) else None
+            if not isinstance(item_id, int) or isinstance(item_id, bool):
+                raise ValueError(f"{path}:{line_number} 缺少整数 item_id")
+            item_ids.add(item_id)
+    return item_ids
+
+
+def _load_lexical_recall_config(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"无法读取 lexical conflict recall 配置 {path}: {error}") from error
+    expected = {"sub_scene", "keywords", "phrases", "top_k"}
+    if not isinstance(payload, dict) or set(payload) != expected:
+        raise ValueError(f"lexical conflict recall 配置字段必须精确为 {sorted(expected)}")
+    sub_scene = payload["sub_scene"]
+    keywords = payload["keywords"]
+    phrases = payload["phrases"]
+    top_k = payload["top_k"]
+    if not isinstance(sub_scene, str) or sub_scene not in SUB_SCENES:
+        raise ValueError("lexical conflict recall 的 sub_scene 非法")
+    for name, values in (("keywords", keywords), ("phrases", phrases)):
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip() for value in values
+        ):
+            raise ValueError(f"lexical conflict recall 的 {name} 必须是字符串列表")
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 500:
+        raise ValueError("lexical conflict recall 的 top_k 必须在 1 到 500 之间")
+    return {
+        "sub_scene": sub_scene,
+        "keywords": tuple(value.strip() for value in keywords),
+        "phrases": tuple(value.strip() for value in phrases),
+        "top_k": top_k,
+    }
 
 
 def _add_import_parser(
@@ -291,7 +509,7 @@ def _classify_items(
         "llm_required": 0,
         "out_of_candidate_pool": 0,
     }
-    model_version = "scene-candidate-v8"
+    model_version = "scene-candidate-v11"
     while batch := database.claim_stage_batch(
         "classify", limit=limit, stale_model_version=model_version
     ):

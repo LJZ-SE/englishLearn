@@ -17,6 +17,7 @@ src/listening_cloze/data/supertonic-3/
 work/content-library/*.db
 work/content-library/downloads/
 work/content-library/model-cache/
+work/content-library/semantic-recall*
 work/content-library/*.jsonl
 work/content-library/*.tmp
 work/content-library/source-report.json

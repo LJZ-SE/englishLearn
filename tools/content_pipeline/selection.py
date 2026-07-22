@@ -3,7 +3,7 @@ from __future__ import annotations
 import heapq
 import json
 import math
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 
 from tools.content_pipeline.candidates import generate_variants
@@ -53,6 +53,15 @@ def select_scene_quotas[RowT](rows: Iterable[RowT]) -> dict[str, list[RowT]]:
 
 def select_scene_quota[RowT](scene: SceneDefinition, rows: Iterable[RowT]) -> list[RowT]:
     """选择单个场景，供生产流水线逐场景限制内存峰值。"""
+    selected = select_scene_partial(scene, rows)
+    shortage = max(scene.quota - len(selected), 0)
+    if shortage:
+        raise SceneQuotaError({scene.key: shortage})
+    return selected
+
+
+def select_scene_partial[RowT](scene: SceneDefinition, rows: Iterable[RowT]) -> list[RowT]:
+    """返回满足集中度约束的最大可行子集，不因配额不足而丢失容量信息。"""
     candidates = [
         row
         for row in rows
@@ -60,9 +69,8 @@ def select_scene_quota[RowT](scene: SceneDefinition, rows: Iterable[RowT]) -> li
         and getattr(row, "top_scene", None) == scene.top_key
     ]
     selected, conflicts = _select_scene(scene, candidates)
-    shortage = max(scene.quota - len(selected), 0)
-    if conflicts or shortage:
-        raise SceneQuotaError({scene.key: shortage}, conflicts)
+    if conflicts:
+        raise SceneQuotaError({scene.key: max(scene.quota - len(selected), 0)}, conflicts)
     return selected
 
 
@@ -120,18 +128,36 @@ def _selection_key(row: object) -> tuple[float, str, str]:
 
 
 class _FlowEdge:
-    __slots__ = ("capacity", "original", "reverse", "target")
+    __slots__ = ("capacity", "cost", "original", "reverse", "row", "target")
 
-    def __init__(self, target: int, reverse: int, capacity: int) -> None:
+    def __init__(
+        self,
+        target: int,
+        reverse: int,
+        capacity: int,
+        *,
+        cost: int = 0,
+        row: object | None = None,
+    ) -> None:
         self.target = target
         self.reverse = reverse
         self.capacity = capacity
+        self.cost = cost
         self.original = capacity
+        self.row = row
 
 
-def _add_flow_edge(graph: list[list[_FlowEdge]], start: int, end: int, capacity: int) -> _FlowEdge:
-    forward = _FlowEdge(end, len(graph[end]), capacity)
-    backward = _FlowEdge(start, len(graph[start]), 0)
+def _add_flow_edge(
+    graph: list[list[_FlowEdge]],
+    start: int,
+    end: int,
+    capacity: int,
+    *,
+    cost: int = 0,
+    row: object | None = None,
+) -> _FlowEdge:
+    forward = _FlowEdge(end, len(graph[end]), capacity, cost=cost, row=row)
+    backward = _FlowEdge(start, len(graph[start]), 0, cost=-cost)
     graph[start].append(forward)
     graph[end].append(backward)
     return forward
@@ -148,8 +174,9 @@ def _select_regular_rows[RowT](
 ) -> list[RowT]:
     if needed <= 0:
         return []
+    ordered_rows = sorted(rows, key=_selection_key)
     grouped: dict[tuple[str, str], list[RowT]] = defaultdict(list)
-    for row in sorted(rows, key=_selection_key):
+    for row in ordered_rows:
         source = str(getattr(row, "source_name", ""))
         author = str(getattr(row, "source_author", "")).strip()
         grouped[(source, author)].append(row)
@@ -167,65 +194,74 @@ def _select_regular_rows[RowT](
         remaining = max(author_limit - author_counts[author], 0)
         _add_flow_edge(graph, author_nodes[author], end, remaining)
 
-    pair_edges: dict[tuple[str, str], _FlowEdge] = {}
-    grouped_by_source: dict[str, list[tuple[str, list[RowT]]]] = defaultdict(list)
-    for (source, author), pair_rows in grouped.items():
-        grouped_by_source[source].append((author, pair_rows))
-    for source in sources:
-        ordered_groups = sorted(
-            grouped_by_source[source], key=lambda item: _selection_key(item[1][0])
-        )
-        for author, pair_rows in ordered_groups:
-            target = author_nodes[author] if author else end
-            pair_edges[(source, author)] = _add_flow_edge(
-                graph, source_nodes[source], target, len(pair_rows)
+    # 置信度先量化为百万分之一；tie_scale 保证任意 1 个置信度单位的总收益
+    # 都严格高于整批候选的哈希及 ID 次序差异。
+    tie_scale = needed * max(len(ordered_rows), 1) + 1
+    candidate_edges: list[_FlowEdge] = []
+    for tie_rank, row in enumerate(ordered_rows):
+        source = str(getattr(row, "source_name", ""))
+        author = str(getattr(row, "source_author", "")).strip()
+        target = author_nodes[author] if author else end
+        confidence = min(max(float(getattr(row, "confidence", 0.0)), 0.0), 1.0)
+        quality_loss = 1_000_000 - round(confidence * 1_000_000)
+        candidate_edges.append(
+            _add_flow_edge(
+                graph,
+                source_nodes[source],
+                target,
+                1,
+                cost=quality_loss * tie_scale + tie_rank,
+                row=row,
             )
+        )
 
-    _maximum_flow(graph, start, end, needed)
-    selected: list[RowT] = []
-    for pair in sorted(grouped, key=lambda key: _selection_key(grouped[key][0])):
-        edge = pair_edges[pair]
-        selected.extend(grouped[pair][: edge.original - edge.capacity])
+    _minimum_cost_flow(graph, start, end, needed)
+    selected = [edge.row for edge in candidate_edges if edge.capacity == 0]
     return sorted(selected, key=_selection_key)
 
 
-def _maximum_flow(graph: list[list[_FlowEdge]], start: int, end: int, limit: int) -> int:
+def _minimum_cost_flow(graph: list[list[_FlowEdge]], start: int, end: int, limit: int) -> int:
+    """以逐次最短增广路求固定流量的最小费用，并保持节点次序确定。"""
     total = 0
+    potentials = [0] * len(graph)
+    infinity = 10**30
     while total < limit:
-        levels = [-1] * len(graph)
-        levels[start] = 0
-        queue = deque([start])
+        distances = [infinity] * len(graph)
+        previous: list[tuple[int, int] | None] = [None] * len(graph)
+        distances[start] = 0
+        queue = [(0, start)]
         while queue:
-            node = queue.popleft()
-            for edge in graph[node]:
-                if edge.capacity > 0 and levels[edge.target] < 0:
-                    levels[edge.target] = levels[node] + 1
-                    queue.append(edge.target)
-        if levels[end] < 0:
+            distance, node = heapq.heappop(queue)
+            if distance != distances[node]:
+                continue
+            for edge_index, edge in enumerate(graph[node]):
+                if edge.capacity <= 0:
+                    continue
+                next_distance = distance + edge.cost + potentials[node] - potentials[edge.target]
+                if next_distance >= distances[edge.target]:
+                    continue
+                distances[edge.target] = next_distance
+                previous[edge.target] = (node, edge_index)
+                heapq.heappush(queue, (next_distance, edge.target))
+        if previous[end] is None:
             break
-        positions = [0] * len(graph)
-
-        def send(
-            node: int,
-            available: int,
-            current_levels: list[int] = levels,
-            current_positions: list[int] = positions,
-        ) -> int:
-            if node == end:
-                return available
-            while current_positions[node] < len(graph[node]):
-                edge = graph[node][current_positions[node]]
-                if edge.capacity > 0 and current_levels[edge.target] == current_levels[node] + 1:
-                    amount = send(edge.target, min(available, edge.capacity))
-                    if amount:
-                        edge.capacity -= amount
-                        graph[edge.target][edge.reverse].capacity += amount
-                        return amount
-                current_positions[node] += 1
-            return 0
-
-        while total < limit and (amount := send(start, limit - total)):
-            total += amount
+        for node, distance in enumerate(distances):
+            if distance < infinity:
+                potentials[node] += distance
+        amount = limit - total
+        node = end
+        while node != start:
+            previous_node, edge_index = previous[node] or (start, 0)
+            amount = min(amount, graph[previous_node][edge_index].capacity)
+            node = previous_node
+        node = end
+        while node != start:
+            previous_node, edge_index = previous[node] or (start, 0)
+            edge = graph[previous_node][edge_index]
+            edge.capacity -= amount
+            graph[node][edge.reverse].capacity += amount
+            node = previous_node
+        total += amount
     return total
 
 

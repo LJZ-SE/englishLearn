@@ -606,7 +606,7 @@ class WorkDatabase:
         return [(_work_item(row), json.loads(row[11])) for row in rows]
 
     def apply_classification_repairs(
-        self, results: list[tuple[int, str, str, str]]
+        self, results: list[tuple[int, str | None, str | None, str]]
     ) -> int:
         item_ids = [row[0] for row in results]
         if len(item_ids) != len(set(item_ids)):
@@ -644,8 +644,12 @@ class WorkDatabase:
                             {
                                 "top_scene": top_scene,
                                 "sub_scene": sub_scene,
-                                "confidence": 1.0,
-                                "method": "llm_repair",
+                                "confidence": 1.0 if sub_scene is not None else 0.0,
+                                "method": (
+                                    "llm_repair"
+                                    if sub_scene is not None
+                                    else "out_of_candidate_pool"
+                                ),
                                 "reason": reason,
                             }
                         ),

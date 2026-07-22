@@ -51,7 +51,7 @@ def export_classification_repairs(database: WorkDatabase, path: Path) -> int:
 
 
 def import_classification_repairs(database: WorkDatabase, paths: list[Path]) -> int:
-    parsed: list[tuple[int, str, str, str]] = []
+    parsed: list[tuple[int, str | None, str | None, str]] = []
     seen: set[int] = set()
     for path in paths:
         try:
@@ -83,11 +83,13 @@ def import_classification_repairs(database: WorkDatabase, paths: list[Path]) -> 
             if item_id in seen:
                 raise ClassificationImportError(f"分类修正结果包含重复 item_id: {item_id}")
             seen.add(item_id)
+            if (top_scene is None) != (sub_scene is None):
+                raise ClassificationImportError(
+                    f"{path}:{line_number} top_scene 与 sub_scene 必须同时为 null"
+                )
             scene = SUB_SCENES.get(sub_scene) if isinstance(sub_scene, str) else None
-            if (
-                scene is None
-                or not isinstance(top_scene, str)
-                or scene.top_key != top_scene
+            if top_scene is not None and (
+                scene is None or not isinstance(top_scene, str) or scene.top_key != top_scene
             ):
                 raise ClassificationImportError(
                     f"{path}:{line_number} 包含非法或不匹配的场景标签"

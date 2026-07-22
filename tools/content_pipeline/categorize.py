@@ -237,6 +237,144 @@ _SCENE_KEYWORDS = {
     ),
 }
 
+# 单独出现即可提供可靠场景证据的领域词。未列入这里的普通多义词只能参与审计，
+# 不能靠改名为低置信方法绕过候选池门槛。
+_SCENE_STRONG_KEYWORDS = {
+    "daily_home": _scene_words(
+        "home kitchen laundry dishes cupboard house apartment bedroom bathroom mother "
+        "father brother sister children parent wife husband baby furniture towel neighbor"
+    ),
+    "daily_social": _scene_words(
+        "friend friends invite party welcome conversation together sorry thank thanks hello "
+        "goodbye"
+    ),
+    "daily_shopping": _scene_words(
+        "buy bought sell sold shop shopping price cashier refund store pay paid money dollar cheap "
+        "expensive sale customer purchase bill card cash"
+    ),
+    "daily_food": _scene_words(
+        "breakfast lunch dinner cook cooking restaurant menu meal food eat ate drink drank coffee "
+        "tea bread meat fish chicken fruit vegetable hungry delicious grill"
+    ),
+    "travel_transport": _scene_words(
+        "train bus taxi airport flight station ticket commute platform car driver road bicycle "
+        "bike subway railway traffic passenger depart arrive"
+    ),
+    "travel_directions": _scene_words("direction directions map route street corner address"),
+    "travel_hotel": _scene_words(
+        "hotel motel hostel reserve reservation reception booking suite guest luggage "
+        "accommodation checkout lodging inn"
+    ),
+    "travel_tourism": _scene_words(
+        "tour travel vacation holiday journey museum landmark sightseeing tourist trip abroad "
+        "beach passport visa guide destination explore camping foreign "
+        "adventure cruise"
+    ),
+    "work_office": _scene_words(
+        "office colleague project deadline team task boss manager employee client schedule budget "
+        "department contract business"
+    ),
+    "work_meetings": _scene_words(
+        "presentation agenda conference attendees session chairman committee speaker audience "
+        "proposal debate workshop board negotiate negotiation seminar"
+    ),
+    "work_contact": _scene_words(
+        "email phone message contact reply attachment mail telephone response notify forward"
+    ),
+    "work_jobs": _scene_words(
+        "job interview resume salary hire career applicant position employment employer worker "
+        "profession vacancy wage promotion retire qualification occupation unemployed labor "
+        "labour workplace"
+    ),
+    "study_campus": _scene_words(
+        "campus classroom lecture professor student university lesson school teacher college pupil "
+        "homework course education semester"
+    ),
+    "study_exams": _scene_words("exam examination quiz revision grade"),
+    "study_academic": _scene_words(
+        "research hypothesis evidence analysis academic theory data method conclusion experiment "
+        "science history knowledge philosophy mathematical equation scholar article theorem proof "
+        "statistics survey calculate calculation"
+    ),
+    "study_language": _scene_words(
+        "language grammar vocabulary pronunciation translate translation english sentence phrase "
+        "spell dictionary french german spanish chinese"
+    ),
+    "health_clinic": _scene_words(
+        "doctor hospital clinic appointment patient symptom nurse medical sick illness disease "
+        "pain fever health blood treatment surgery injury dentist emergency"
+    ),
+    "health_pharmacy": _scene_words(
+        "medicine pharmacy prescription tablet dose drug pharmacist pill pills medication remedy "
+        "vitamin antibiotic aspirin injection dosage capsule cure vaccine syrup cough headache "
+        "therapy ointment bandage"
+    ),
+    "health_fitness": _scene_words(
+        "exercise gym fitness workout running walking sport training swim swimming race athlete "
+        "muscle yoga cycling"
+    ),
+    "health_wellbeing": _scene_words(
+        "sleep stress relax wellbeing mental healthy tired worry worried calm anxiety"
+    ),
+    "technology_devices": _scene_words(
+        "phone laptop screen device camera battery television radio recorder keyboard printer "
+        "cable digital video microphone hardware monitor speaker headphones headset smartphone "
+        "tablet disk chip electronic mouse"
+    ),
+    "technology_software": _scene_words(
+        "software app internet website password online program code download upload network server "
+        "browser database login web algorithm webpage click install update virus programming "
+        "developer google facebook twitter portal cloud computer android ios"
+    ),
+    "technology_engineering": _scene_words(
+        "engineer engineering machine design technical technology equipment factory industry "
+        "industrial construction structure material electrical mechanical engine motor bridge "
+        "building architecture tool metal power wheel manufacture repair"
+    ),
+    "technology_science": _scene_words(
+        "science scientist experiment space energy laboratory discovery planet earth moon star "
+        "physics chemical biology atom universe scientific temperature molecule gravity solar "
+        "species evolution gene astronomy"
+    ),
+    "culture_movies": _scene_words(
+        "movie film cinema actor actress director episode theater theatre television script comedy "
+        "drama"
+    ),
+    "culture_music": _scene_words(
+        "music song concert singer instrument album orchestra piano guitar violin band sing sang "
+        "musical dance dancing voice art"
+    ),
+    "culture_books": _scene_words(
+        "book novel author library literature poem poetry writer chapter publish magazine tale"
+    ),
+    "culture_sports": _scene_words(
+        "sport sports game match team player football hobby leisure baseball basketball tennis "
+        "golf coach club ball athlete tournament score"
+    ),
+    "news_current": _scene_words(
+        "journalist announcement president minister international official leader nation "
+        "headline broadcast correspondent political politics crisis recent national administration"
+    ),
+    "news_business": _scene_words(
+        "bank economy economic stocks finance financial trade growth investment industry "
+        "profit tax sales income fund budget debt revenue"
+    ),
+    "news_public": _scene_words(
+        "law court police government council election vote legal judge crime policy parliament "
+        "military rights"
+    ),
+    "news_environment": _scene_words(
+        "environment climate weather pollution wildlife flood nature rain storm snow forest "
+        "earthquake"
+    ),
+}
+
+_CONTEXT_EXCLUDED_KEYWORDS = _scene_words(
+    "account answer button city cold correct country desk double east family fired front key "
+    "letter mark market meeting minutes news night pass plan position practice question remote "
+    "result run staff stay stayed staying straight switch system worked working"
+)
+
 _SCENE_PHRASES = {
     "travel_directions": (
         "turn left",
@@ -250,15 +388,105 @@ _SCENE_PHRASES = {
     "travel_hotel": (
         "hotel room",
         "hotel and room",
-        "stay at",
-        "stay for",
-        "one night",
-        "two nights",
-        "double and night",
+        "spend the night",
+        "spent the night",
+        "for the night",
+        "book a room",
+        "booked a room",
+        "reserve a room",
+        "reserved a room",
+        "single room",
+        "double room",
+        "guest room",
+        "room number",
+        "room key",
+        "vacant room",
+        "available room",
+        "front desk",
+        "room service",
         "check in",
         "check out",
     ),
-    "technology_devices": ("phone and computer",),
+    "work_meetings": (
+        "the meeting",
+        "a meeting",
+        "our meeting",
+        "your meeting",
+        "meeting with",
+        "meeting at",
+        "meeting room",
+        "staff meeting",
+        "board meeting",
+        "team meeting",
+        "press conference",
+        "meet to discuss",
+        "met to discuss",
+    ),
+    "study_exams": (
+        "take a test",
+        "take the test",
+        "taking a test",
+        "pass the test",
+        "pass the exam",
+        "fail the test",
+        "fail the exam",
+        "study for",
+        "studying for",
+        "prepare for the test",
+        "prepare for the exam",
+        "test score",
+        "exam result",
+        "exam score",
+        "test result",
+        "answer the question",
+    ),
+    "health_pharmacy": (
+        "bad cold",
+        "common cold",
+        "catch cold",
+        "catch a cold",
+        "have a cold",
+        "take medicine",
+    ),
+    "health_fitness": (
+        "go for a run",
+        "go running",
+        "go walking",
+        "physical training",
+        "weight training",
+    ),
+    "technology_devices": (
+        "phone and computer",
+        "cell phone",
+        "mobile phone",
+        "tape recorder",
+        "take a picture",
+        "take a photo",
+        "digital camera",
+    ),
+    "technology_software": (
+        "user account",
+        "online account",
+        "email account",
+        "operating system",
+        "computer system",
+        "software system",
+        "log in",
+        "sign in",
+        "web site",
+        "social network",
+    ),
+    "work_contact": (
+        "phone call",
+        "give me a call",
+        "call me",
+        "send me",
+        "send you",
+        "write to",
+        "wrote to",
+        "reply to",
+        "email me",
+    ),
     "work_office": (
         "at work",
         "my work",
@@ -278,11 +506,27 @@ class SceneClassification:
 
 
 class SceneClassifier:
+    def strong_signals(self, sub_scene: str) -> tuple[frozenset[str], tuple[str, ...]]:
+        if sub_scene not in SUB_SCENES:
+            raise ValueError(f"未知场景: {sub_scene}")
+        return _SCENE_STRONG_KEYWORDS[sub_scene], _SCENE_PHRASES.get(sub_scene, ())
+
+    def strong_signal_evidence(
+        self, text: str, sub_scene: str
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        keywords, phrases = self.strong_signals(sub_scene)
+        words = _normalized_words(text)
+        normalized = text.casefold().replace("-", " ")
+        return (
+            tuple(sorted(words.intersection(keywords))),
+            tuple(phrase for phrase in phrases if phrase in normalized),
+        )
+
     def scene_scores(self, text: str) -> dict[str, float]:
         words = _normalized_words(text)
         scores = {
-            scene_key: float(len(words.intersection(keywords)))
-            for scene_key, keywords in _SCENE_KEYWORDS.items()
+            scene_key: 2.0 * len(words.intersection(keywords))
+            for scene_key, keywords in _SCENE_STRONG_KEYWORDS.items()
         }
         normalized = text.casefold().replace("-", " ")
         for scene_key, phrases in _SCENE_PHRASES.items():
@@ -331,7 +575,7 @@ class SceneClassifier:
         protected: bool = False,
         source_name: str = "",
     ) -> SceneClassification:
-        """对生产候选池采用单一关键词门槛，弱信号或冲突项保留可审计状态。"""
+        """只接受高精度领域词或短语，弱信号与冲突项保留可审计状态。"""
         explicit = self.classify(text, top_scene=top_scene, sub_scene=sub_scene)
         if explicit.method == "source_explicit":
             return explicit
@@ -339,16 +583,23 @@ class SceneClassifier:
             return SceneClassification(None, None, explicit.confidence, "llm_required")
         if explicit.method == "keyword":
             return explicit
-        scores = self.scene_scores(text)
-        best_score = max(scores.values())
-        winners = sorted(key for key, score in scores.items() if score == best_score)
-        if best_score >= 1.0 and len(winners) == 1:
-            scene = SUB_SCENES[winners[0]]
+        words = _normalized_words(text)
+        context_scores = {
+            scene_key: len(words.intersection(keywords - _CONTEXT_EXCLUDED_KEYWORDS))
+            for scene_key, keywords in _SCENE_KEYWORDS.items()
+        }
+        ordered_context = sorted(
+            context_scores, key=lambda key: (-context_scores[key], key)
+        )
+        context_scene, context_runner_up = ordered_context[:2]
+        context_score = context_scores[context_scene]
+        if context_score >= 2 and context_score > context_scores[context_runner_up]:
+            scene = SUB_SCENES[context_scene]
             return SceneClassification(
                 scene.top_key,
                 scene.key,
-                min(0.95, 0.35 + best_score * 0.15),
-                "candidate_keyword",
+                min(0.85, 0.5 + context_score * 0.05),
+                "context_keywords",
             )
         if source_name == "English Wikinews":
             scene = SUB_SCENES["news_current"]
