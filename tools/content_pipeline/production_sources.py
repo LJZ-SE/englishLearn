@@ -72,6 +72,8 @@ def import_all_sources(
     if refresh_lock and existing and set(existing) != {str(row["key"]) for row in expanded}:
         raise ValueError("refresh-lock 不允许增删来源 key，避免遗留 stale raw")
     locked: list[dict[str, Any]] = []
+    prepared: list[tuple[dict[str, Any], str, Path]] = []
+    changed_identities: set[str] = set()
     imported: Counter[str] = Counter()
 
     for source in expanded:
@@ -95,6 +97,7 @@ def import_all_sources(
                 raise ValueError(
                     f"refresh-lock 禁止改变来源 identity: {old_identity} -> {new_identity}"
                 )
+            changed_identities.add(new_identity)
         entry = _download_locked(
             key,
             kind,
@@ -106,12 +109,16 @@ def import_all_sources(
         )
         entry["config_fingerprint"] = fingerprint
         entry["config"] = _source_config(source, url)
-        if requires_refresh:
-            database.delete_raw_source(_raw_source_name(source))
         locked.append(entry)
+        prepared.append((source, kind, cache_path))
         _checkpoint_source_lock(
             lock_path, manifest_path, manifest_sha256, locked, existing, complete=False
         )
+
+    for identity in sorted(changed_identities):
+        database.delete_raw_source(identity)
+
+    for source, kind, cache_path in prepared:
         items = _iter_source(kind, cache_path, source)
         imported[kind] += _import_items(database, items, source.get("max_items"))
 

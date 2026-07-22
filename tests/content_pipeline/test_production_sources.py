@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import zipfile
 from pathlib import Path
@@ -130,7 +131,12 @@ def test_import_all_checkpoints_download_lock_before_source_import(
         import_all_sources(database, manifest, lock)
 
     payload = json.loads(lock.read_text(encoding="utf-8"))
-    assert [entry["key"] for entry in payload["sources"]] == ["tatoeba-eng"]
+    assert [entry["key"] for entry in payload["sources"]] == [
+        "tatoeba-eng",
+        "cornell-movie-dialogs",
+        "english-wikinews",
+        "gutenberg-11",
+    ]
     assert payload["complete"] is False
     cached = lock.parent / payload["sources"][0]["cache_path"]
     assert cached.is_file()
@@ -209,6 +215,120 @@ def test_refresh_convokit_rebuilds_extracted_cache_from_new_archive(tmp_path: Pa
     entry = json.loads(lock.read_text(encoding="utf-8"))["sources"][1]
     extracted = lock.parent / "downloads" / "cornell-movie-dialogs-extracted"
     assert (extracted / "archive-sha256.txt").read_text().strip() == entry["sha256"]
+
+
+def _write_gutenberg_manifest(tmp_path: Path, count: int = 10) -> tuple[Path, list[dict]]:
+    sources = []
+    for ebook_id in range(80, 80 + count):
+        path = tmp_path / f"{ebook_id}.txt"
+        path.write_text(
+            f"Author: Author {ebook_id}\n"
+            "*** START OF THE PROJECT GUTENBERG EBOOK TEST\n"
+            f"Original sentence from book {ebook_id}.\n"
+            "*** END OF THE PROJECT GUTENBERG EBOOK TEST\n",
+            encoding="utf-8",
+        )
+        sources.append(
+            {
+                "key": f"gutenberg-{ebook_id}",
+                "kind": "gutenberg",
+                "url": path.as_uri(),
+                "ebook_id": ebook_id,
+                "license_name": "terms",
+                "license_url": "https://example.test/terms",
+            }
+        )
+    manifest = tmp_path / "gutenberg-manifest.json"
+    manifest.write_text(json.dumps(sources), encoding="utf-8")
+    return manifest, sources
+
+
+def test_refresh_one_gutenberg_sibling_reimports_all_ten_books(tmp_path: Path) -> None:
+    manifest, sources = _write_gutenberg_manifest(tmp_path)
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    replacement = tmp_path / "replacement-84.txt"
+    replacement.write_text(
+        "Author: New Author\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK TEST\n"
+        "Updated sentence from book 84.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK TEST\n",
+        encoding="utf-8",
+    )
+    sources[4]["url"] = replacement.as_uri()
+    manifest.write_text(json.dumps(sources), encoding="utf-8")
+
+    import_all_sources(database, manifest, lock, refresh_lock=True)
+
+    with database.connect() as connection:
+        rows = connection.execute(
+            "SELECT source_item_id, text FROM raw_items WHERE source_name='Project Gutenberg'"
+        ).fetchall()
+    assert len(rows) == 10
+    assert any(item_id.startswith("84:") and text.startswith("Updated") for item_id, text in rows)
+
+    for source in sources:
+        source["license_name"] = "updated terms"
+    manifest.write_text(json.dumps(sources), encoding="utf-8")
+    import_all_sources(database, manifest, lock, refresh_lock=True)
+    with database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM raw_items WHERE source_name='Project Gutenberg'"
+        ).fetchone()[0] == 10
+
+
+def test_refresh_download_failure_does_not_delete_gutenberg_siblings(tmp_path: Path) -> None:
+    manifest, sources = _write_gutenberg_manifest(tmp_path, count=2)
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    sources[1]["url"] = (tmp_path / "missing.txt").as_uri()
+    manifest.write_text(json.dumps(sources), encoding="utf-8")
+
+    with pytest.raises(urllib.error.URLError):
+        import_all_sources(database, manifest, lock, refresh_lock=True)
+
+    with database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM raw_items WHERE source_name='Project Gutenberg'"
+        ).fetchone()[0] == 2
+
+
+def test_interrupted_identity_import_recovers_all_gutenberg_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, sources = _write_gutenberg_manifest(tmp_path, count=3)
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    sources[1]["license_name"] = "changed"
+    manifest.write_text(json.dumps(sources), encoding="utf-8")
+    original_import = production_sources._import_items
+    calls = 0
+
+    def interrupt_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated import interruption")
+        return original_import(*args, **kwargs)
+
+    monkeypatch.setattr(production_sources, "_import_items", interrupt_second)
+    with pytest.raises(RuntimeError, match="simulated import interruption"):
+        import_all_sources(database, manifest, lock, refresh_lock=True)
+    monkeypatch.undo()
+
+    import_all_sources(database, manifest, lock)
+
+    with database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM raw_items WHERE source_name='Project Gutenberg'"
+        ).fetchone()[0] == 3
+    assert json.loads(lock.read_text(encoding="utf-8"))["complete"] is True
 
 
 @pytest.mark.parametrize("unsafe_key", ["../escape", "Uppercase", "two--dashes"])
