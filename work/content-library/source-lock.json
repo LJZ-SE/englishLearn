@@ -1,7 +1,7 @@
 {
   "version": 2,
   "manifest": "tools/content_pipeline/source_manifest.json",
-  "manifest_sha256": "df738c4e4ac70e01a461dcee0e351a7d9ca97be4302d8ed2118b342c30389b80",
+  "manifest_sha256": "2aa40ea74bf2c2d0ce171f83489bfebc8f293bf9a235e6d1ce35f1ff0470cc8f",
   "complete": true,
   "pending_refresh_identities": [],
   "sources": [
@@ -13,8 +13,8 @@
       "cache_path": "downloads/tatoeba-eng.tsv.bz2",
       "size_bytes": 34771166,
       "sha256": "cfed73b192687e58394630d769cc787e28c7640c68aa2d3d3abc108555d90eb7",
-      "downloaded_at": "2026-07-22T15:18:48.985146+00:00",
-      "config_fingerprint": "48a74b4297a7056a920bd31b4d57323077e00ac3f227c1d63971fdc74bf35f80",
+      "downloaded_at": "2026-07-22T19:49:08.085002+00:00",
+      "config_fingerprint": "02422ffb82b0aaa937e2a546cfd0375eddc14e4021417199265a62e9f350886b",
       "config": {
         "config_version": 2,
         "key": "tatoeba-eng",
@@ -26,7 +26,8 @@
         "ebook_id": null,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -37,8 +38,8 @@
       "cache_path": "downloads/cornell-movie-dialogs.zip",
       "size_bytes": 40854701,
       "sha256": "c3581e79d31e55cc8242591e66f829e84c8bd98a2a9c017bd851382dcdc17ac2",
-      "downloaded_at": "2026-07-22T15:20:00.277187+00:00",
-      "config_fingerprint": "ef01595dcc5b3d5072943db3f0b3c4522bf950678557b27eef257be17e8f5728",
+      "downloaded_at": "2026-07-22T19:49:19.102010+00:00",
+      "config_fingerprint": "f019dda2e92e4752ca029b64a2c911818fc962d92f92928e544b069e296042a4",
       "config": {
         "config_version": 2,
         "key": "cornell-movie-dialogs",
@@ -50,7 +51,8 @@
         "ebook_id": null,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -61,8 +63,8 @@
       "cache_path": "downloads/switchboard.zip",
       "size_bytes": 5810437,
       "sha256": "c903ef6542a9838d23fe5cf00c4cfc4727ca54cadb55c61916f090498141c817",
-      "downloaded_at": "2026-07-22T15:23:24.869560+00:00",
-      "config_fingerprint": "9f62749b527f0443f6441f0392a20980ca923a542ec3419c6a38e361b97152a8",
+      "downloaded_at": "2026-07-22T19:49:21.958155+00:00",
+      "config_fingerprint": "b08ad9b46a33b7639f146cf74a267a4888654a6c61ca9d84a81ff04b4762bbc6",
       "config": {
         "config_version": 2,
         "key": "switchboard",
@@ -74,7 +76,8 @@
         "ebook_id": null,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -85,8 +88,8 @@
       "cache_path": "downloads/english-wikinews.php",
       "size_bytes": 1146143,
       "sha256": "f038da78e75d9eaff6646721ca79c7cd3078f383df0ad33c2ec57583fc8626b2",
-      "downloaded_at": "2026-07-22T16:15:14.204265+00:00",
-      "config_fingerprint": "bd1b612f279d05a178003976d777d375852e5d9b474008f2b23f2b110552a093",
+      "downloaded_at": "2026-07-22T19:51:08.039050+00:00",
+      "config_fingerprint": "f40e13f90bc193821f14f8232a09aefd534df4b6a81c21301eeeb96a0fa53596",
       "config": {
         "config_version": 2,
         "key": "english-wikinews",
@@ -98,7 +101,8 @@
         "ebook_id": null,
         "article_limit": 500,
         "batch_size": 20,
-        "snapshot_version": 2
+        "snapshot_version": 2,
+        "expected_sha256": null
       }
     },
     {
@@ -109,8 +113,8 @@
       "cache_path": "downloads/gutenberg-11.txt",
       "size_bytes": 174311,
       "sha256": "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e",
-      "downloaded_at": "2026-07-22T15:24:53.292382+00:00",
-      "config_fingerprint": "fb975a852d14cecbb69d8d04b7ea2acceaf6eb79dccdb36f555c724182a3a5fc",
+      "downloaded_at": "2026-07-22T19:51:09.667138+00:00",
+      "config_fingerprint": "a86fd6de578af6d7daaf28751069ec41b82621557159451cf8adf94a84583762",
       "config": {
         "config_version": 2,
         "key": "gutenberg-11",
@@ -122,7 +126,8 @@
         "ebook_id": 11,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -133,8 +138,8 @@
       "cache_path": "downloads/gutenberg-74.txt",
       "size_bytes": 434357,
       "sha256": "74d77384b123a6360db9ab58463cff8b38df8525fbdc6000c81ee388e1f3cf10",
-      "downloaded_at": "2026-07-22T15:24:55.824305+00:00",
-      "config_fingerprint": "139a36e3b366b02a5b29f92e252a286746ce597dfb110398543acba96a6c6236",
+      "downloaded_at": "2026-07-22T19:51:11.492316+00:00",
+      "config_fingerprint": "faf7d0a4b5ebfd8c2ca1b0430854d96c5e28bd343bd10ee36b0f3f234ce4d59e",
       "config": {
         "config_version": 2,
         "key": "gutenberg-74",
@@ -146,7 +151,8 @@
         "ebook_id": 74,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -157,8 +163,8 @@
       "cache_path": "downloads/gutenberg-76.txt",
       "size_bytes": 622460,
       "sha256": "d617a37aa7ae1e1a93dcde2634db2bccb86824e31e29a55230bdbf77d6872d59",
-      "downloaded_at": "2026-07-22T15:25:00.933935+00:00",
-      "config_fingerprint": "e5fb8972394f11004eed62f2cae696bcb6a8c6cda434090b4140d352268a431b",
+      "downloaded_at": "2026-07-22T19:51:13.457407+00:00",
+      "config_fingerprint": "a31232a1e86285e9bfbdba9560abfc76b40896c0a4ce18a9c197409f1c8963ec",
       "config": {
         "config_version": 2,
         "key": "gutenberg-76",
@@ -170,7 +176,8 @@
         "ebook_id": 76,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -181,8 +188,8 @@
       "cache_path": "downloads/gutenberg-84.txt",
       "size_bytes": 448885,
       "sha256": "7810cd483cffcf2cc8a1d8f0d5807931e69d4f48cd14149b8c76f88af82fead3",
-      "downloaded_at": "2026-07-22T15:25:05.302410+00:00",
-      "config_fingerprint": "5a6a19042b84bf87b9513a8c856ee4b44982502bd5ff1622a1aa6b3fabec8cbd",
+      "downloaded_at": "2026-07-22T19:51:15.437530+00:00",
+      "config_fingerprint": "78dede7c94c7f72206b83f9ee42702599aaebda3ac92e519bd2f5e09252c4eb2",
       "config": {
         "config_version": 2,
         "key": "gutenberg-84",
@@ -194,7 +201,8 @@
         "ebook_id": 84,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -205,8 +213,8 @@
       "cache_path": "downloads/gutenberg-98.txt",
       "size_bytes": 807197,
       "sha256": "d54c2b80d40a40b982cd88852c6180bb944d95acdb028af3d0e01a1750681784",
-      "downloaded_at": "2026-07-22T15:25:09.263932+00:00",
-      "config_fingerprint": "0fdab34294792bba18af83877262c128d380e14d8884751f9c68d2576428c9c9",
+      "downloaded_at": "2026-07-22T19:51:17.457748+00:00",
+      "config_fingerprint": "6f5893317c8f81b15c9137823c11aa76c637bb72a3d79af7634e067552a2c09c",
       "config": {
         "config_version": 2,
         "key": "gutenberg-98",
@@ -218,7 +226,8 @@
         "ebook_id": 98,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -229,8 +238,8 @@
       "cache_path": "downloads/gutenberg-1342.txt",
       "size_bytes": 772386,
       "sha256": "74f2665d6e6925fc2c17dec644bec9e87df478a0f1836822125e8acbb3777806",
-      "downloaded_at": "2026-07-22T15:25:15.340065+00:00",
-      "config_fingerprint": "c179eb7068b41bfc0bdb08983f8d375cf0da2c8c79c1911fca8efec46d78c7e7",
+      "downloaded_at": "2026-07-22T19:51:19.452446+00:00",
+      "config_fingerprint": "57b36f14ea1fe60bda3a9070d11e64209c26a54fd266763e4f9bd4ea5c9466b2",
       "config": {
         "config_version": 2,
         "key": "gutenberg-1342",
@@ -242,7 +251,8 @@
         "ebook_id": 1342,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -253,8 +263,8 @@
       "cache_path": "downloads/gutenberg-1661.txt",
       "size_bytes": 607606,
       "sha256": "922e2a12ccb43a4c9544c260b2166c6ad2097aeb5957faeee113f173bb857cd0",
-      "downloaded_at": "2026-07-22T15:25:23.133542+00:00",
-      "config_fingerprint": "6faee96a6308996d938a6ba0ae5cf3951b79e0f18e338256cae5c8f126d9ca53",
+      "downloaded_at": "2026-07-22T19:51:21.483447+00:00",
+      "config_fingerprint": "3238f6a4afa06d31d411b22f438d91bf295c968d9efd953e39ed66eac6eb87a7",
       "config": {
         "config_version": 2,
         "key": "gutenberg-1661",
@@ -266,7 +276,8 @@
         "ebook_id": 1661,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -277,8 +288,8 @@
       "cache_path": "downloads/gutenberg-2701.txt",
       "size_bytes": 1276263,
       "sha256": "9a6844ac0703853720010787c7b6c70b0020f1ab1862dcd74452fa46474d1215",
-      "downloaded_at": "2026-07-22T15:25:27.832162+00:00",
-      "config_fingerprint": "f2808a2e09cf2a4578d7d6a49b14d3d1ffb90aba6f3bc8b1b79cecc469fd7cac",
+      "downloaded_at": "2026-07-22T19:51:23.674617+00:00",
+      "config_fingerprint": "17291a92fa263b94f3717e82e20b09db6f54a0bfa04cbe71309ecf8e2f64fcdb",
       "config": {
         "config_version": 2,
         "key": "gutenberg-2701",
@@ -290,7 +301,8 @@
         "ebook_id": 2701,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -301,8 +313,8 @@
       "cache_path": "downloads/gutenberg-345.txt",
       "size_bytes": 890348,
       "sha256": "96cd16eacdbfebae8fdda5591f66e0cc8ee76be18e0cd1aca02bc00615782d28",
-      "downloaded_at": "2026-07-22T15:25:33.501237+00:00",
-      "config_fingerprint": "fbdedddd4c05f042f20ab6198e648ca3262d481c48e107abd5fd656b3b7bcb38",
+      "downloaded_at": "2026-07-22T19:51:25.711994+00:00",
+      "config_fingerprint": "ca7e7008da175a02154385c4315dbb1072722112112b8e06fd53e713e984bcf8",
       "config": {
         "config_version": 2,
         "key": "gutenberg-345",
@@ -314,7 +326,8 @@
         "ebook_id": 345,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     },
     {
@@ -325,8 +338,8 @@
       "cache_path": "downloads/gutenberg-174.txt",
       "size_bytes": 465814,
       "sha256": "38f36b510417177aa87a6a24c968e3ec63a447b7df36a9c1a7c5a3f2d9e51547",
-      "downloaded_at": "2026-07-22T15:25:39.065457+00:00",
-      "config_fingerprint": "a03e2b4051f1ac2e8738415ce61baa97d3c206b07d2f73177974d1189c627581",
+      "downloaded_at": "2026-07-22T19:51:27.694666+00:00",
+      "config_fingerprint": "ba8749ae7adc0c8c9fd98c94986716f02acf84ddf5ee1a0f0e0794de4788c321",
       "config": {
         "config_version": 2,
         "key": "gutenberg-174",
@@ -338,7 +351,83 @@
         "ebook_id": 174,
         "article_limit": null,
         "batch_size": null,
-        "snapshot_version": null
+        "snapshot_version": null,
+        "expected_sha256": null
+      }
+    },
+    {
+      "key": "multiwoz-2-2",
+      "kind": "multiwoz",
+      "requested_url": "https://github.com/budzianowski/multiwoz/archive/fe0c8e65cfcd8462bd33c86e35f21addc84ca82b.zip",
+      "final_url": "https://codeload.github.com/budzianowski/multiwoz/zip/fe0c8e65cfcd8462bd33c86e35f21addc84ca82b",
+      "cache_path": "downloads/multiwoz-2-2.zip",
+      "size_bytes": 60605912,
+      "sha256": "98e6b818f35b5eef50352e77e5f43a98c721510857e53be1da53b1fddc0833f8",
+      "downloaded_at": "2026-07-22T19:51:42.224706+00:00",
+      "config_fingerprint": "74f0f8a6186b4acee79d9d43ddd8252a7d32eee752fa62b37588f54cd346a8ad",
+      "config": {
+        "config_version": 2,
+        "key": "multiwoz-2-2",
+        "kind": "multiwoz",
+        "requested_url": "https://github.com/budzianowski/multiwoz/archive/fe0c8e65cfcd8462bd33c86e35f21addc84ca82b.zip",
+        "max_items": null,
+        "license_name": "MIT",
+        "license_url": "https://github.com/budzianowski/multiwoz/blob/fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/LICENSE",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null,
+        "expected_sha256": null
+      }
+    },
+    {
+      "key": "daily-dialog",
+      "kind": "dailydialog",
+      "requested_url": "https://huggingface.co/datasets/ConvLab/dailydialog/resolve/745c1796cfe209b469394567f496815d2bc495d2/data.zip",
+      "final_url": "https://us.aws.cdn.hf.co/xet-bridge-us/62ba62551ba352403d7f43d3/571e391ec7be90b9733a98cedfaa7d68f204b2f4cea39c20810993333a2130fc?response-content-type=application%2Fzip&X-Xet-Cas-Uid=public&user_id=public&response-content-disposition=inline%3B+filename*%3DUTF-8%27%27data.zip%3B+filename%3D%22data.zip%22%3B&Expires=1784753502&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly91cy5hd3MuY2RuLmhmLmNvL3hldC1icmlkZ2UtdXMvNjJiYTYyNTUxYmEzNTI0MDNkN2Y0M2QzLzU3MWUzOTFlYzdiZTkwYjk3MzNhOThjZWRmYWE3ZDY4ZjIwNGIyZjRjZWEzOWMyMDgxMDk5MzMzM2EyMTMwZmNcXD9yZXNwb25zZS1jb250ZW50LXR5cGU9YXBwbGljYXRpb24lMkZ6aXAmWC1YZXQtQ2FzLVVpZD1wdWJsaWMmdXNlcl9pZD1wdWJsaWMmcmVzcG9uc2UtY29udGVudC1kaXNwb3NpdGlvbj1pbmxpbmUlM0IrZmlsZW5hbWUlMkElM0RVVEYtOCUyNyUyN2RhdGEuemlwJTNCK2ZpbGVuYW1lJTNEJTIyZGF0YS56aXAlMjIlM0IiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkVwb2NoVGltZSI6MTc4NDc1MzUwMn19fV19&Signature=MEYCIQD51c91chGqy0JMUW1wR9gByLtzTimyZz7px0i6J6fVWQIhAL7ehX3DRD-kTtcIHoxsiDUOVD1gZhd7E8P8kHUcdbQP&Key-Pair-Id=01KXEF4KZ1B6FV465MAWR4M21F",
+      "cache_path": "downloads/daily-dialog.zip",
+      "size_bytes": 3738236,
+      "sha256": "b1f38f3bf5431f9384107011a943f1a3446027721292e3a248a894b7766fa9d3",
+      "downloaded_at": "2026-07-22T19:51:44.875652+00:00",
+      "config_fingerprint": "d0b9fbcbb6fe6bcacaa2341dafd0e6c700b918294228dd013529fd7957a02ce2",
+      "config": {
+        "config_version": 2,
+        "key": "daily-dialog",
+        "kind": "dailydialog",
+        "requested_url": "https://huggingface.co/datasets/ConvLab/dailydialog/resolve/745c1796cfe209b469394567f496815d2bc495d2/data.zip",
+        "max_items": null,
+        "license_name": "CC BY-NC-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null,
+        "expected_sha256": "b1f38f3bf5431f9384107011a943f1a3446027721292e3a248a894b7766fa9d3"
+      }
+    },
+    {
+      "key": "mts-dialog",
+      "kind": "mts-dialog",
+      "requested_url": "https://github.com/abachaa/MTS-Dialog/archive/3ff0801933608d6f570468c13125125fb5cabdea.zip",
+      "final_url": "https://codeload.github.com/abachaa/MTS-Dialog/zip/3ff0801933608d6f570468c13125125fb5cabdea",
+      "cache_path": "downloads/mts-dialog.zip",
+      "size_bytes": 2613767,
+      "sha256": "bf42a8a2da1161e745ca3faf8e91bf86a7c7abe606ce1747a3bae98407646235",
+      "downloaded_at": "2026-07-22T19:51:46.842177+00:00",
+      "config_fingerprint": "c7b1d22b329bedd38d95bf3b206657eeacb9d8f41cfd91a12399bd533b3ebbde",
+      "config": {
+        "config_version": 2,
+        "key": "mts-dialog",
+        "kind": "mts-dialog",
+        "requested_url": "https://github.com/abachaa/MTS-Dialog/archive/3ff0801933608d6f570468c13125125fb5cabdea.zip",
+        "max_items": null,
+        "license_name": "CC BY 4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null,
+        "expected_sha256": null
       }
     }
   ]
