@@ -1,4 +1,5 @@
 import random
+import sqlite3
 import wave
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from listening_cloze.application.practice_engine import PracticeEngine
 from listening_cloze.domain.models import SceneSelection
 from listening_cloze.infrastructure.database import (
     ContentQuestion,
+    ContentRepository,
     SceneMetadata,
     UserRepository,
 )
@@ -305,6 +307,62 @@ def test_legacy_qml_start_signatures_remain_compatible(tmp_path: Path) -> None:
     assert catalogless_engine.scene == SceneSelection("daily", None)
 
 
+def test_catalogless_legacy_compatibility_rejects_unknown_scene_and_does_not_persist(
+    tmp_path: Path,
+) -> None:
+    class CataloglessRepository(FakeContentRepository):
+        list_scenes = None
+
+    database = tmp_path / "user.db"
+    users = UserRepository(database)
+    question = _question(
+        "news-question",
+        "listen",
+        top_scene="news",
+        sub_scene="news_current",
+    )
+    controller = PracticeController(
+        PracticeEngine(
+            CataloglessRepository([question]),
+            users,
+            rng=random.Random(39),
+        )
+    )
+
+    controller.startQuantitative("news_podcasts", "easy", 1)
+    assert users.get_setting("selected_top_scene") == "daily"
+
+    try:
+        controller.startQuantitative("unknown", "easy", 1)
+    except ValueError as error:
+        assert "场景" in str(error)
+    else:
+        raise AssertionError("无目录兼容入口必须拒绝未知场景")
+
+
+def test_failed_start_does_not_persist_requested_scene(tmp_path: Path) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository([]),
+            users,
+            rng=random.Random(40),
+        )
+    )
+
+    try:
+        controller.startQuantitative("travel", "travel_hotel", "easy", 1)
+    except ValueError as error:
+        assert "题库" in str(error)
+    else:
+        raise AssertionError("空题库必须拒绝启动")
+
+    assert controller.selectedTopScene == "daily"
+    assert controller.selectedSubScene == ""
+    assert users.get_setting("selected_top_scene") == "daily"
+    assert users.get_setting("selected_sub_scene") is None
+
+
 def test_controller_reveals_answer_and_full_sentence_translation(tmp_path: Path) -> None:
     engine = PracticeEngine(
         FakeContentRepository([_question("q1", "do not", ("don't",), "我不会伤害你。")]),
@@ -466,6 +524,43 @@ def test_startup_asset_issues_open_repair_page(tmp_path: Path) -> None:
     assert controller.repairIssues == ["缺少题库 content.db", "缺少 Supertonic 模型"]
 
 
+def test_missing_content_database_records_repair_issue_during_controller_init(
+    tmp_path: Path,
+) -> None:
+    controller = PracticeController(
+        PracticeEngine(
+            ContentRepository(tmp_path / "missing-content.db"),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+
+    assert controller.currentPage == "repair"
+    assert any("场景目录" in issue and "content.db" in issue for issue in controller.repairIssues)
+
+    controller.setStartupIssues(["缺少 Supertonic 模型"])
+    assert any("场景目录" in issue for issue in controller.repairIssues)
+    assert "缺少 Supertonic 模型" in controller.repairIssues
+
+
+def test_legacy_v1_content_database_records_actionable_repair_issue(
+    tmp_path: Path,
+) -> None:
+    content_db = tmp_path / "legacy-v1.db"
+    with sqlite3.connect(content_db) as connection:
+        connection.execute("CREATE TABLE sentences(id TEXT PRIMARY KEY)")
+        connection.execute("CREATE TABLE question_variants(id TEXT PRIMARY KEY)")
+
+    controller = PracticeController(
+        PracticeEngine(
+            ContentRepository(content_db),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+
+    assert controller.currentPage == "repair"
+    assert any("场景目录" in issue and "替换" in issue for issue in controller.repairIssues)
+
+
 def test_controller_persists_settings_resume_progress_and_audio_skip(tmp_path: Path) -> None:
     questions = [_question(f"q{index}", "listen") for index in range(8)]
     database = tmp_path / "user.db"
@@ -535,6 +630,97 @@ def test_returning_home_and_resuming_keeps_the_live_practice_state(tmp_path: Pat
     assert controller.currentQuestionId == current_question_id
     assert controller.feedbackState == "incorrect"
     assert controller.wrongCount == 1
+
+
+def test_live_resume_restores_active_hierarchical_scene_after_home_selection_changes(
+    tmp_path: Path,
+) -> None:
+    questions = [
+        _question(
+            f"hotel-{index}",
+            "check in",
+            top_scene="travel",
+            sub_scene="travel_hotel",
+        )
+        for index in range(5)
+    ]
+    engine = PracticeEngine(
+        FakeContentRepository(questions),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(41),
+    )
+    controller = PracticeController(engine)
+    controller.startQuantitative("travel", "travel_hotel", "easy", 5)
+    controller.goHome()
+    controller.setScene("daily", "")
+    selection_changed = QSignalSpy(controller.sceneSelectionChanged)
+    label_changed = QSignalSpy(controller.sceneLabelChanged)
+
+    controller.resumeLatest()
+
+    assert controller.currentPage == "practice"
+    assert controller.selectedTopScene == "travel"
+    assert controller.selectedSubScene == "travel_hotel"
+    assert controller.sceneLabel == "出行旅行 / 酒店住宿"
+    assert selection_changed.count() == 1
+    assert label_changed.count() >= 1
+
+
+def test_cold_resume_restores_hierarchical_scene_selection_and_label(
+    tmp_path: Path,
+) -> None:
+    questions = [
+        _question(
+            f"hotel-{index}",
+            "check in",
+            top_scene="travel",
+            sub_scene="travel_hotel",
+        )
+        for index in range(5)
+    ]
+    database = tmp_path / "user.db"
+    first = PracticeController(
+        PracticeEngine(
+            FakeContentRepository(questions),
+            UserRepository(database),
+            rng=random.Random(42),
+        )
+    )
+    first.startQuantitative("travel", "travel_hotel", "easy", 5)
+
+    second_engine = PracticeEngine(
+        FakeContentRepository(questions),
+        UserRepository(database),
+        rng=random.Random(43),
+    )
+    second = PracticeController(second_engine)
+    second.setScene("daily", "")
+
+    second.resumeLatest()
+
+    assert second_engine.scene == SceneSelection("travel", "travel_hotel")
+    assert second.selectedTopScene == "travel"
+    assert second.selectedSubScene == "travel_hotel"
+    assert second.sceneLabel == "出行旅行 / 酒店住宿"
+
+
+def test_all_content_session_uses_active_scene_label_without_overwriting_selection(
+    tmp_path: Path,
+) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository([_question("q1", "listen")]),
+            users,
+            rng=random.Random(44),
+        )
+    )
+
+    controller.startQuantitative("all", "easy", 1)
+
+    assert controller.sceneLabel == "全部内容"
+    assert controller.selectedTopScene == "daily"
+    assert users.get_setting("selected_top_scene") == "daily"
 
 
 def test_closing_settings_returns_to_the_page_that_opened_it(tmp_path: Path) -> None:

@@ -12,10 +12,12 @@ from listening_cloze.domain.models import Difficulty, Question, SceneSelection
 from listening_cloze.domain.selection import QuestionProgress as SelectionProgress
 from listening_cloze.domain.selection import QuestionSelector
 from listening_cloze.domain.session import EndlessDifficultyState, QuestionAttempt
-from listening_cloze.infrastructure.database import ContentQuestion, SessionRecord
+from listening_cloze.infrastructure.database import ContentQuestion, SceneMetadata, SessionRecord
 
 
 class ContentSource(Protocol):
+    def list_scenes(self) -> list[SceneMetadata]: ...
+
     def sample_questions(
         self,
         *,
@@ -161,6 +163,10 @@ class PracticeEngine:
     @property
     def scene(self) -> SceneSelection:
         return self._scene
+
+    def list_scenes(self) -> list[SceneMetadata]:
+        provider = getattr(self._content, "list_scenes", None)
+        return list(provider()) if callable(provider) else []
 
     @property
     def has_unfinished_session(self) -> bool:

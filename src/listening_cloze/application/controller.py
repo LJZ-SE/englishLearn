@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import wave
 from pathlib import Path
 
@@ -53,12 +54,21 @@ class PracticeController(QObject):
         self._engine = engine
         self._current_page = "home"
         self._settings_return_page = "home"
+        self._repair_issues: list[str] = []
         self._feedback_state = "idle"
         self._feedback_text = "准备好后，播放句子开始练习。"
         self._feedback_animation = "idle"
-        self._scene_catalog = self._load_scene_catalog()
+        try:
+            self._scene_catalog = self._load_scene_catalog()
+        except (OSError, sqlite3.Error) as error:
+            self._scene_catalog = []
+            self._repair_issues.append(
+                f"题库 content.db 场景目录无法读取，请修复或替换题库：{error}"
+            )
+            self._current_page = "repair"
         self._scene_by_key = {scene["key"]: scene for scene in self._scene_catalog}
         self._selected_top_scene, self._selected_sub_scene = self._load_scene_selection()
+        self._active_scene: SceneSelection | None = None
         self._playback_rate = float(engine.get_setting("playback_rate", 1.0))
         self._volume = float(engine.get_setting("volume", 0.8))
         self._animations_enabled = bool(engine.get_setting("animations_enabled", True))
@@ -71,7 +81,6 @@ class PracticeController(QObject):
         self._waveform_levels: list[float] = []
         self._audio_duration_ms = 0
         self._play_when_ready = False
-        self._repair_issues: list[str] = []
         self._ttsReady.connect(self._apply_tts_ready)
         self._ttsFailed.connect(self._apply_tts_error)
 
@@ -136,6 +145,11 @@ class PracticeController(QObject):
 
     @Property(str, notify=sceneLabelChanged)
     def sceneLabel(self) -> str:
+        if self._current_page in {"practice", "summary"} and self._active_scene is not None:
+            return self._label_for_scene(
+                self._active_scene.top_scene or "",
+                self._active_scene.sub_scene,
+            )
         return self._label_for_scene(self._selected_top_scene, self._selected_sub_scene)
 
     @Property(str, notify=stateChanged)
@@ -291,7 +305,7 @@ class PracticeController(QObject):
         return list(self._repair_issues)
 
     def setStartupIssues(self, issues: list[str]) -> None:
-        self._repair_issues = list(issues)
+        self._repair_issues.extend(issue for issue in issues if issue not in self._repair_issues)
         if self._repair_issues:
             self._current_page = "repair"
         self.stateChanged.emit()
@@ -321,17 +335,16 @@ class PracticeController(QObject):
             scene = self._legacy_scene_selection(top_scene)
             difficulty = sub_scene_or_difficulty
             resolved_count = int(difficulty_or_count)
-            self._remember_scene_if_selectable(scene)
         else:
             scene = self._validated_scene_selection(top_scene, sub_scene_or_difficulty)
             difficulty = str(difficulty_or_count)
             resolved_count = count
-            self._remember_scene_if_selectable(scene)
         self._engine.start_quantitative(
             scene=scene,
             difficulty=Difficulty(difficulty),
             count=resolved_count,
         )
+        self._remember_scene_if_selectable(scene)
         self._begin_practice_page()
 
     @Slot(str)
@@ -341,8 +354,8 @@ class PracticeController(QObject):
             scene = self._legacy_scene_selection(top_scene)
         else:
             scene = self._validated_scene_selection(top_scene, sub_scene)
-        self._remember_scene_if_selectable(scene)
         self._engine.start_endless(scene=scene)
+        self._remember_scene_if_selectable(scene)
         self._begin_practice_page()
 
     @Slot(str, str)
@@ -357,7 +370,9 @@ class PracticeController(QObject):
             and self._engine.has_unfinished_session
         ):
             self._current_page = "practice"
+            self._sync_scene_from_engine()
             self.stateChanged.emit()
+            self.sceneLabelChanged.emit()
             return
         if self._engine.resume_latest():
             self._begin_practice_page()
@@ -445,6 +460,7 @@ class PracticeController(QObject):
     def goHome(self) -> None:
         self._current_page = "home"
         self.stateChanged.emit()
+        self.sceneLabelChanged.emit()
 
     @Slot()
     def openSettings(self) -> None:
@@ -500,16 +516,8 @@ class PracticeController(QObject):
             self._tts.stop()
 
     def _load_scene_catalog(self) -> list[dict[str, object]]:
-        provider = getattr(self._engine, "list_scenes", None)
-        if not callable(provider):
-            # PracticeEngine 暂时只通过内容源持有目录，后续公开同名接口后会优先使用公开接口。
-            content = getattr(self._engine, "_content", None)
-            provider = getattr(content, "list_scenes", None)
-        if not callable(provider):
-            return []
-
         catalog: list[dict[str, object]] = []
-        for top_scene in provider():
+        for top_scene in self._engine.list_scenes():
             top_key = str(top_scene.key)
             top_label = str(top_scene.label)
             children = [
@@ -567,11 +575,11 @@ class PracticeController(QObject):
                 return mapped
             return self._validated_scene_selection(mapped.top_scene, None)
         if not self._scene_catalog:
-            return SceneSelection(category, None)
+            raise ValueError("无场景目录时只支持旧版内置分类")
         return self._validated_scene_selection(category, None)
 
     def _remember_scene_if_selectable(self, scene: SceneSelection) -> None:
-        if scene.top_scene is None:
+        if scene.top_scene is None or not self._is_valid_scene(scene.top_scene, scene.sub_scene):
             return
         if (
             scene.top_scene == self._selected_top_scene
@@ -598,14 +606,20 @@ class PracticeController(QObject):
                 return f"{top_label} / {child['label']}"
         return top_label
 
+    def _sync_scene_from_engine(self) -> None:
+        self._active_scene = self._engine.scene
+        self._remember_scene_if_selectable(self._active_scene)
+
     def _begin_practice_page(self) -> None:
         self._current_page = "practice"
+        self._sync_scene_from_engine()
         self._feedback_state = "idle"
         self._feedback_text = "仔细听完整句子，再补全空位。"
         self._feedback_animation = "idle"
         self._reset_audio_state()
         self._schedule_audio()
         self.stateChanged.emit()
+        self.sceneLabelChanged.emit()
         self.questionChanged.emit()
         self._request_automatic_playback()
 

@@ -7,7 +7,11 @@ import listening_cloze.application.practice_engine as practice_engine_module
 from listening_cloze.application.practice_engine import PracticeEngine, PracticeMode
 from listening_cloze.domain.models import Category, Difficulty, Question
 from listening_cloze.domain.session import EndlessDifficultyState
-from listening_cloze.infrastructure.database import ContentQuestion, UserRepository
+from listening_cloze.infrastructure.database import (
+    ContentQuestion,
+    SceneMetadata,
+    UserRepository,
+)
 
 
 class FakeContentRepository:
@@ -16,6 +20,15 @@ class FakeContentRepository:
         self.sample_calls: list[dict[str, object]] = []
         self.get_by_ids_calls: list[list[str]] = []
         self.list_all_calls = 0
+
+    def list_scenes(self) -> list[SceneMetadata]:
+        return [
+            SceneMetadata(
+                key="travel",
+                label="出行旅行",
+                children=(SceneMetadata(key="travel_hotel", label="酒店住宿"),),
+            )
+        ]
 
     def list_questions(
         self,
@@ -82,6 +95,13 @@ class CountingUserRepository(UserRepository):
 def test_scene_selection_rejects_a_sub_scene_from_another_top_scene() -> None:
     with pytest.raises(ValueError, match="子场景"):
         practice_engine_module.SceneSelection("travel", "daily_home")
+
+
+def test_engine_publicly_delegates_scene_catalog_to_content_source(tmp_path: Path) -> None:
+    content = FakeContentRepository([])
+    engine = PracticeEngine(content, UserRepository(tmp_path / "user.db"))
+
+    assert engine.list_scenes() == content.list_scenes()
 
 
 def test_question_stores_scene_strings_and_accepts_legacy_category_keyword() -> None:
