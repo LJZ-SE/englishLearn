@@ -797,6 +797,7 @@ def _migrate_translation_generation(connection: sqlite3.Connection) -> None:
     ]
     if not selected:
         connection.execute("DELETE FROM translation_repairs")
+        connection.execute("DELETE FROM stage_generations WHERE stage = 'select'")
         return
     model_versions = {
         str(row[0])

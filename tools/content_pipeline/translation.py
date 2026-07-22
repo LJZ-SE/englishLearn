@@ -17,9 +17,11 @@ _CURRENCY_PATTERNS = {
     "EUR": re.compile(r"(?:€|\b(?:EUR|euros?)\b|欧元)", re.IGNORECASE),
     "GBP": re.compile(r"(?:£|\b(?:GBP|pounds?)\b|英镑)", re.IGNORECASE),
     "CNY": re.compile(
-        r"(?:[¥￥]|\b(?:CNY|RMB|yuan|renminbi)\b|人民币|(?<![美欧日])元)",
+        r"(?:\b(?:CNY|RMB|yuan|renminbi)\b|人民币|(?<![美欧日])元)",
         re.IGNORECASE,
     ),
+    "JPY": re.compile(r"(?:\b(?:JPY|yen)\b|日元)", re.IGNORECASE),
+    "AMBIGUOUS_YEN": re.compile(r"[¥￥]"),
 }
 _PERCENT = re.compile(r"(?:%|％|\bpercent(?:age)?\b|百分之)", re.IGNORECASE)
 _IMPORT_FIELDS = {"item_id", "translation_zh", "review_note"}
@@ -107,10 +109,10 @@ def validate_translation(source: str, translation: str) -> tuple[str, ...]:
     if _NUMBER.findall(source) != _NUMBER.findall(translation):
         issues.append("number_mismatch")
     source_currencies = _currency_categories(source)
-    if source_currencies and source_currencies != _currency_categories(translation):
+    if source_currencies != _currency_categories(translation):
         issues.append("currency_mismatch")
-    if _PERCENT.search(source) and not _PERCENT.search(translation):
-        issues.append("percent_mismatch")
+    if bool(_PERCENT.search(source)) != bool(_PERCENT.search(translation)):
+        issues.append("percentage_mismatch")
 
     english_words = _LATIN_WORD.findall(translation)
     if len(english_words) >= 2 or any(len(word) >= 8 for word in english_words):

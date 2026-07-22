@@ -62,7 +62,7 @@ def test_translation_stage_checkpoints_success_and_flags_number_loss(tmp_path: P
         ("Hello there.", "Hello there.", "low_chinese_ratio"),
         ("Please pay $20.", "请支付20元。", "currency_mismatch"),
         ("It costs 20 dollars.", "价格是20欧元。", "currency_mismatch"),
-        ("The discount is 20%.", "折扣是20。", "percent_mismatch"),
+        ("The discount is 20%.", "折扣是20。", "percentage_mismatch"),
         ("This train arrives shortly.", "这是 a train arriving shortly。", "english_residue"),
         (
             "This is a deliberately long sentence for checking translation length.",
@@ -85,6 +85,17 @@ def test_validate_translation_checks_short_sentence_length_and_currency_identity
     assert validate_translation("Hi.", "你好。") == ()
     assert validate_translation("Please pay $20.", "请支付20美元。") == ()
     assert validate_translation("The fare is EUR 20.", "票价是20欧元。") == ()
+
+
+def test_validate_translation_rejects_added_currency_or_percentage_markers() -> None:
+    assert "currency_mismatch" in validate_translation("Pay 20.", "支付20美元。")
+    assert "percentage_mismatch" in validate_translation("There are 20 users.", "用户占20%。")
+
+
+def test_validate_translation_normalizes_jpy_and_treats_yen_symbol_as_ambiguous() -> None:
+    assert validate_translation("The fare is 20 yen.", "票价是20日元。") == ()
+    assert "currency_mismatch" in validate_translation("The fare is 20 yen.", "票价是20美元。")
+    assert "currency_mismatch" in validate_translation("The fare is ¥20.", "票价是20日元。")
 
 
 def test_failed_draft_is_exported_and_only_valid_repair_completes_stage(tmp_path: Path) -> None:
@@ -222,6 +233,64 @@ def test_mark_stage_rejects_partial_select_snapshot_write(tmp_path: Path) -> Non
         database.mark_stage(1, "select", payload={})
 
 
+def test_initialize_migrates_legacy_selection_generation_idempotently(tmp_path: Path) -> None:
+    database = _selected_database(
+        tmp_path,
+        ("The train arrives at nine.", "The train leaves at ten."),
+    )
+    claimed = database.claim_translation_batch(2)
+    assert claimed is not None
+    database.checkpoint_translation_batch(
+        [
+            (1, "火车九点到达。", ()),
+            (2, "火车离开。", ("number_mismatch",)),
+        ],
+        model_version="Helsinki-NLP/opus-mt-en-zh@legacy-revision",
+        selection_generation=claimed.selection_generation,
+    )
+    _downgrade_translation_generation_schema(database)
+
+    database.initialize()
+    with database.connect() as connection:
+        first_generation = connection.execute(
+            "SELECT generation_id FROM stage_generations WHERE stage = 'select'"
+        ).fetchone()
+        repair_generation = connection.execute(
+            "SELECT selection_generation FROM translation_repairs WHERE item_id = 2"
+        ).fetchone()
+        translate_count = connection.execute(
+            "SELECT COUNT(*) FROM stage_results WHERE stage = 'translate'"
+        ).fetchone()
+    assert first_generation == (claimed.selection_generation,)
+    assert repair_generation == first_generation
+    assert translate_count == (1,)
+
+    database.initialize()
+    with database.connect() as connection:
+        second_generation = connection.execute(
+            "SELECT generation_id FROM stage_generations WHERE stage = 'select'"
+        ).fetchone()
+    assert second_generation == first_generation
+    assert len(database.translation_repairs()) == 1
+
+
+def test_initialize_clears_orphan_repair_and_generation_without_select(tmp_path: Path) -> None:
+    database = _selected_database(tmp_path, ("The train arrives at 9:30.",))
+    assert run_translation_stage(database, FakeTranslator()) == 1
+    with database.connect() as connection:
+        connection.execute("DELETE FROM stage_results WHERE stage = 'select'")
+
+    database.initialize()
+
+    with database.connect() as connection:
+        generation = connection.execute(
+            "SELECT generation_id FROM stage_generations WHERE stage = 'select'"
+        ).fetchone()
+        repair_count = connection.execute("SELECT COUNT(*) FROM translation_repairs").fetchone()
+    assert generation is None
+    assert repair_count == (0,)
+
+
 def _selected_database(tmp_path: Path, texts: tuple[str, ...]) -> WorkDatabase:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
@@ -253,3 +322,31 @@ def _selected_database(tmp_path: Path, texts: tuple[str, ...]) -> WorkDatabase:
         model_version="selector-v1",
     )
     return database
+
+
+def _downgrade_translation_generation_schema(database: WorkDatabase) -> None:
+    with database.connect() as connection:
+        connection.execute("DROP TABLE stage_generations")
+        connection.execute("ALTER TABLE translation_repairs RENAME TO current_translation_repairs")
+        connection.execute(
+            """
+            CREATE TABLE translation_repairs(
+                item_id INTEGER PRIMARY KEY REFERENCES raw_items(id),
+                draft TEXT NOT NULL,
+                issues_json TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                review_note TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO translation_repairs(
+                item_id, draft, issues_json, model_version, review_note, updated_at
+            )
+            SELECT item_id, draft, issues_json, model_version, review_note, updated_at
+            FROM current_translation_repairs
+            """
+        )
+        connection.execute("DROP TABLE current_translation_repairs")
