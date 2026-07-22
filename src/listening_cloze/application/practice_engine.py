@@ -15,6 +15,10 @@ from listening_cloze.domain.session import EndlessDifficultyState, QuestionAttem
 from listening_cloze.infrastructure.database import ContentQuestion, SceneMetadata, SessionRecord
 
 
+class SceneCatalogUnavailableError(RuntimeError):
+    """旧内容源尚未提供场景目录能力。"""
+
+
 class ContentSource(Protocol):
     def list_scenes(self) -> list[SceneMetadata]: ...
 
@@ -166,7 +170,9 @@ class PracticeEngine:
 
     def list_scenes(self) -> list[SceneMetadata]:
         provider = getattr(self._content, "list_scenes", None)
-        return list(provider()) if callable(provider) else []
+        if not callable(provider):
+            raise SceneCatalogUnavailableError("内容源不支持场景目录")
+        return list(provider())
 
     @property
     def has_unfinished_session(self) -> bool:

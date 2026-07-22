@@ -6,7 +6,11 @@ from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-from listening_cloze.application.practice_engine import PracticeEngine, PracticeMode
+from listening_cloze.application.practice_engine import (
+    PracticeEngine,
+    PracticeMode,
+    SceneCatalogUnavailableError,
+)
 from listening_cloze.domain.models import Difficulty, SceneSelection
 from listening_cloze.infrastructure.tts_service import PrefetchItem, TtsPrefetchService
 from listening_cloze.infrastructure.waveform import extract_waveform_levels
@@ -30,6 +34,10 @@ LEGACY_SCENE_SELECTIONS = {
     "movies": SceneSelection("culture", None),
     "news_podcasts": SceneSelection("news", None),
 }
+
+
+class SceneCatalogInvalidError(RuntimeError):
+    """正式题库提供了无法使用的场景目录。"""
 
 
 class PracticeController(QObject):
@@ -60,7 +68,7 @@ class PracticeController(QObject):
         self._feedback_animation = "idle"
         try:
             self._scene_catalog = self._load_scene_catalog()
-        except (OSError, sqlite3.Error) as error:
+        except (OSError, sqlite3.Error, SceneCatalogInvalidError) as error:
             self._scene_catalog = []
             self._repair_issues.append(
                 f"题库 content.db 场景目录无法读取，请修复或替换题库：{error}"
@@ -516,14 +524,35 @@ class PracticeController(QObject):
             self._tts.stop()
 
     def _load_scene_catalog(self) -> list[dict[str, object]]:
+        try:
+            scene_metadata = self._engine.list_scenes()
+        except SceneCatalogUnavailableError:
+            return []
+        if not scene_metadata:
+            raise SceneCatalogInvalidError("题库场景目录为空，请替换完整题库")
+
         catalog: list[dict[str, object]] = []
-        for top_scene in self._engine.list_scenes():
+        top_keys: set[str] = set()
+        child_keys: set[str] = set()
+        for top_scene in scene_metadata:
             top_key = str(top_scene.key)
             top_label = str(top_scene.label)
+            raw_children = tuple(top_scene.children)
+            if not top_key or not top_label or top_key in top_keys or not raw_children:
+                raise SceneCatalogInvalidError("题库场景目录结构不完整，请替换完整题库")
+            top_keys.add(top_key)
             children = [
                 {"key": str(child.key), "label": str(child.label)}
-                for child in getattr(top_scene, "children", ())
+                for child in raw_children
             ]
+            if any(
+                not child["key"]
+                or not child["label"]
+                or child["key"] in child_keys
+                for child in children
+            ):
+                raise SceneCatalogInvalidError("题库场景目录结构不完整，请替换完整题库")
+            child_keys.update(str(child["key"]) for child in children)
             catalog.append({"key": top_key, "label": top_label, "children": children})
         return catalog
 
@@ -543,7 +572,9 @@ class PracticeController(QObject):
                 fallback = str(self._scene_catalog[0]["key"])
             selected = (fallback or "daily", None)
 
-        if stored_top != selected[0] or stored_sub != selected[1]:
+        if self._scene_catalog and (
+            stored_top != selected[0] or stored_sub != selected[1]
+        ):
             self._engine.set_setting("selected_top_scene", selected[0])
             self._engine.set_setting("selected_sub_scene", selected[1])
         return selected

@@ -104,6 +104,18 @@ def test_engine_publicly_delegates_scene_catalog_to_content_source(tmp_path: Pat
     assert engine.list_scenes() == content.list_scenes()
 
 
+def test_engine_distinguishes_legacy_content_source_without_scene_catalog(
+    tmp_path: Path,
+) -> None:
+    class LegacyContentSource:
+        pass
+
+    engine = PracticeEngine(LegacyContentSource(), UserRepository(tmp_path / "user.db"))
+
+    with pytest.raises(practice_engine_module.SceneCatalogUnavailableError, match="场景目录"):
+        engine.list_scenes()
+
+
 def test_question_stores_scene_strings_and_accepts_legacy_category_keyword() -> None:
     hierarchical = Question(
         id="hierarchical",

@@ -330,7 +330,8 @@ def test_catalogless_legacy_compatibility_rejects_unknown_scene_and_does_not_per
     )
 
     controller.startQuantitative("news_podcasts", "easy", 1)
-    assert users.get_setting("selected_top_scene") == "daily"
+    assert users.get_setting("selected_top_scene") is None
+    assert users.get_setting("selected_sub_scene") is None
 
     try:
         controller.startQuantitative("unknown", "easy", 1)
@@ -527,19 +528,29 @@ def test_startup_asset_issues_open_repair_page(tmp_path: Path) -> None:
 def test_missing_content_database_records_repair_issue_during_controller_init(
     tmp_path: Path,
 ) -> None:
+    user_db = tmp_path / "user.db"
+    users = UserRepository(user_db)
+    users.set_setting("selected_top_scene", "travel")
+    users.set_setting("selected_sub_scene", "travel_hotel")
+    user_db_before = user_db.read_bytes()
     controller = PracticeController(
         PracticeEngine(
             ContentRepository(tmp_path / "missing-content.db"),
-            UserRepository(tmp_path / "user.db"),
+            users,
         )
     )
 
     assert controller.currentPage == "repair"
     assert any("场景目录" in issue and "content.db" in issue for issue in controller.repairIssues)
+    assert users.get_setting("selected_top_scene") == "travel"
+    assert users.get_setting("selected_sub_scene") == "travel_hotel"
+    assert user_db.read_bytes() == user_db_before
 
+    controller.setStartupIssues(["缺少 Supertonic 模型"])
     controller.setStartupIssues(["缺少 Supertonic 模型"])
     assert any("场景目录" in issue for issue in controller.repairIssues)
     assert "缺少 Supertonic 模型" in controller.repairIssues
+    assert controller.repairIssues.count("缺少 Supertonic 模型") == 1
 
 
 def test_legacy_v1_content_database_records_actionable_repair_issue(
@@ -550,15 +561,86 @@ def test_legacy_v1_content_database_records_actionable_repair_issue(
         connection.execute("CREATE TABLE sentences(id TEXT PRIMARY KEY)")
         connection.execute("CREATE TABLE question_variants(id TEXT PRIMARY KEY)")
 
+    user_db = tmp_path / "user.db"
+    users = UserRepository(user_db)
+    users.set_setting("selected_top_scene", "travel")
+    users.set_setting("selected_sub_scene", "travel_hotel")
+    user_db_before = user_db.read_bytes()
     controller = PracticeController(
         PracticeEngine(
             ContentRepository(content_db),
-            UserRepository(tmp_path / "user.db"),
+            users,
         )
     )
 
     assert controller.currentPage == "repair"
     assert any("场景目录" in issue and "替换" in issue for issue in controller.repairIssues)
+    assert users.get_setting("selected_top_scene") == "travel"
+    assert users.get_setting("selected_sub_scene") == "travel_hotel"
+    assert user_db.read_bytes() == user_db_before
+
+
+def test_corrupt_content_database_preserves_scene_settings_while_opening_repair(
+    tmp_path: Path,
+) -> None:
+    content_db = tmp_path / "corrupt-content.db"
+    content_db.write_bytes(b"not a sqlite database")
+    user_db = tmp_path / "user.db"
+    users = UserRepository(user_db)
+    users.set_setting("selected_top_scene", "travel")
+    users.set_setting("selected_sub_scene", "travel_hotel")
+    user_db_before = user_db.read_bytes()
+
+    controller = PracticeController(
+        PracticeEngine(ContentRepository(content_db), users)
+    )
+
+    assert controller.currentPage == "repair"
+    assert any("场景目录" in issue for issue in controller.repairIssues)
+    assert users.get_setting("selected_top_scene") == "travel"
+    assert users.get_setting("selected_sub_scene") == "travel_hotel"
+    assert user_db.read_bytes() == user_db_before
+
+
+def test_formal_content_source_with_empty_scene_catalog_opens_repair_page(
+    tmp_path: Path,
+) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    controller = PracticeController(
+        PracticeEngine(FakeContentRepository([], scenes=[]), users)
+    )
+
+    assert controller.currentPage == "repair"
+    assert any("场景目录为空" in issue for issue in controller.repairIssues)
+    assert users.get_setting("selected_top_scene") is None
+    assert users.get_setting("selected_sub_scene") is None
+
+
+def test_formal_content_source_with_childless_scene_opens_repair_page(
+    tmp_path: Path,
+) -> None:
+    scenes = [SceneMetadata(key="daily", label="日常生活", children=())]
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository([], scenes=scenes),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+
+    assert controller.currentPage == "repair"
+    assert any("结构不完整" in issue for issue in controller.repairIssues)
+
+
+def test_nonempty_scene_catalog_does_not_report_repair_issue(tmp_path: Path) -> None:
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository([]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+
+    assert controller.currentPage == "home"
+    assert controller.repairIssues == []
 
 
 def test_controller_persists_settings_resume_progress_and_audio_skip(tmp_path: Path) -> None:

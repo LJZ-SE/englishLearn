@@ -60,8 +60,16 @@ class _FakeContentRepository:
 
     def list_scenes(self) -> list[SceneMetadata]:
         return [
-            SceneMetadata(key="daily", label="日常生活"),
-            SceneMetadata(key="news", label="新闻社会"),
+            SceneMetadata(
+                key="daily",
+                label="日常生活",
+                children=(SceneMetadata(key="daily_home", label="家庭家务"),),
+            ),
+            SceneMetadata(
+                key="news",
+                label="新闻社会",
+                children=(SceneMetadata(key="news_current", label="时事新闻"),),
+            ),
         ]
 
 
