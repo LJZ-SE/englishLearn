@@ -20,6 +20,7 @@ def create_content_database(path: Path) -> None:
             CREATE TABLE sentences (
                 id TEXT PRIMARY KEY,
                 text TEXT NOT NULL,
+                translation_zh TEXT NOT NULL,
                 category TEXT NOT NULL,
                 source_url TEXT NOT NULL,
                 normalized_hash TEXT NOT NULL
@@ -43,10 +44,24 @@ def create_content_database(path: Path) -> None:
             """
         )
         connection.executemany(
-            "INSERT INTO sentences VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO sentences VALUES (?, ?, ?, ?, ?, ?)",
             [
-                ("s1", "We take part in the meeting.", "daily", "https://a.test/1", "h1"),
-                ("s2", "Markets recovered after lunch.", "news", "https://a.test/2", "h2"),
+                (
+                    "s1",
+                    "We take part in the meeting.",
+                    "我们参加这场会议。",
+                    "daily",
+                    "https://a.test/1",
+                    "h1",
+                ),
+                (
+                    "s2",
+                    "Markets recovered after lunch.",
+                    "午后市场回升。",
+                    "news",
+                    "https://a.test/2",
+                    "h2",
+                ),
             ],
         )
         connection.executemany(
@@ -82,6 +97,7 @@ def test_content_repository_lists_by_category_and_difficulty_with_aliases(tmp_pa
     assert question.id == "q2"
     assert question.sentence_id == "s1"
     assert question.sentence_text == "We take part in the meeting."
+    assert question.translation_zh == "我们参加这场会议。"
     assert question.category == "daily"
     assert question.difficulty == "hard"
     assert question.canonical_answer == "take part in"

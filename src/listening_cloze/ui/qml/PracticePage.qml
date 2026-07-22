@@ -12,13 +12,66 @@ Item {
     readonly property bool visualCorrect: state === "correct" || state === "level_up"
     readonly property bool visualWrong: state === "incorrect" || state === "level_down"
     readonly property bool answered: visualCorrect || state === "revealed"
-    readonly property bool playing: mediaPlayer.playbackState === MediaPlayer.PlayingState
+    readonly property bool playing: soundEffect.playing
+    property bool playPending: false
+    property bool playbackStarted: false
+    property real playbackProgress: 0
+    readonly property int sentenceLength: (controller ? controller.sentencePrefix.length
+        + controller.sentenceSuffix.length : 0) + blankCount * 16
+    readonly property real waveformScale: sentenceLength > 130 ? 0.58
+        : sentenceLength > 90 ? 0.72 : 1.0
+    readonly property int waveformPreferredWidth: Math.max(260,
+        Math.round((page.width - 556) * waveformScale))
+    readonly property int sentenceFlowMaxWidth: sentenceLength > 130 ? 1080
+        : sentenceLength > 90 ? 1280 : 1500
+    readonly property int answerFieldWidth: sentenceLength > 90 ? 180
+        : Math.max(150, Math.min(220, 580 / Math.max(1, blankCount)))
 
-    MediaPlayer {
-        id: mediaPlayer
+    SoundEffect {
+        id: soundEffect
         source: page.controller ? page.controller.audioSource : ""
-        playbackRate: page.controller ? page.controller.playbackRate : 1.0
-        audioOutput: AudioOutput { volume: page.controller ? page.controller.volume : 0.8 }
+        volume: page.controller ? page.controller.volume : 0.8
+        onSourceChanged: {
+            stop()
+            page.playPending = false
+            page.playbackStarted = false
+            page.playbackProgress = 0
+        }
+        onStatusChanged: {
+            if (status === SoundEffect.Ready && page.playPending) {
+                page.playPending = false
+                page.playbackProgress = 0
+                play()
+            }
+        }
+        onPlayingChanged: {
+            if (playing) {
+                page.playbackStarted = true
+            } else if (page.playbackStarted) {
+                page.playbackStarted = false
+                page.playbackProgress = 1
+            }
+        }
+    }
+
+    Timer {
+        interval: 40
+        repeat: true
+        running: soundEffect.playing
+        onTriggered: {
+            const duration = page.controller ? page.controller.audioDurationMs : 0
+            if (duration > 0)
+                page.playbackProgress = Math.min(0.99,
+                    page.playbackProgress + interval / duration)
+        }
+    }
+
+    Shortcut {
+        objectName: "replayShortcut"
+        enabled: page.visible && page.controller
+        sequence: "Ctrl+R"
+        context: Qt.ApplicationShortcut
+        onActivated: if (page.controller) page.controller.replay()
     }
 
     function collectAnswers() {
@@ -26,6 +79,11 @@ Item {
         for (let index = 0; index < answerRepeater.count; index++)
             values.push(answerRepeater.itemAt(index).text)
         return values
+    }
+
+    function clearAnswers() {
+        for (let index = 0; index < answerRepeater.count; index++)
+            answerRepeater.itemAt(index).text = ""
     }
 
     function submitOrAdvance() {
@@ -43,10 +101,18 @@ Item {
             for (let index = 0; index < answerRepeater.count; index++)
                 answerRepeater.itemAt(index).text = values[index] || ""
         }
-        function onAudioRequested(_questionId, rate) {
-            mediaPlayer.playbackRate = rate
-            if (mediaPlayer.source.toString() !== "")
-                mediaPlayer.play()
+        function onQuestionChanged() {
+            page.clearAnswers()
+        }
+        function onAudioRequested(_questionId, _rate) {
+            if (soundEffect.source.toString() === "")
+                return
+            page.playbackProgress = 0
+            page.playbackStarted = false
+            if (soundEffect.status === SoundEffect.Ready)
+                soundEffect.play()
+            else
+                page.playPending = true
         }
     }
 
@@ -66,10 +132,21 @@ Item {
             border.width: 1
             border.color: "#E6EBF2"
 
-            ColumnLayout {
+            ScrollView {
+                id: practiceScroll
+                objectName: "practiceScroll"
                 anchors.fill: parent
-                anchors.margins: 40
-                spacing: 14
+                padding: 40
+                clip: true
+                contentWidth: availableWidth
+                contentHeight: practiceContent.implicitHeight
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ColumnLayout {
+                    id: practiceContent
+                    width: practiceScroll.availableWidth
+                    spacing: 14
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -88,6 +165,7 @@ Item {
                             font.weight: Font.DemiBold
                         }
                         RowLayout {
+                            id: audioControls
                             Layout.fillWidth: true
                             spacing: 24
                             Button {
@@ -117,13 +195,14 @@ Item {
                                 }
                             }
                             Waveform {
-                                Layout.fillWidth: true
+                                Layout.preferredWidth: page.waveformPreferredWidth
+                                Layout.maximumWidth: page.waveformPreferredWidth
                                 Layout.preferredHeight: 74
                                 animated: page.playing
                                 levels: page.controller ? page.controller.waveformLevels : []
-                                progress: mediaPlayer.duration > 0
-                                    ? mediaPlayer.position / mediaPlayer.duration : 0
+                                progress: page.playbackProgress
                             }
+                            Item { Layout.fillWidth: true }
                         }
                     }
 
@@ -160,14 +239,20 @@ Item {
                 }
 
                 RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 48
-                    spacing: 18
+                    id: audioToolbar
+                    objectName: "audioToolbar"
+                    Layout.alignment: Qt.AlignLeft
+                    Layout.preferredWidth: 348
+                    Layout.maximumWidth: 348
+                    Layout.preferredHeight: 40
+                    spacing: 12
                     Button {
                         id: replayButton
-                        Layout.preferredWidth: 122
+                        Layout.preferredWidth: 108
                         Layout.preferredHeight: 40
                         hoverEnabled: true
+                        scale: down ? 0.96 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 80 } }
                         background: Rectangle {
                             radius: 10
                             color: replayButton.hovered ? "#F3F7FC" : "white"
@@ -185,9 +270,10 @@ Item {
                             if (page.controller) page.controller.replay()
                         }
                     }
-                    Text { text: "语速"; color: "#364257"; font.pixelSize: 15; font.family: "Segoe UI" }
                     Rectangle {
-                        Layout.preferredWidth: 300
+                        id: speedSelector
+                        objectName: "speedSelector"
+                        Layout.preferredWidth: 228
                         Layout.preferredHeight: 40
                         radius: 10
                         color: "#F5F7FA"
@@ -201,6 +287,8 @@ Item {
                                     width: parent.width / 3
                                     height: parent.height
                                     radius: 9
+                                    scale: speedMouse.pressed ? 0.96 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 80 } }
                                     color: page.controller && page.controller.playbackRate === modelData
                                            ? "#0A6DF0" : "transparent"
                                     Text {
@@ -211,6 +299,7 @@ Item {
                                         font.family: "Segoe UI"
                                     }
                                     MouseArea {
+                                        id: speedMouse
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: if (page.controller) page.controller.setPlaybackRate(parent.modelData)
@@ -219,7 +308,6 @@ Item {
                             }
                         }
                     }
-                    Item { Layout.fillWidth: true }
                 }
 
                 Rectangle {
@@ -256,64 +344,88 @@ Item {
 
                 Item { Layout.preferredHeight: 4 }
 
-                RowLayout {
+                Item {
                     objectName: "answerFields"
                     Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 16
+                    Layout.preferredHeight: Math.max(66, sentenceFlow.height)
 
-                    Text {
-                        text: page.controller ? page.controller.sentencePrefix : "You should "
-                        color: "#141B27"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 31
-                        Layout.alignment: Qt.AlignVCenter
-                    }
+                    Flow {
+                        id: sentenceFlow
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: Math.min(parent.width, page.sentenceFlowMaxWidth)
+                        height: childrenRect.height
+                        spacing: 16
 
-                    Repeater {
-                        id: answerRepeater
-                        model: page.blankCount
-                        TextField {
-                            required property int index
-                            Layout.preferredWidth: Math.max(150, Math.min(220, 580 / Math.max(1, page.blankCount)))
-                            Layout.preferredHeight: 66
-                            horizontalAlignment: TextInput.AlignHCenter
-                            verticalAlignment: TextInput.AlignVCenter
+                        Text {
+                            width: Math.min(implicitWidth, sentenceFlow.width)
+                            height: 66
+                            text: page.controller ? page.controller.sentencePrefix : "You should "
+                            color: "#141B27"
                             font.family: "Segoe UI"
-                            font.pixelSize: 24
-                            color: "#111827"
-                            readOnly: page.visualCorrect || page.state === "revealed"
-                            selectByMouse: true
-                            background: Rectangle {
-                                radius: 11
-                                color: "#FBFCFE"
-                                border.width: 1.5
-                                border.color: page.visualWrong ? "#F04438"
-                                            : page.visualCorrect ? "#26B36A"
-                                            : parent.activeFocus ? "#0A6DF0" : "#C9D2DE"
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    anchors.leftMargin: 14
-                                    anchors.rightMargin: 14
-                                    anchors.bottomMargin: 10
-                                    height: 1.5
-                                    color: page.visualWrong ? "#F04438"
-                                         : page.visualCorrect ? "#26B36A" : "#8A96A8"
-                                }
-                            }
-                            Keys.onReturnPressed: page.submitOrAdvance()
-                            Keys.onEnterPressed: page.submitOrAdvance()
+                            font.pixelSize: 31
+                            wrapMode: Text.Wrap
+                            verticalAlignment: Text.AlignVCenter
                         }
-                    }
 
-                    Text {
-                        text: page.controller ? page.controller.sentenceSuffix : " the meeting."
-                        color: "#141B27"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 31
-                        Layout.alignment: Qt.AlignVCenter
+                        Repeater {
+                            id: answerRepeater
+                            model: page.blankCount
+                            TextField {
+                                required property int index
+                                objectName: "answerInput" + index
+                                width: page.answerFieldWidth
+                                height: 66
+                                horizontalAlignment: TextInput.AlignHCenter
+                                verticalAlignment: TextInput.AlignVCenter
+                                font.family: "Segoe UI"
+                                font.pixelSize: 24
+                                color: "#111827"
+                                readOnly: page.visualCorrect || page.state === "revealed"
+                                selectByMouse: true
+                                background: Rectangle {
+                                    radius: 11
+                                    color: "#FBFCFE"
+                                    border.width: 1.5
+                                    border.color: page.visualWrong ? "#F04438"
+                                                : page.visualCorrect ? "#26B36A"
+                                                : parent.activeFocus ? "#0A6DF0" : "#C9D2DE"
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        anchors.leftMargin: 14
+                                        anchors.rightMargin: 14
+                                        anchors.bottomMargin: 10
+                                        height: 1.5
+                                        color: page.visualWrong ? "#F04438"
+                                             : page.visualCorrect ? "#26B36A" : "#8A96A8"
+                                    }
+                                }
+                                Keys.onPressed: event => {
+                                    if (event.key !== Qt.Key_Space)
+                                        return
+                                    event.accepted = true
+                                    if (index + 1 < answerRepeater.count) {
+                                        const nextInput = answerRepeater.itemAt(index + 1)
+                                        if (nextInput)
+                                            nextInput.forceActiveFocus()
+                                    }
+                                }
+                                Keys.onReturnPressed: page.submitOrAdvance()
+                                Keys.onEnterPressed: page.submitOrAdvance()
+                            }
+                        }
+
+                        Text {
+                            width: Math.min(implicitWidth, sentenceFlow.width)
+                            height: 66
+                            text: page.controller ? page.controller.sentenceSuffix : " the meeting."
+                            color: "#141B27"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 31
+                            wrapMode: Text.Wrap
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
                 }
 
@@ -338,7 +450,27 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
 
-                Item { Layout.fillHeight: true }
+                Rectangle {
+                    objectName: "translationPanel"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? translationText.implicitHeight + 30 : 0
+                    visible: (page.visualCorrect || page.state === "revealed") && page.controller
+                             && page.controller.sentenceTranslation.length > 0
+                    radius: 12
+                    color: "#F1F8FF"
+                    border.color: "#CFE3FA"
+
+                    Text {
+                        id: translationText
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        text: "中文翻译：" + (page.controller ? page.controller.sentenceTranslation : "")
+                        color: "#31536F"
+                        font.family: "Segoe UI"
+                        font.pixelSize: 18
+                        wrapMode: Text.Wrap
+                    }
+                }
 
                 RowLayout {
                     Layout.alignment: Qt.AlignHCenter
@@ -367,10 +499,12 @@ Item {
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     text: "Enter  按 Enter " + (page.controller && page.controller.canAdvance ? "进入下一题" : "检查答案")
+                          + "   ·   " + (Qt.platform.os === "osx" ? "⌘R" : "Ctrl+R") + " 重听"
                     color: "#7A8597"
                     font.family: "Segoe UI"
                     font.pixelSize: 14
                 }
+            }
             }
         }
 

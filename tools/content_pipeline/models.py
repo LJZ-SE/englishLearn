@@ -12,6 +12,7 @@ class CollectedSentence:
     license_url: str
     category_hint: str | None = None
     source_author: str = ""
+    translation_zh: str = ""
 
 
 @dataclass(frozen=True, slots=True)

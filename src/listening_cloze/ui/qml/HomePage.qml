@@ -18,7 +18,7 @@ Item {
         anchors.right: parent.right
         anchors.topMargin: 22
         anchors.rightMargin: 48
-        text: "继续上次练习"
+        text: "继续未完成练习"
         secondary: true
         z: 2
         onClicked: if (page.controller) page.controller.resumeLatest()

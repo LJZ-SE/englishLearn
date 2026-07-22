@@ -30,6 +30,7 @@ class ContentQuestion:
     difficulty_score: float
     rationale: str
     aliases: tuple[str, ...]
+    translation_zh: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +107,7 @@ class ContentRepository:
 
         where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         query = (
-            "SELECT q.id, q.sentence_id, s.text AS sentence_text, s.category, "
+            "SELECT q.id, q.sentence_id, s.text AS sentence_text, s.translation_zh, s.category, "
             "s.source_url, s.normalized_hash, q.difficulty, q.answer_start, "
             "q.answer_end, q.canonical_answer, q.answer_word_count, "
             "q.difficulty_score, q.rationale "
@@ -135,6 +136,7 @@ class ContentRepository:
             id=row["id"],
             sentence_id=row["sentence_id"],
             sentence_text=row["sentence_text"],
+            translation_zh=row["translation_zh"],
             category=row["category"],
             source_url=row["source_url"],
             normalized_hash=row["normalized_hash"],

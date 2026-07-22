@@ -59,6 +59,30 @@ ApplicationWindow {
                 font.pixelSize: 25
                 font.weight: Font.DemiBold
             }
+            Button {
+                id: backHomeButton
+                objectName: "backHomeButton"
+                visible: appWindow.pageName === "practice"
+                Layout.preferredWidth: 92
+                Layout.preferredHeight: 40
+                hoverEnabled: true
+                scale: down ? 0.96 : 1.0
+                Behavior on scale { NumberAnimation { duration: 80 } }
+                background: Rectangle {
+                    radius: 10
+                    color: backHomeButton.hovered ? "#F2F7FD" : "#FAFBFC"
+                    border.color: "#DCE5EF"
+                }
+                contentItem: Text {
+                    text: "←  主页"
+                    color: "#354258"
+                    font.family: "Segoe UI"
+                    font.pixelSize: 15
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: if (appWindow.backend) appWindow.backend.goHome()
+            }
             ChoiceChip {
                 visible: appWindow.pageName === "practice"
                 text: appWindow.backend ? appWindow.backend.difficultyLabel : "中等"

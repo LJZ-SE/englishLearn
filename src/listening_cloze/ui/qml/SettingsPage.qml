@@ -81,7 +81,11 @@ Item {
                     onClicked: resetDialog.open()
                 }
                 Item { Layout.fillWidth: true }
-                PrimaryButton { text: "完成"; onClicked: if (page.controller) page.controller.goHome() }
+                PrimaryButton {
+                    objectName: "settingsDoneButton"
+                    text: "完成"
+                    onClicked: if (page.controller) page.controller.closeSettings()
+                }
             }
         }
     }

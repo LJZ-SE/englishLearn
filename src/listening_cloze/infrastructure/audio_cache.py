@@ -21,6 +21,8 @@ class AudioProfile:
     steps: int
     synthesis_speed: float
     sample_rate: int
+    target_rms_dbfs: float = -11.0
+    peak_ceiling_dbfs: float = -1.0
 
     @classmethod
     def default(cls) -> AudioProfile:
@@ -33,6 +35,8 @@ class AudioProfile:
             steps=8,
             synthesis_speed=1.0,
             sample_rate=44_100,
+            target_rms_dbfs=-11.0,
+            peak_ceiling_dbfs=-1.0,
         )
 
 

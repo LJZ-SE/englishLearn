@@ -77,9 +77,9 @@ def test_controller_exposes_multi_blank_question_and_preserves_first_result(
     assert controller.currentPage == "summary"
 
 
-def test_controller_reveals_one_value_per_canonical_answer_word(tmp_path: Path) -> None:
+def test_controller_reveals_answer_and_full_sentence_translation(tmp_path: Path) -> None:
     engine = PracticeEngine(
-        FakeContentRepository([_question("q1", "do not", ("don't",))]),
+        FakeContentRepository([_question("q1", "do not", ("don't",), "我不会伤害你。")]),
         UserRepository(tmp_path / "user.db"),
         rng=random.Random(2),
     )
@@ -92,6 +92,7 @@ def test_controller_reveals_one_value_per_canonical_answer_word(tmp_path: Path) 
     assert revealed.count() == 1
     assert revealed.at(0)[0] == ["do", "not"]
     assert controller.feedbackState == "revealed"
+    assert controller.sentenceTranslation == "我不会伤害你。"
     assert controller.viewedAnswerCount == 1
     assert controller.canAdvance
 
@@ -112,6 +113,59 @@ def test_initial_play_does_not_count_as_replay_but_replay_does(tmp_path: Path) -
     assert requested.count() == 2
     assert requested.at(0) == ["q1", 1.0]
     assert controller.replayCount == 1
+
+
+def test_each_new_question_requests_automatic_audio_without_counting_a_replay(
+    tmp_path: Path,
+) -> None:
+    questions = [_question(f"q{index}", "listen") for index in range(8)]
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository(questions),
+            UserRepository(tmp_path / "user.db"),
+            rng=random.Random(25),
+        )
+    )
+    requested = QSignalSpy(controller.audioRequested)
+
+    controller.startQuantitative("daily", "easy", 5)
+
+    assert requested.count() == 1
+    assert controller.replayCount == 0
+
+    controller.submitAnswers(["listen"])
+    controller.nextQuestion()
+
+    assert requested.count() == 2
+    assert controller.replayCount == 0
+
+
+def test_automatic_audio_waits_until_local_tts_is_ready(tmp_path: Path) -> None:
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "listen")]),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(26),
+    )
+    controller = PracticeController(engine)
+    controller.attachTts(FakeTtsService())
+    requested = QSignalSpy(controller.audioRequested)
+
+    controller.startQuantitative("daily", "easy", 1)
+
+    assert requested.count() == 0
+    audio_file = tmp_path / "automatic.wav"
+    with wave.open(str(audio_file), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(44_100)
+        output.writeframes(b"\x00\x00" * 40)
+    controller.handleTtsReady(
+        PrefetchItem("q1", engine.current.question.sentence),
+        audio_file,
+    )
+
+    assert requested.count() == 1
+    assert controller.replayCount == 0
 
 
 def test_controller_schedules_current_and_next_two_and_publishes_ready_audio(
@@ -146,6 +200,27 @@ def test_controller_schedules_current_and_next_two_and_publishes_ready_audio(
     assert controller.audioSource == audio_file.resolve().as_uri()
     assert len(controller.waveformLevels) == 72
     assert max(controller.waveformLevels) == 1.0
+    assert controller.audioDurationMs > 0
+
+
+def test_playback_rate_reschedules_current_and_next_two_at_selected_speed(
+    tmp_path: Path,
+) -> None:
+    questions = [_question(f"q{index}", f"word{index}") for index in range(5)]
+    engine = PracticeEngine(
+        FakeContentRepository(questions),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(21),
+    )
+    controller = PracticeController(engine)
+    tts = FakeTtsService()
+    controller.attachTts(tts)
+    controller.startQuantitative("daily", "easy", 5)
+
+    controller.setPlaybackRate(0.8)
+
+    assert len(tts.windows[-1]) == 3
+    assert {item.playback_rate for item in tts.windows[-1]} == {0.8}
 
 
 def test_startup_asset_issues_open_repair_page(tmp_path: Path) -> None:
@@ -196,13 +271,67 @@ def test_controller_persists_settings_resume_progress_and_audio_skip(tmp_path: P
 
     failed_id = second.currentQuestionId
     second.handleTtsError(
-        PrefetchItem(failed_id, second_engine.current.question.sentence),
+        PrefetchItem(
+            failed_id,
+            second_engine.current.question.sentence,
+            playback_rate=0.8,
+        ),
         RuntimeError("模型故障"),
     )
     assert second.audioStatus == "error"
     second.skipAudioQuestion()
     assert second.currentQuestionId != failed_id
     assert second.wrongCount == 1
+
+
+def test_returning_home_and_resuming_keeps_the_live_practice_state(tmp_path: Path) -> None:
+    questions = [_question(f"q{index}", "listen") for index in range(8)]
+    engine = PracticeEngine(
+        FakeContentRepository(questions),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(23),
+    )
+    controller = PracticeController(engine)
+    controller.startQuantitative("daily", "easy", 5)
+    controller.submitAnswers(["wrong"])
+    current_question_id = controller.currentQuestionId
+
+    controller.goHome()
+
+    assert controller.currentPage == "home"
+    assert controller.hasResume
+
+    controller.resumeLatest()
+
+    assert controller.currentPage == "practice"
+    assert controller.currentQuestionId == current_question_id
+    assert controller.feedbackState == "incorrect"
+    assert controller.wrongCount == 1
+
+
+def test_closing_settings_returns_to_the_page_that_opened_it(tmp_path: Path) -> None:
+    questions = [_question(f"q{index}", "listen") for index in range(8)]
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository(questions),
+            UserRepository(tmp_path / "user.db"),
+            rng=random.Random(24),
+        )
+    )
+    controller.startQuantitative("daily", "easy", 5)
+    controller.submitAnswers(["wrong"])
+
+    controller.openSettings()
+    assert controller.currentPage == "settings"
+
+    controller.closeSettings()
+    assert controller.currentPage == "practice"
+    assert controller.feedbackState == "incorrect"
+
+    controller.goHome()
+    controller.openSettings()
+    controller.closeSettings()
+    assert controller.currentPage == "home"
 
 
 def test_reset_learning_records_requires_explicit_confirmation(tmp_path: Path) -> None:
@@ -247,6 +376,7 @@ def _question(
     question_id: str,
     answer: str,
     aliases: tuple[str, ...] = (),
+    translation_zh: str = "",
 ) -> ContentQuestion:
     sentence = f"You should {answer} today."
     start = sentence.index(answer)
@@ -254,6 +384,7 @@ def _question(
         id=question_id,
         sentence_id=f"sentence-{question_id}",
         sentence_text=sentence,
+        translation_zh=translation_zh,
         category="daily",
         source_url="https://example.test",
         normalized_hash=f"hash-{question_id}",

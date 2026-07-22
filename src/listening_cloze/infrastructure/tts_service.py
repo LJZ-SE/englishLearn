@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -10,19 +10,21 @@ from listening_cloze.infrastructure.audio_cache import AudioCache, AudioProfile
 
 
 class TtsBackend(Protocol):
-    def synthesize_to_file(self, text: str, target: Path) -> float: ...
+    def synthesize_to_file(self, text: str, target: Path, *, speed: float) -> float: ...
 
 
 @dataclass(frozen=True, slots=True)
 class PrefetchItem:
     question_id: str
     sentence: str
+    playback_rate: float = 1.0
 
 
 @dataclass(slots=True)
 class _Task:
     key: str
     sentence: str
+    profile: AudioProfile
     priority: int
     order: int
     items: list[PrefetchItem] = field(default_factory=list)
@@ -78,24 +80,28 @@ class TtsPrefetchService:
     def schedule(self, items: Sequence[PrefetchItem]) -> None:
         ready_now: list[tuple[PrefetchItem, Path]] = []
         window = list(items[:3])
-        requested_keys = {self._cache.cache_key(item.sentence, self._profile) for item in window}
+        requested_keys = {
+            self._cache.cache_key(item.sentence, self._profile_for(item)) for item in window
+        }
 
         with self._condition:
             self._pending = {
                 key: task for key, task in self._pending.items() if key in requested_keys
             }
             for priority, item in enumerate(window):
-                cached_path = self._cache.valid_path(item.sentence, self._profile)
+                profile = self._profile_for(item)
+                cached_path = self._cache.valid_path(item.sentence, profile)
                 if cached_path is not None:
                     ready_now.append((item, cached_path))
                     continue
 
-                key = self._cache.cache_key(item.sentence, self._profile)
+                key = self._cache.cache_key(item.sentence, profile)
                 task = self._inflight.get(key) or self._pending.get(key)
                 if task is None:
                     task = _Task(
                         key=key,
                         sentence=item.sentence,
+                        profile=profile,
                         priority=priority,
                         order=self._next_order(),
                     )
@@ -108,6 +114,9 @@ class TtsPrefetchService:
 
         for item, path in ready_now:
             self._notify_ready(item, path)
+
+    def _profile_for(self, item: PrefetchItem) -> AudioProfile:
+        return replace(self._profile, synthesis_speed=item.playback_rate)
 
     def _next_order(self) -> int:
         self._order += 1
@@ -132,14 +141,18 @@ class TtsPrefetchService:
                 self._inflight.pop(task.key, None)
 
     def _execute(self, task: _Task) -> None:
-        target = self._cache.path_for(task.sentence, self._profile)
+        target = self._cache.path_for(task.sentence, task.profile)
         attempts = 2 if task.priority == 0 else 1
         last_error: Exception | None = None
         for _attempt in range(attempts):
             temporary = self._cache.temporary_path(target)
             temporary.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self._backend.synthesize_to_file(task.sentence, temporary)
+                self._backend.synthesize_to_file(
+                    task.sentence,
+                    temporary,
+                    speed=task.profile.synthesis_speed,
+                )
                 self._cache.commit(temporary, target)
                 for item in tuple(task.items):
                     self._notify_ready(item, target)

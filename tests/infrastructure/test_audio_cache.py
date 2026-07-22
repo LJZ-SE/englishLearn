@@ -1,4 +1,5 @@
 import wave
+from dataclasses import replace
 from pathlib import Path
 
 from listening_cloze.infrastructure.audio_cache import AudioCache, AudioProfile
@@ -46,3 +47,13 @@ def test_cache_accepts_complete_wave_and_rejects_partial_file(tmp_path: Path) ->
 
     assert cache.valid_path("A complete sentence.", profile) == target
     assert not temporary.exists()
+
+
+def test_target_loudness_change_invalidates_quieter_cached_audio(tmp_path: Path) -> None:
+    cache = AudioCache(tmp_path)
+    quiet_profile = replace(AudioProfile.default(), target_rms_dbfs=-17.0)
+    louder_profile = replace(AudioProfile.default(), target_rms_dbfs=-11.0)
+
+    assert cache.path_for("A sentence.", quiet_profile) != cache.path_for(
+        "A sentence.", louder_profile
+    )

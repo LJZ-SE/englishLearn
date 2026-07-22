@@ -48,6 +48,8 @@ def create_default_controller(
             voice=profile.voice,
             steps=profile.steps,
             synthesis_speed=profile.synthesis_speed,
+            target_rms_dbfs=profile.target_rms_dbfs,
+            peak_ceiling_dbfs=profile.peak_ceiling_dbfs,
         ),
         AudioCache(paths.audio_cache),
         profile,

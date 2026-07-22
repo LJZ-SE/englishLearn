@@ -1,6 +1,7 @@
 import threading
 import time
 import wave
+from dataclasses import replace
 from pathlib import Path
 
 from listening_cloze.infrastructure.audio_cache import AudioCache, AudioProfile
@@ -13,11 +14,25 @@ class RecordingBackend:
         self.fail_first_text = fail_first_text
         self._failed = False
 
-    def synthesize_to_file(self, text: str, target: Path) -> float:
+    def synthesize_to_file(self, text: str, target: Path, *, speed: float) -> float:
         self.calls.append(text)
         if text == self.fail_first_text and not self._failed:
             self._failed = True
             raise RuntimeError("temporary failure")
+        with wave.open(str(target), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(44_100)
+            output.writeframes(b"\x00\x00" * 32)
+        return 0.01
+
+
+class SpeedRecordingBackend:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float]] = []
+
+    def synthesize_to_file(self, text: str, target: Path, *, speed: float) -> float:
+        self.calls.append((text, speed))
         with wave.open(str(target), "wb") as output:
             output.setnchannels(1)
             output.setsampwidth(2)
@@ -100,3 +115,26 @@ def test_current_question_retries_once_after_temporary_failure(tmp_path: Path) -
 
     assert backend.calls == ["Current sentence.", "Current sentence."]
     assert errors == []
+
+
+def test_prefetch_generates_and_caches_requested_playback_speed(tmp_path: Path) -> None:
+    backend = SpeedRecordingBackend()
+    ready: list[Path] = []
+    service = TtsPrefetchService(
+        backend,
+        AudioCache(tmp_path),
+        AudioProfile.default(),
+        on_ready=lambda _item, path: ready.append(path),
+    )
+    service.start()
+    try:
+        service.schedule([PrefetchItem("slow", "A sentence at slow speed.", playback_rate=0.8)])
+        _wait_until(lambda: len(ready) == 1)
+    finally:
+        service.stop()
+
+    assert backend.calls == [("A sentence at slow speed.", 0.8)]
+    assert ready[0] == AudioCache(tmp_path).path_for(
+        "A sentence at slow speed.",
+        replace(AudioProfile.default(), synthesis_speed=0.8),
+    )
