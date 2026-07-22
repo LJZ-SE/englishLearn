@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -169,11 +171,16 @@ def import_all_sources(
     refresh_identities = set(pending_refresh_identities) | changed_identities
     for identity in sorted(refresh_identities):
         database.delete_raw_source(identity)
+        identity_imported = 0
         for source, kind, cache_path in prepared:
             if _raw_source_name(source) != identity:
                 continue
             items = _iter_source(kind, cache_path, source)
-            imported[kind] += _import_items(database, items, source.get("max_items"))
+            source_count = _import_items(database, items, source.get("max_items"))
+            imported[kind] += source_count
+            identity_imported += source_count
+        if identity_imported == 0:
+            raise ValueError(f"待刷新来源未导入任何记录，保留 pending identity: {identity}")
         pending_refresh_identities.discard(identity)
         _checkpoint_source_lock(
             lock_path,
@@ -433,20 +440,88 @@ def _validate_downloaded_source(
                     name,
                 )
             ]
-            valid = bool(candidates) and isinstance(
-                json.loads(archive.read(candidates[0])), list
+            valid = any(
+                _multiwoz_payload_has_record(json.loads(archive.read(name)))
+                for name in candidates
             )
         elif kind == "dailydialog":
-            valid = "data/dialogues.json" in names and isinstance(
-                json.loads(archive.read("data/dialogues.json")), list
+            valid = "data/dialogues.json" in names and _dailydialog_payload_has_record(
+                json.loads(archive.read("data/dialogues.json"))
             )
         else:
-            valid = any(
-                "/Main-Dataset/" in f"/{name}" and name.lower().endswith(".csv")
-                for name in names
-            )
+            valid = _mts_dialog_archive_has_record(archive, names)
     if not valid:
-        raise ValueError(f"来源 ZIP 缺少最低数据结构: {source['key']}")
+        raise ValueError(f"来源 ZIP 缺少最低数据结构；缺少有效记录: {source['key']}")
+
+
+def _multiwoz_payload_has_record(payload: object) -> bool:
+    if not isinstance(payload, list):
+        return False
+    for dialogue in payload:
+        if not isinstance(dialogue, dict) or not str(dialogue.get("dialogue_id", "")).strip():
+            continue
+        turns = dialogue.get("turns")
+        if not isinstance(turns, list):
+            continue
+        if any(
+            isinstance(turn, dict)
+            and str(turn.get("speaker", "")).strip()
+            and str(turn.get("utterance", "")).strip()
+            for turn in turns
+        ):
+            return True
+    return False
+
+
+def _dailydialog_payload_has_record(payload: object) -> bool:
+    if not isinstance(payload, list):
+        return False
+    for dialogue in payload:
+        if not isinstance(dialogue, dict):
+            continue
+        dialogue_id = str(
+            dialogue.get("original_id") or dialogue.get("dialogue_id") or ""
+        ).strip()
+        turns = dialogue.get("turns")
+        if not dialogue_id or not isinstance(turns, list):
+            continue
+        if any(
+            isinstance(turn, dict)
+            and isinstance(turn.get("utt_idx"), int)
+            and not isinstance(turn.get("utt_idx"), bool)
+            and str(turn.get("utterance", "")).strip()
+            for turn in turns
+        ):
+            return True
+    return False
+
+
+def _mts_dialog_archive_has_record(
+    archive: zipfile.ZipFile, names: list[str]
+) -> bool:
+    split_markers = ("training", "validation", "testset-1", "testset-2")
+    candidates = [
+        name
+        for name in names
+        if "/Main-Dataset/" in f"/{name}"
+        and name.lower().endswith(".csv")
+        and any(marker in Path(name).name.lower() for marker in split_markers)
+    ]
+    for name in candidates:
+        with archive.open(name) as binary_stream:
+            text_stream = io.TextIOWrapper(binary_stream, encoding="utf-8-sig", newline="")
+            reader = csv.DictReader(text_stream)
+            field_names = {str(field).strip().lower() for field in reader.fieldnames or ()}
+            if not {"id", "dialogue"} <= field_names:
+                continue
+            if any(
+                str(value or "").strip()
+                for row in reader
+                for key, value in row.items()
+                if str(key).strip().lower() == "dialogue"
+            ):
+                return True
+    return False
 
 
 def _download_url(url: str, target_path: Path) -> str:

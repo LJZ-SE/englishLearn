@@ -350,3 +350,75 @@ def test_manifest_expected_sha256_is_checked_before_cache_replace(tmp_path: Path
         import_all_sources(database, manifest, lock)
 
     assert not (lock.parent / "downloads/daily-dialog.zip").exists()
+
+
+def test_multiwoz_zip_with_empty_dialogue_array_keeps_identity_pending(
+    tmp_path: Path,
+) -> None:
+    database = _initialized_database(tmp_path / "work.db")
+    archive = tmp_path / "multiwoz-empty.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(
+            "multiwoz-fixed/data/MultiWOZ_2.2/train/dialogues_001.json",
+            "[]",
+        )
+    manifest = tmp_path / "manifest.json"
+    lock = tmp_path / "source-lock.json"
+    _write_manifest(
+        manifest,
+        [{"key": "multiwoz", "kind": "multiwoz", "url": archive.as_uri()}],
+    )
+
+    with pytest.raises(ValueError, match="缺少有效记录"):
+        import_all_sources(database, manifest, lock)
+
+    interrupted = json.loads(lock.read_text(encoding="utf-8"))
+    assert interrupted["complete"] is False
+    assert interrupted["pending_refresh_identities"] == ["multiwoz"]
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 0
+
+
+def test_mts_dialog_zip_with_wrong_headers_keeps_identity_pending(tmp_path: Path) -> None:
+    database = _initialized_database(tmp_path / "work.db")
+    archive = tmp_path / "mts-invalid.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(
+            "MTS-Dialog-fixed/Main-Dataset/MTS-Dialog-TrainingSet.csv",
+            "foo,bar\none,two\n",
+        )
+    manifest = tmp_path / "manifest.json"
+    lock = tmp_path / "source-lock.json"
+    _write_manifest(
+        manifest,
+        [{"key": "mts-dialog", "kind": "mts-dialog", "url": archive.as_uri()}],
+    )
+
+    with pytest.raises(ValueError, match="缺少有效记录"):
+        import_all_sources(database, manifest, lock)
+
+    interrupted = json.loads(lock.read_text(encoding="utf-8"))
+    assert interrupted["complete"] is False
+    assert interrupted["pending_refresh_identities"] == ["mts-dialog"]
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 0
+
+
+def test_pending_identity_parser_zero_items_never_completes_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = _initialized_database(tmp_path / "work.db")
+    source = _write_tatoeba(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    lock = tmp_path / "source-lock.json"
+    _write_manifest(manifest, [source])
+    monkeypatch.setattr(production_sources, "_iter_source", lambda *_args: ())
+
+    with pytest.raises(ValueError, match="未导入任何记录.*Tatoeba"):
+        import_all_sources(database, manifest, lock)
+
+    interrupted = json.loads(lock.read_text(encoding="utf-8"))
+    assert interrupted["complete"] is False
+    assert interrupted["pending_refresh_identities"] == ["Tatoeba"]
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 0
