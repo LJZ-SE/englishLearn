@@ -45,8 +45,8 @@ def select_scene_quotas[RowT](rows: Iterable[RowT]) -> dict[str, list[RowT]]:
         scene_rows = candidates[scene.key]
         protected = [row for row in scene_rows if bool(getattr(row, "protected", False))]
         protected.sort(key=_selection_key)
-        source_limit = math.floor(scene.quota * 0.45)
-        author_limit = math.floor(scene.quota * 0.08)
+        source_limit = max(1, math.floor(scene.quota * 0.45))
+        author_limit = max(1, math.floor(scene.quota * 0.08))
         source_counts = Counter(str(getattr(row, "source_name", "")) for row in protected)
         author_counts = Counter(
             author
