@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tools.content_pipeline.work_database import WorkDatabase
 
 
@@ -102,3 +104,59 @@ def test_content_cli_initializes_and_reports_status(tmp_path: Path) -> None:
 
     assert initialized.stdout == ""
     assert json.loads(status.stdout) == {"raw": 0, "rejected": 0}
+
+
+def test_mark_stage_requires_the_immediately_previous_successful_stage(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+
+    with pytest.raises(ValueError, match="不支持的处理阶段"):
+        database.mark_stage(item_id, "unknown", payload={})
+    with pytest.raises(ValueError, match="前置阶段"):
+        database.mark_stage(item_id, "variants", payload={})
+
+    database.mark_stage(item_id, "clean", payload={})
+    with pytest.raises(ValueError, match="前置阶段"):
+        database.mark_stage(item_id, "classify", payload={})
+
+    database.mark_stage(item_id, "dedupe", payload={})
+    database.mark_stage(item_id, "classify", payload={})
+
+
+@pytest.mark.parametrize(
+    "changed_fields",
+    [
+        {"text": "The train leaves at ten o'clock."},
+        {"source_url": "https://tatoeba.org/en/sentences/show/updated"},
+        {"source_author": "bob"},
+        {"license_name": "CC BY 4.0"},
+        {"license_url": "https://creativecommons.org/licenses/by/4.0/"},
+        {"protected": True},
+    ],
+)
+def test_upsert_raw_invalidates_derived_state_only_when_source_fields_change(
+    tmp_path: Path, changed_fields: dict[str, object]
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    raw = {
+        "source_name": "Tatoeba",
+        "source_item_id": "42",
+        "source_url": "https://tatoeba.org/en/sentences/show/42",
+        "source_author": "alice",
+        "license_name": "CC BY 2.0 FR",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/fr/",
+        "text": "The train arrives at nine o'clock.",
+        "protected": False,
+    }
+    item_id = database.upsert_raw(**raw)
+    database.mark_stage(item_id, "clean", payload={"clean_text": raw["text"]})
+    database.record_rejection(item_id, "clean", "duplicate")
+
+    assert database.upsert_raw(**raw) == item_id
+    assert database.stage_counts() == {"raw": 1, "clean": 1, "rejected": 1}
+
+    assert database.upsert_raw(**(raw | changed_fields)) == item_id
+    assert database.stage_counts() == {"raw": 1, "rejected": 0}
+    assert [item.id for item in database.claim_batch("clean", limit=10)] == [item_id]

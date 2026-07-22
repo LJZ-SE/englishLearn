@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 STAGE_PREDECESSORS = {
     "clean": None,
@@ -98,6 +97,22 @@ class WorkDatabase:
         protected: bool = False,
     ) -> int:
         with self.connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT id, source_url, source_author, license_name, license_url, text, protected
+                FROM raw_items
+                WHERE source_name = ? AND source_item_id = ?
+                """,
+                (source_name, source_item_id),
+            ).fetchone()
+            derived_input = (
+                source_url,
+                source_author,
+                license_name,
+                license_url,
+                text,
+                int(protected),
+            )
             connection.execute(
                 """
                 INSERT INTO raw_items(
@@ -124,13 +139,20 @@ class WorkDatabase:
                     _now(),
                 ),
             )
-            row = connection.execute(
-                "SELECT id FROM raw_items WHERE source_name = ? AND source_item_id = ?",
-                (source_name, source_item_id),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("未能读取已写入的原始条目")
-        return int(row[0])
+            if existing is None:
+                row = connection.execute(
+                    "SELECT id FROM raw_items WHERE source_name = ? AND source_item_id = ?",
+                    (source_name, source_item_id),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("未能读取已写入的原始条目")
+                item_id = int(row[0])
+            else:
+                item_id = int(existing[0])
+                if tuple(existing[1:]) != derived_input:
+                    connection.execute("DELETE FROM stage_results WHERE item_id = ?", (item_id,))
+                    connection.execute("DELETE FROM rejections WHERE item_id = ?", (item_id,))
+        return item_id
 
     def claim_batch(self, stage: str, limit: int) -> list[WorkItem]:
         if limit < 1:
@@ -189,8 +211,15 @@ class WorkDatabase:
         payload: dict[str, Any],
         model_version: str = "",
     ) -> None:
-        _previous_stage(stage)
+        previous_stage = _previous_stage(stage)
         with self.connect() as connection:
+            if previous_stage is not None:
+                predecessor = connection.execute(
+                    "SELECT 1 FROM stage_results WHERE item_id = ? AND stage = ?",
+                    (item_id, previous_stage),
+                ).fetchone()
+                if predecessor is None:
+                    raise ValueError(f"阶段 {stage} 缺少成功前置阶段: {previous_stage}")
             connection.execute(
                 """
                 INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
@@ -240,4 +269,4 @@ def _previous_stage(stage: str) -> str | None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
