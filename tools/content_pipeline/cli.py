@@ -376,15 +376,18 @@ def _load_recall_scenes(path: Path) -> tuple[RecallScene, ...]:
         raise ValueError("多场景语义召回 scenes 必须是非空列表")
     scenes: list[RecallScene] = []
     for index, raw_scene in enumerate(raw_scenes, start=1):
-        if not isinstance(raw_scene, dict) or set(raw_scene) != {
-            "sub_scene",
-            "prototypes",
-            "top_k",
-        }:
+        required_fields = {"sub_scene", "prototypes", "top_k"}
+        allowed_fields = required_fields | {"excluded_item_ids"}
+        if (
+            not isinstance(raw_scene, dict)
+            or not required_fields.issubset(raw_scene)
+            or not set(raw_scene).issubset(allowed_fields)
+        ):
             raise ValueError(f"多场景语义召回 scenes[{index}] 字段非法")
         sub_scene = raw_scene["sub_scene"]
         prototypes = raw_scene["prototypes"]
         top_k = raw_scene["top_k"]
+        excluded_item_ids = raw_scene.get("excluded_item_ids", [])
         if not isinstance(sub_scene, str) or sub_scene not in SUB_SCENES:
             raise ValueError(f"多场景语义召回 scenes[{index}] 场景非法")
         if (
@@ -399,11 +402,25 @@ def _load_recall_scenes(path: Path) -> tuple[RecallScene, ...]:
             or not 1 <= top_k <= 500
         ):
             raise ValueError(f"多场景语义召回 scenes[{index}] top_k 非法")
+        if (
+            not isinstance(excluded_item_ids, list)
+            or any(
+                not isinstance(item_id, int)
+                or isinstance(item_id, bool)
+                or item_id <= 0
+                for item_id in excluded_item_ids
+            )
+            or len(excluded_item_ids) != len(set(excluded_item_ids))
+        ):
+            raise ValueError(
+                f"多场景语义召回 scenes[{index}] excluded_item_ids 非法"
+            )
         scenes.append(
             RecallScene(
                 sub_scene=sub_scene,
                 prototypes=tuple(text.strip() for text in prototypes),
                 top_k=top_k,
+                excluded_item_ids=tuple(sorted(excluded_item_ids)),
             )
         )
     return tuple(scenes)

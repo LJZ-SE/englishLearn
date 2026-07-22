@@ -31,6 +31,22 @@ class RecallScene:
     sub_scene: str
     prototypes: tuple[str, ...]
     top_k: int
+    excluded_item_ids: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        item_ids = self.excluded_item_ids
+        if (
+            not isinstance(item_ids, tuple)
+            or any(
+                not isinstance(item_id, int)
+                or isinstance(item_id, bool)
+                or item_id <= 0
+                for item_id in item_ids
+            )
+            or len(item_ids) != len(set(item_ids))
+        ):
+            raise ValueError("excluded_item_ids 必须是互不重复的正整数元组")
+        object.__setattr__(self, "excluded_item_ids", tuple(sorted(item_ids)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +346,9 @@ def run_semantic_recall_many(
     prototype_texts = [prototype for scene in scenes for prototype in scene.prototypes]
     all_prototype_vectors = _normalize(embedder.encode(prototype_texts))
     prototype_vectors: dict[str, np.ndarray] = {}
+    scene_exclusions = {
+        scene.sub_scene: set(scene.excluded_item_ids) for scene in scenes
+    }
     offset = 0
     for scene in scenes:
         next_offset = offset + len(scene.prototypes)
@@ -372,7 +391,8 @@ def run_semantic_recall_many(
                     allowed_indexes = [
                         index
                         for index, row in enumerate(rows)
-                        if capacities[scene.sub_scene].allows(str(row[2]), str(row[3]))
+                        if int(row[0]) not in scene_exclusions[scene.sub_scene]
+                        and capacities[scene.sub_scene].allows(str(row[2]), str(row[3]))
                     ]
                     if not allowed_indexes:
                         continue
@@ -691,6 +711,9 @@ def _rescan_many_reservoirs(
     heaps: dict[str, list[tuple[float, int, dict[str, object]]]] = {
         scene.sub_scene: [] for scene in scenes
     }
+    scene_exclusions = {
+        scene.sub_scene: set(scene.excluded_item_ids) for scene in scenes
+    }
     with database.connect() as connection:
         cursor = connection.execute(_RECALL_CANDIDATE_QUERY)
         while raw_rows := cursor.fetchmany(batch_size):
@@ -702,7 +725,8 @@ def _rescan_many_reservoirs(
                 allowed_indexes = [
                     index
                     for index, row in enumerate(rows)
-                    if capacities[scene.sub_scene].allows(str(row[2]), str(row[3]))
+                    if int(row[0]) not in scene_exclusions[scene.sub_scene]
+                    and capacities[scene.sub_scene].allows(str(row[2]), str(row[3]))
                 ]
                 if not allowed_indexes:
                     continue

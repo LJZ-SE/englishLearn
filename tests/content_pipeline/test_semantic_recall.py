@@ -40,6 +40,11 @@ class FakeEmbedder:
         return np.asarray([self.vectors[text] for text in texts], dtype=np.float32)
 
 
+class MembershipGuardTuple(tuple[int, ...]):
+    def __contains__(self, item: object) -> bool:
+        raise AssertionError("场景排除 ID 必须先转换成 set 再执行 membership")
+
+
 def _out_of_pool_item(database: WorkDatabase, index: int, text: str) -> int:
     item_id = database.upsert_raw(
         source_name=f"source-{index % 2}",
@@ -406,6 +411,81 @@ def test_semantic_recall_many_encodes_each_candidate_batch_once(tmp_path: Path) 
     assert json.loads((output_dir / "study_exams.jsonl").read_text())["item_id"] == exam
 
 
+def test_semantic_recall_many_excludes_ids_only_from_their_scene(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    shared = _out_of_pool_item(database, 1, "shared-best")
+    fallback = _out_of_pool_item(database, 2, "fallback")
+    output_dir = tmp_path / "recalls"
+
+    run_semantic_recall_many(
+        database,
+        scenes=(
+            RecallScene(
+                "travel_hotel",
+                ("prototype",),
+                1,
+                excluded_item_ids=(shared,),
+            ),
+            RecallScene("study_exams", ("prototype",), 1),
+        ),
+        embedder=FakeEmbedder(
+            {
+                "prototype": (1.0, 0.0),
+                "shared-best": (1.0, 0.0),
+                "fallback": (0.8, 0.2),
+            }
+        ),
+        output_dir=output_dir,
+        checkpoint_path=tmp_path / "checkpoint.json",
+        exclude_ids=set(),
+        batch_size=2,
+    )
+
+    assert json.loads((output_dir / "travel_hotel.jsonl").read_text())[
+        "item_id"
+    ] == fallback
+    assert json.loads((output_dir / "study_exams.jsonl").read_text())[
+        "item_id"
+    ] == shared
+
+
+def test_semantic_recall_many_global_exclusion_still_applies_to_every_scene(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    globally_excluded = _out_of_pool_item(database, 1, "shared-best")
+    fallback = _out_of_pool_item(database, 2, "fallback")
+    output_dir = tmp_path / "recalls"
+
+    run_semantic_recall_many(
+        database,
+        scenes=(
+            RecallScene("travel_hotel", ("prototype",), 1),
+            RecallScene("study_exams", ("prototype",), 1),
+        ),
+        embedder=FakeEmbedder(
+            {
+                "prototype": (1.0, 0.0),
+                "shared-best": (1.0, 0.0),
+                "fallback": (0.8, 0.2),
+            }
+        ),
+        output_dir=output_dir,
+        checkpoint_path=tmp_path / "checkpoint.json",
+        exclude_ids={globally_excluded},
+        batch_size=2,
+    )
+
+    assert json.loads((output_dir / "travel_hotel.jsonl").read_text())[
+        "item_id"
+    ] == fallback
+    assert json.loads((output_dir / "study_exams.jsonl").read_text())[
+        "item_id"
+    ] == fallback
+
+
 def test_semantic_recall_many_resumes_all_scene_heaps_atomically(tmp_path: Path) -> None:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
@@ -527,6 +607,154 @@ def test_semantic_recall_many_cli_loads_scene_config(
     assert summary["selected"] == {"study_exams": 1, "travel_hotel": 1}
     assert (output_dir / "travel_hotel.jsonl").exists()
     assert (output_dir / "study_exams.jsonl").exists()
+
+
+def test_multi_semantic_recall_config_accepts_legacy_and_scene_exclusions(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "recall-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "scenes": [
+                    {
+                        "sub_scene": "travel_hotel",
+                        "prototypes": [" hotel prototype "],
+                        "top_k": 1,
+                        "excluded_item_ids": [9, 3],
+                    },
+                    {
+                        "sub_scene": "study_exams",
+                        "prototypes": ["exam prototype"],
+                        "top_k": 2,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scenes = cli._load_recall_scenes(config_path)
+
+    assert scenes == (
+        RecallScene("travel_hotel", ("hotel prototype",), 1, (3, 9)),
+        RecallScene("study_exams", ("exam prototype",), 2),
+    )
+
+
+@pytest.mark.parametrize(
+    "excluded_item_ids",
+    ([1, 1], [0], [-1], [True], ["1"], None),
+)
+def test_multi_semantic_recall_config_rejects_invalid_scene_exclusions(
+    tmp_path: Path,
+    excluded_item_ids: object,
+) -> None:
+    config_path = tmp_path / "recall-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "scenes": [
+                    {
+                        "sub_scene": "travel_hotel",
+                        "prototypes": ["hotel prototype"],
+                        "top_k": 1,
+                        "excluded_item_ids": excluded_item_ids,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="excluded_item_ids 非法"):
+        cli._load_recall_scenes(config_path)
+
+
+def test_multi_semantic_recall_config_still_rejects_unknown_scene_fields(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "recall-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "scenes": [
+                    {
+                        "sub_scene": "travel_hotel",
+                        "prototypes": ["hotel prototype"],
+                        "top_k": 1,
+                        "excluded_item_ids": [],
+                        "unexpected": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="字段非法"):
+        cli._load_recall_scenes(config_path)
+
+
+def test_scene_exclusions_are_normalized_for_deterministic_fingerprints() -> None:
+    first = RecallScene("travel_hotel", ("prototype",), 1, (9, 3))
+    second = RecallScene("travel_hotel", ("prototype",), 1, (3, 9))
+
+    assert first.excluded_item_ids == (3, 9)
+    assert recall_module._fingerprint_many(
+        scenes=(first,),
+        metadata=FakeEmbedder.metadata,
+        exclude_ids=set(),
+        batch_size=8,
+    ) == recall_module._fingerprint_many(
+        scenes=(second,),
+        metadata=FakeEmbedder.metadata,
+        exclude_ids=set(),
+        batch_size=8,
+    )
+
+
+def test_semantic_recall_many_checkpoint_tracks_scene_exclusions_and_rejects_drift(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    candidate = _out_of_pool_item(database, 1, "candidate")
+    checkpoint = tmp_path / "checkpoint.json"
+    output_dir = tmp_path / "recalls"
+    run_semantic_recall_many(
+        database,
+        scenes=(
+            RecallScene(
+                "travel_hotel",
+                ("prototype",),
+                1,
+                excluded_item_ids=(candidate,),
+            ),
+        ),
+        embedder=FakeEmbedder(
+            {"prototype": (1.0, 0.0), "candidate": (1.0, 0.0)}
+        ),
+        output_dir=output_dir,
+        checkpoint_path=checkpoint,
+        exclude_ids=set(),
+        batch_size=1,
+    )
+    state = json.loads(checkpoint.read_text())
+    assert state["scenes"][0]["excluded_item_ids"] == [candidate]
+
+    with pytest.raises(ValueError, match="checkpoint.*不匹配"):
+        run_semantic_recall_many(
+            database,
+            scenes=(RecallScene("travel_hotel", ("prototype",), 1),),
+            embedder=FakeEmbedder(
+                {"prototype": (1.0, 0.0), "candidate": (1.0, 0.0)}
+            ),
+            output_dir=output_dir,
+            checkpoint_path=checkpoint,
+            exclude_ids=set(),
+            batch_size=1,
+        )
 
 
 def test_semantic_recall_does_not_rank_saturated_source_above_available_source(
@@ -670,6 +898,78 @@ def test_semantic_recall_expands_reservoir_until_capacity_can_fill_top_k(
     rows = [json.loads(line) for line in output.read_text().splitlines()]
     assert {row["item_id"] for row in rows} == {first_a, candidate_b}
     assert embedder.calls == 11
+
+
+def test_semantic_recall_many_rescan_keeps_scene_exclusions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    vectors = {
+        "prototype": (1.0, 0.0),
+        "excluded B": (0.6, 0.4),
+        "available C": (0.5, 0.5),
+    }
+    first_a = 0
+    for index in range(1, 34):
+        text = f"high A {index}"
+        item_id = _out_of_pool_named(database, index, text, source_name="source-a")
+        first_a = first_a or item_id
+        vectors[text] = (1.0 - index / 1_000, index / 1_000)
+    excluded_b = _out_of_pool_named(
+        database,
+        34,
+        "excluded B",
+        source_name="source-b",
+    )
+    available_c = _out_of_pool_named(
+        database,
+        35,
+        "available C",
+        source_name="source-c",
+    )
+    capacity = SelectionCapacity(
+        source_limit=2,
+        author_limit=100,
+        source_counts=Counter({"source-a": 1}),
+        author_counts=Counter(),
+    )
+    monkeypatch.setattr(
+        recall_module,
+        "selection_capacity",
+        lambda *args, **kwargs: capacity,
+    )
+    output_dir = tmp_path / "recalls"
+
+    scene = RecallScene(
+        "travel_hotel",
+        ("prototype",),
+        2,
+        excluded_item_ids=(excluded_b,),
+    )
+    object.__setattr__(
+        scene,
+        "excluded_item_ids",
+        MembershipGuardTuple(scene.excluded_item_ids),
+    )
+
+    run_semantic_recall_many(
+        database,
+        scenes=(scene,),
+        embedder=FakeEmbedder(vectors),
+        output_dir=output_dir,
+        checkpoint_path=tmp_path / "checkpoint.json",
+        exclude_ids=set(),
+        batch_size=8,
+    )
+
+    rows = [
+        json.loads(line)
+        for line in (output_dir / "travel_hotel.jsonl").read_text().splitlines()
+    ]
+    assert {row["item_id"] for row in rows} == {first_a, available_c}
+    assert excluded_b not in {row["item_id"] for row in rows}
 
 
 def test_single_scene_semantic_recall_also_excludes_saturated_source(
