@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "manifest": "tools/content_pipeline/source_manifest.json",
+  "sources": [
+    {
+      "key": "tatoeba-eng",
+      "kind": "tatoeba",
+      "requested_url": "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences_detailed.tsv.bz2",
+      "final_url": "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences_detailed.tsv.bz2",
+      "cache_path": "downloads/tatoeba-eng.tsv.bz2",
+      "size_bytes": 34771166,
+      "sha256": "cfed73b192687e58394630d769cc787e28c7640c68aa2d3d3abc108555d90eb7",
+      "downloaded_at": "2026-07-22T15:18:48.985146+00:00"
+    },
+    {
+      "key": "cornell-movie-dialogs",
+      "kind": "convokit",
+      "requested_url": "https://zissou.infosci.cornell.edu/convokit/datasets/movie-corpus/movie-corpus.zip",
+      "final_url": "https://zissou.infosci.cornell.edu/convokit/datasets/movie-corpus/movie-corpus.zip",
+      "cache_path": "downloads/cornell-movie-dialogs.zip",
+      "size_bytes": 40854701,
+      "sha256": "c3581e79d31e55cc8242591e66f829e84c8bd98a2a9c017bd851382dcdc17ac2",
+      "downloaded_at": "2026-07-22T15:20:00.277187+00:00"
+    },
+    {
+      "key": "switchboard",
+      "kind": "convokit",
+      "requested_url": "https://zissou.infosci.cornell.edu/convokit/datasets/switchboard-corpus/switchboard-corpus.zip",
+      "final_url": "https://zissou.infosci.cornell.edu/convokit/datasets/switchboard-corpus/switchboard-corpus.zip",
+      "cache_path": "downloads/switchboard.zip",
+      "size_bytes": 5810437,
+      "sha256": "c903ef6542a9838d23fe5cf00c4cfc4727ca54cadb55c61916f090498141c817",
+      "downloaded_at": "2026-07-22T15:23:24.869560+00:00"
+    },
+    {
+      "key": "english-wikinews",
+      "kind": "wikinews",
+      "requested_url": "https://en.wikinews.org/w/api.php?action=query&generator=categorymembers&gcmtitle=Category%3APublished&gcmtype=page&gcmlimit=500&prop=extracts%7Cinfo&explaintext=1&inprop=url&format=json&formatversion=2",
+      "final_url": "https://en.wikinews.org/w/api.php?action=query&generator=categorymembers&gcmtitle=Category%3APublished&gcmtype=page&gcmlimit=500&prop=extracts%7Cinfo&explaintext=1&inprop=url&format=json&formatversion=2",
+      "cache_path": "downloads/english-wikinews.php",
+      "size_bytes": 294658,
+      "sha256": "8fefb9d225da17b0751fd3164c90e5a6e6ce8b0885f87bc7ec2515990f8f35f3",
+      "downloaded_at": "2026-07-22T15:24:51.015244+00:00"
+    },
+    {
+      "key": "gutenberg-11",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+      "cache_path": "downloads/gutenberg-11.txt",
+      "size_bytes": 174311,
+      "sha256": "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e",
+      "downloaded_at": "2026-07-22T15:24:53.292382+00:00"
+    },
+    {
+      "key": "gutenberg-74",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/74/pg74.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/74/pg74.txt",
+      "cache_path": "downloads/gutenberg-74.txt",
+      "size_bytes": 434357,
+      "sha256": "74d77384b123a6360db9ab58463cff8b38df8525fbdc6000c81ee388e1f3cf10",
+      "downloaded_at": "2026-07-22T15:24:55.824305+00:00"
+    },
+    {
+      "key": "gutenberg-76",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/76/pg76.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/76/pg76.txt",
+      "cache_path": "downloads/gutenberg-76.txt",
+      "size_bytes": 622460,
+      "sha256": "d617a37aa7ae1e1a93dcde2634db2bccb86824e31e29a55230bdbf77d6872d59",
+      "downloaded_at": "2026-07-22T15:25:00.933935+00:00"
+    },
+    {
+      "key": "gutenberg-84",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+      "cache_path": "downloads/gutenberg-84.txt",
+      "size_bytes": 448885,
+      "sha256": "7810cd483cffcf2cc8a1d8f0d5807931e69d4f48cd14149b8c76f88af82fead3",
+      "downloaded_at": "2026-07-22T15:25:05.302410+00:00"
+    },
+    {
+      "key": "gutenberg-98",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/98/pg98.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/98/pg98.txt",
+      "cache_path": "downloads/gutenberg-98.txt",
+      "size_bytes": 807197,
+      "sha256": "d54c2b80d40a40b982cd88852c6180bb944d95acdb028af3d0e01a1750681784",
+      "downloaded_at": "2026-07-22T15:25:09.263932+00:00"
+    },
+    {
+      "key": "gutenberg-1342",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
+      "cache_path": "downloads/gutenberg-1342.txt",
+      "size_bytes": 772386,
+      "sha256": "74f2665d6e6925fc2c17dec644bec9e87df478a0f1836822125e8acbb3777806",
+      "downloaded_at": "2026-07-22T15:25:15.340065+00:00"
+    },
+    {
+      "key": "gutenberg-1661",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+      "cache_path": "downloads/gutenberg-1661.txt",
+      "size_bytes": 607606,
+      "sha256": "922e2a12ccb43a4c9544c260b2166c6ad2097aeb5957faeee113f173bb857cd0",
+      "downloaded_at": "2026-07-22T15:25:23.133542+00:00"
+    },
+    {
+      "key": "gutenberg-2701",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
+      "cache_path": "downloads/gutenberg-2701.txt",
+      "size_bytes": 1276263,
+      "sha256": "9a6844ac0703853720010787c7b6c70b0020f1ab1862dcd74452fa46474d1215",
+      "downloaded_at": "2026-07-22T15:25:27.832162+00:00"
+    },
+    {
+      "key": "gutenberg-345",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/345/pg345.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/345/pg345.txt",
+      "cache_path": "downloads/gutenberg-345.txt",
+      "size_bytes": 890348,
+      "sha256": "96cd16eacdbfebae8fdda5591f66e0cc8ee76be18e0cd1aca02bc00615782d28",
+      "downloaded_at": "2026-07-22T15:25:33.501237+00:00"
+    },
+    {
+      "key": "gutenberg-174",
+      "kind": "gutenberg",
+      "requested_url": "https://www.gutenberg.org/cache/epub/174/pg174.txt",
+      "final_url": "https://www.gutenberg.org/cache/epub/174/pg174.txt",
+      "cache_path": "downloads/gutenberg-174.txt",
+      "size_bytes": 465814,
+      "sha256": "38f36b510417177aa87a6a24c968e3ec63a447b7df36a9c1a7c5a3f2d9e51547",
+      "downloaded_at": "2026-07-22T15:25:39.065457+00:00"
+    }
+  ]
+}
