@@ -3,6 +3,7 @@
   "manifest": "tools/content_pipeline/source_manifest.json",
   "manifest_sha256": "df738c4e4ac70e01a461dcee0e351a7d9ca97be4302d8ed2118b342c30389b80",
   "complete": true,
+  "pending_refresh_identities": [],
   "sources": [
     {
       "key": "tatoeba-eng",

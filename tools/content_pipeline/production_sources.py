@@ -65,6 +65,12 @@ def import_all_sources(
     _validate_expanded_sources(expanded, cache_root)
     lock_payload = _read_lock_payload(lock_path)
     existing = {str(entry["key"]): entry for entry in lock_payload.get("sources", [])}
+    valid_identities = {_raw_source_name(source) for source in expanded}
+    pending_refresh_identities = {
+        str(identity) for identity in lock_payload.get("pending_refresh_identities", [])
+    }
+    if not pending_refresh_identities <= valid_identities:
+        raise ValueError("source lock 包含无法映射到当前 manifest 的 pending identity")
     if existing and not refresh_lock:
         locked_manifest = lock_payload.get("manifest_sha256")
         if locked_manifest != manifest_sha256:
@@ -98,6 +104,7 @@ def import_all_sources(
                     f"refresh-lock 禁止改变来源 identity: {old_identity} -> {new_identity}"
                 )
             changed_identities.add(new_identity)
+            pending_refresh_identities.add(new_identity)
         entry = _download_locked(
             key,
             kind,
@@ -112,18 +119,48 @@ def import_all_sources(
         locked.append(entry)
         prepared.append((source, kind, cache_path))
         _checkpoint_source_lock(
-            lock_path, manifest_path, manifest_sha256, locked, existing, complete=False
+            lock_path,
+            manifest_path,
+            manifest_sha256,
+            locked,
+            existing,
+            pending_refresh_identities=pending_refresh_identities,
+            complete=False,
         )
 
-    for identity in sorted(changed_identities):
+    refresh_identities = set(pending_refresh_identities) | changed_identities
+    for identity in sorted(refresh_identities):
         database.delete_raw_source(identity)
+        for source, kind, cache_path in prepared:
+            if _raw_source_name(source) != identity:
+                continue
+            items = _iter_source(kind, cache_path, source)
+            imported[kind] += _import_items(database, items, source.get("max_items"))
+        pending_refresh_identities.discard(identity)
+        _checkpoint_source_lock(
+            lock_path,
+            manifest_path,
+            manifest_sha256,
+            locked,
+            {},
+            pending_refresh_identities=pending_refresh_identities,
+            complete=False,
+        )
 
     for source, kind, cache_path in prepared:
+        if _raw_source_name(source) in refresh_identities:
+            continue
         items = _iter_source(kind, cache_path, source)
         imported[kind] += _import_items(database, items, source.get("max_items"))
 
     _checkpoint_source_lock(
-        lock_path, manifest_path, manifest_sha256, locked, {}, complete=True
+        lock_path,
+        manifest_path,
+        manifest_sha256,
+        locked,
+        {},
+        pending_refresh_identities=set(),
+        complete=True,
     )
     return dict(imported)
 
@@ -565,6 +602,7 @@ def _checkpoint_source_lock(
     locked: list[dict[str, Any]],
     existing: dict[str, dict[str, Any]],
     *,
+    pending_refresh_identities: set[str],
     complete: bool,
 ) -> None:
     completed_keys = {str(entry["key"]) for entry in locked}
@@ -579,6 +617,7 @@ def _checkpoint_source_lock(
             "manifest": str(manifest_path),
             "manifest_sha256": manifest_sha256,
             "complete": complete,
+            "pending_refresh_identities": sorted(pending_refresh_identities),
             "sources": sources,
         },
     )

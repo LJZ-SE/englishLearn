@@ -161,7 +161,9 @@ def test_import_all_rejects_manifest_drift_without_refresh(tmp_path: Path) -> No
         import_all_sources(database, manifest, lock)
 
 
-def test_refresh_lock_replaces_rows_when_v2_max_items_changes(tmp_path: Path) -> None:
+def test_refresh_lock_replaces_rows_when_v2_max_items_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manifest = _write_source_fixtures(tmp_path)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     tatoeba_path = Path(urllib.parse.urlparse(payload[0]["url"]).path)
@@ -177,7 +179,20 @@ def test_refresh_lock_replaces_rows_when_v2_max_items_changes(tmp_path: Path) ->
     payload[0]["max_items"] = 1
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
-    import_all_sources(database, manifest, lock, refresh_lock=True)
+    original_delete = database.delete_raw_source
+
+    def interrupt_before_delete(_identity: str) -> int:
+        raise RuntimeError("simulated pre-delete interruption")
+
+    monkeypatch.setattr(database, "delete_raw_source", interrupt_before_delete)
+    with pytest.raises(RuntimeError, match="pre-delete interruption"):
+        import_all_sources(database, manifest, lock, refresh_lock=True)
+    interrupted = json.loads(lock.read_text(encoding="utf-8"))
+    assert interrupted["pending_refresh_identities"] == ["Tatoeba"]
+    assert interrupted["complete"] is False
+    monkeypatch.setattr(database, "delete_raw_source", original_delete)
+
+    import_all_sources(database, manifest, lock)
 
     with database.connect() as connection:
         count = connection.execute(
@@ -186,6 +201,7 @@ def test_refresh_lock_replaces_rows_when_v2_max_items_changes(tmp_path: Path) ->
     assert count == 1
     locked = json.loads(lock.read_text(encoding="utf-8"))["sources"][0]
     assert locked["config"]["max_items"] == 1
+    assert json.loads(lock.read_text(encoding="utf-8"))["pending_refresh_identities"] == []
 
 
 def test_refresh_convokit_rebuilds_extracted_cache_from_new_archive(tmp_path: Path) -> None:
