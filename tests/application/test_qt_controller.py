@@ -27,6 +27,31 @@ class FakeContentRepository:
             and (difficulty in (None, "all") or question.difficulty == difficulty)
         ]
 
+    def sample_questions(
+        self,
+        *,
+        top_scene: str | None,
+        sub_scene: str | None,
+        difficulty: str,
+        limit: int,
+        exclude_ids: frozenset[str],
+        seed: int,
+    ) -> list[ContentQuestion]:
+        candidates = [
+            question
+            for question in self.questions
+            if (top_scene is None or (question.top_scene or question.category) == top_scene)
+            and (sub_scene is None or question.sub_scene == sub_scene)
+            and question.difficulty == difficulty
+            and question.id not in exclude_ids
+        ]
+        random.Random(seed).shuffle(candidates)
+        return candidates[:limit]
+
+    def get_questions_by_ids(self, ids: list[str] | tuple[str, ...]) -> list[ContentQuestion]:
+        by_id = {question.id: question for question in self.questions}
+        return [by_id[question_id] for question_id in ids if question_id in by_id]
+
 
 class FakeTtsService:
     def __init__(self) -> None:

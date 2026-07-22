@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from listening_cloze.domain.feedback import FeedbackKind, FeedbackSelector
-from listening_cloze.domain.models import Category, Difficulty, Question
+from listening_cloze.domain.models import Difficulty, Question, SceneSelection
 from listening_cloze.domain.selection import QuestionProgress as SelectionProgress
 from listening_cloze.domain.selection import QuestionSelector
 from listening_cloze.domain.session import EndlessDifficultyState, QuestionAttempt
@@ -16,11 +16,20 @@ from listening_cloze.infrastructure.database import ContentQuestion, SessionReco
 
 
 class ContentSource(Protocol):
-    def list_questions(
+    def sample_questions(
         self,
         *,
-        category: str | None = None,
-        difficulty: str | None = None,
+        top_scene: str | None,
+        sub_scene: str | None,
+        difficulty: str,
+        limit: int,
+        exclude_ids: frozenset[str],
+        seed: int,
+    ) -> list[ContentQuestion]: ...
+
+    def get_questions_by_ids(
+        self,
+        ids: list[str] | tuple[str, ...],
     ) -> list[ContentQuestion]: ...
 
 
@@ -58,6 +67,14 @@ class UserStore(Protocol):
 class PracticeMode(StrEnum):
     QUANTITATIVE = "quantitative"
     ENDLESS = "endless"
+
+
+LEGACY_SCENE_MAP: dict[str, str] = {
+    "daily": "daily",
+    "exam": "study",
+    "movies": "culture",
+    "news_podcasts": "news",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +139,7 @@ class PracticeEngine:
         self._attempt: QuestionAttempt | None = None
         self._can_advance = False
         self._session_id = ""
-        self._category = "all"
+        self._scene = SceneSelection(None, None)
         self._target_count: int | None = None
         self._queue_needs_rebuild = False
         self._outcomes: list[str] = []
@@ -140,6 +157,10 @@ class PracticeEngine:
     @property
     def can_advance(self) -> bool:
         return self._can_advance
+
+    @property
+    def scene(self) -> SceneSelection:
+        return self._scene
 
     @property
     def has_unfinished_session(self) -> bool:
@@ -180,26 +201,38 @@ class PracticeEngine:
     def start_quantitative(
         self,
         *,
-        category: str,
+        scene: SceneSelection | None = None,
+        category: str | None = None,
         difficulty: Difficulty,
         count: int,
     ) -> None:
         if count not in {10, 20, 30} and count != 1 and count != 5:
             raise ValueError("定量练习题数必须为 10、20 或 30")
-        candidates = self._content.list_questions(
-            category=category,
+        selected_scene = self._resolve_scene(scene=scene, category=category)
+        candidates = self._sample_questions(
+            scene=selected_scene,
             difficulty=difficulty.value,
+            limit=max(count * 3, 30),
+            exclude_ids=frozenset(),
         )
         if len(candidates) < count:
             raise ValueError(f"题库只有 {len(candidates)} 道符合条件的题，无法开始 {count} 题练习")
-        self._reset(PracticeMode.QUANTITATIVE, category)
+        self._reset(PracticeMode.QUANTITATIVE, selected_scene)
         self._target_count = count
         self.items = self._select_unique(candidates, count)
         self._begin_current()
         self._save_session()
 
-    def start_endless(self, *, category: str = "all") -> None:
-        self._reset(PracticeMode.ENDLESS, category)
+    def start_endless(
+        self,
+        *,
+        scene: SceneSelection | None = None,
+        category: str | None = None,
+    ) -> None:
+        self._reset(
+            PracticeMode.ENDLESS,
+            self._resolve_scene(scene=scene, category=category),
+        )
         self.endless_state = EndlessDifficultyState.new_session()
         self._fill_endless_queue()
         self._begin_current()
@@ -214,7 +247,7 @@ class PracticeEngine:
         if not review_items:
             raise RuntimeError("本轮没有需要复习的题目")
         self.end_session()
-        self._reset(PracticeMode.QUANTITATIVE, self._category)
+        self._reset(PracticeMode.QUANTITATIVE, self._scene)
         self._target_count = len(review_items)
         self.items = review_items
         self._begin_current()
@@ -225,18 +258,17 @@ class PracticeEngine:
         if record is None:
             return False
         state = record.state
-        all_questions = {raw.id: self._to_domain(raw) for raw in self._content.list_questions()}
         question_ids = [str(question_id) for question_id in state.get("question_ids", [])]
-        if not question_ids or any(
-            question_id not in all_questions for question_id in question_ids
-        ):
+        restored_questions = self._content.get_questions_by_ids(question_ids)
+        if not question_ids or [raw.id for raw in restored_questions] != question_ids:
             return False
 
         self.mode = PracticeMode(record.mode)
-        self.items = [all_questions[question_id] for question_id in question_ids]
-        self.position = max(0, min(int(state.get("position", 0)), len(self.items) - 1))
+        self.items = [self._to_domain(raw) for raw in restored_questions]
+        saved_position = max(0, min(int(state.get("position", 0)), len(self.items) - 1))
+        self.position = saved_position
         self._session_id = record.session_id
-        self._category = str(state.get("category", "all"))
+        self._scene = self._scene_from_state(state)
         raw_target = state.get("target_count")
         self._target_count = int(raw_target) if raw_target is not None else None
         raw_stats = state.get("stats", {})
@@ -260,6 +292,11 @@ class PracticeEngine:
         else:
             self.endless_state = None
         self._queue_needs_rebuild = bool(state.get("queue_needs_rebuild", False))
+        if self.mode is PracticeMode.ENDLESS:
+            self.items = self.items[saved_position : saved_position + 3]
+            self.position = 0
+            if not self._queue_needs_rebuild:
+                self._fill_endless_queue()
         self._restore_attempt(state.get("attempt", {}))
         return True
 
@@ -329,16 +366,23 @@ class PracticeEngine:
         if not self.items:
             raise RuntimeError("练习尚未开始")
         current = self.current
-        candidates = self._content.list_questions(
-            category=self._category,
+        blocked_ids = frozenset(item.question.id for item in self.items)
+        candidates = self._sample_questions(
+            scene=self._scene,
             difficulty=current.question.difficulty.value,
+            limit=30,
+            exclude_ids=blocked_ids,
         )
-        blocked_ids = {item.question.id for item in self.items}
-        available = [raw for raw in candidates if raw.id not in blocked_ids]
+        available = list(candidates)
         if not available:
-            available = [raw for raw in candidates if raw.id != current.question.id]
+            available = self._sample_questions(
+                scene=self._scene,
+                difficulty=current.question.difficulty.value,
+                limit=30,
+                exclude_ids=frozenset({current.question.id}),
+            )
         if not available:
-            raise RuntimeError("没有可替换的同分类、同难度题目")
+            raise RuntimeError("没有可替换的同场景、同难度题目")
         replacement = self._select_unique(available, 1)[0]
         self.items[self.position] = replacement
         self._begin_current()
@@ -378,10 +422,8 @@ class PracticeEngine:
                 self.position = 0
                 self._queue_needs_rebuild = False
             else:
-                self.position += 1
-                if self.position > 4:
-                    self.items = self.items[self.position :]
-                    self.position = 0
+                self.items = self.items[1:]
+                self.position = 0
             self._fill_endless_queue()
 
         self._begin_current()
@@ -392,7 +434,7 @@ class PracticeEngine:
         if self._session_id:
             self._users.complete_session(self._session_id)
 
-    def _reset(self, mode: PracticeMode, category: str) -> None:
+    def _reset(self, mode: PracticeMode, scene: SceneSelection | str) -> None:
         self.mode = mode
         self.items = []
         self.position = 0
@@ -401,7 +443,11 @@ class PracticeEngine:
         self._attempt = None
         self._can_advance = False
         self._session_id = uuid.uuid4().hex
-        self._category = category
+        self._scene = (
+            scene
+            if isinstance(scene, SceneSelection)
+            else self._scene_from_legacy_category(scene)
+        )
         self._target_count = None
         self._queue_needs_rebuild = False
         self._outcomes = []
@@ -422,23 +468,26 @@ class PracticeEngine:
 
     def _fill_endless_queue(self) -> None:
         assert self.endless_state is not None
-        while len(self.items) - self.position < 3:
-            candidates = self._content.list_questions(
-                category=self._category,
-                difficulty=self.endless_state.difficulty.value,
+        active_items = self.items[self.position : self.position + 3]
+        self.items = active_items
+        self.position = 0
+        missing = 3 - len(self.items)
+        if missing <= 0:
+            return
+        active_ids = frozenset(item.question.id for item in self.items)
+        candidates = self._sample_questions(
+            scene=self._scene,
+            difficulty=self.endless_state.difficulty.value,
+            limit=max(missing * 3, 3),
+            exclude_ids=active_ids,
+        )
+        if len(candidates) < missing:
+            raise ValueError(
+                "题库只有 "
+                f"{len(candidates)} 道可用的 {self._scene_label()}/"
+                f"{self.endless_state.difficulty.value} 题目，无法补足三题窗口"
             )
-            if not candidates:
-                raise ValueError(
-                    f"题库没有 {self._category}/{self.endless_state.difficulty.value} 题目"
-                )
-            active_ids = {item.question.id for item in self.items[self.position :]}
-            available = [item for item in candidates if item.id not in active_ids] or candidates
-            chosen = self._selector.select(
-                [self._to_domain(item).question for item in available],
-                self._selection_history(),
-            )
-            raw = next(item for item in available if item.id == chosen.id)
-            self.items.append(self._to_domain(raw))
+        self.items.extend(self._select_unique(candidates, missing))
 
     def _begin_current(self) -> None:
         self._attempt = QuestionAttempt(self.current.question)
@@ -472,7 +521,8 @@ class PracticeEngine:
         state: dict[str, object] = {
             "question_ids": [item.question.id for item in self.items],
             "position": self.position,
-            "category": self._category,
+            "top_scene": self._scene.top_scene,
+            "sub_scene": self._scene.sub_scene,
             "target_count": self._target_count,
             "outcomes": list(self._outcomes),
             "queue_needs_rebuild": self._queue_needs_rebuild,
@@ -521,13 +571,67 @@ class PracticeEngine:
             for progress in self._users.list_question_progress()
         }
 
+    def _sample_questions(
+        self,
+        *,
+        scene: SceneSelection,
+        difficulty: str,
+        limit: int,
+        exclude_ids: frozenset[str],
+    ) -> list[ContentQuestion]:
+        return self._content.sample_questions(
+            top_scene=scene.top_scene,
+            sub_scene=scene.sub_scene,
+            difficulty=difficulty,
+            limit=limit,
+            exclude_ids=exclude_ids,
+            seed=self._rng.randrange(1 << 63),
+        )
+
+    @staticmethod
+    def _resolve_scene(
+        *,
+        scene: SceneSelection | None,
+        category: str | None,
+    ) -> SceneSelection:
+        if scene is not None and category is not None:
+            raise ValueError("不能同时指定 scene 和旧 category")
+        if scene is not None:
+            return scene
+        return PracticeEngine._scene_from_legacy_category(category or "all")
+
+    @staticmethod
+    def _scene_from_legacy_category(category: str) -> SceneSelection:
+        if category == "all":
+            return SceneSelection(None, None)
+        return SceneSelection(LEGACY_SCENE_MAP.get(category, category), None)
+
+    @staticmethod
+    def _scene_from_state(state: dict[str, object]) -> SceneSelection:
+        if "top_scene" in state or "sub_scene" in state:
+            top_scene = state.get("top_scene")
+            sub_scene = state.get("sub_scene")
+            return SceneSelection(
+                str(top_scene) if top_scene is not None else None,
+                str(sub_scene) if sub_scene is not None else None,
+            )
+        return PracticeEngine._scene_from_legacy_category(
+            str(state.get("category", "all"))
+        )
+
+    def _scene_label(self) -> str:
+        if self._scene.sub_scene is not None:
+            return self._scene.sub_scene
+        return self._scene.top_scene or "all"
+
     @staticmethod
     def _to_domain(raw: ContentQuestion) -> PracticeItem:
         question = Question(
             id=raw.id,
             source_sentence_id=raw.sentence_id,
             sentence=raw.sentence_text,
-            category=Category(raw.category),
+            top_scene=raw.top_scene or raw.category,
+            sub_scene=raw.sub_scene or None,
             difficulty=Difficulty(raw.difficulty),
             canonical_answer=raw.canonical_answer,
             equivalent_answers=raw.aliases,
