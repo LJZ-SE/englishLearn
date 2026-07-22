@@ -17,8 +17,17 @@ def test_clean_rejects_subtitle_metadata_and_accepts_complete_dialogue() -> None
     assert rejection_reason("[Door slams]") == "stage_direction"
     assert rejection_reason("SPEAKER 2: We need to leave now.") == "speaker_label"
     assert rejection_reason("We need to leave before the last train.") is None
-    assert clean_sentence("Mia: We need to leave before the last train.") == (
+    assert clean_sentence("MIA: We need to leave before the last train.") == (
         "We need to leave before the last train."
+    )
+    assert clean_sentence("Warning: We need to leave before the last train.") == (
+        "Warning: We need to leave before the last train."
+    )
+    assert clean_sentence("Note: We need to leave before the last train.") == (
+        "Note: We need to leave before the last train."
+    )
+    assert clean_sentence("Today: We need to leave before the last train.") == (
+        "Today: We need to leave before the last train."
     )
 
 
@@ -64,21 +73,57 @@ def test_convokit_reader_preserves_stable_id_author_and_source_url(tmp_path: Pat
     ]
 
 
+def test_convokit_uses_speaker_id_without_name_and_skips_missing_speaker(tmp_path: Path) -> None:
+    payload = tmp_path / "utterances.jsonl"
+    payload.write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in [
+                {
+                    "id": "movie-utt-with-id",
+                    "text": "We should meet outside after class today.",
+                    "speaker": "speaker-42",
+                },
+                {
+                    "id": "movie-utt-without-speaker",
+                    "text": "We should meet outside after class today.",
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "speakers.json").write_text(
+        json.dumps({"speaker-42": {"meta": {}}}), encoding="utf-8"
+    )
+
+    items = list(iter_convokit_utterances(payload, "cornell-movie-dialogs"))
+
+    assert [item.source_item_id for item in items] == ["movie-utt-with-id"]
+    assert items[0].source_author == "speaker-42"
+
+
 def test_gutenberg_reader_preserves_stable_id_author_and_source_url(tmp_path: Path) -> None:
     text = tmp_path / "11.txt"
     text.write_text(
-        "Header material\n"
-        "*** START OF THE PROJECT GUTENBERG EBOOK 11 ***\n"
+        "The Project Gutenberg eBook of Alice's Adventures in Wonderland\n"
         "Title: Alice's Adventures in Wonderland\n"
-        "Author: Lewis Carroll\n\n"
-        "Alice was beginning to get very tired of sitting by her sister on the bank.\n"
-        "*** END OF THE PROJECT GUTENBERG EBOOK 11 ***\n",
+        "Author: Lewis Carroll\n"
+        "Release date: January 1991\n\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK 11 ***\n"
+        "Alice was beginning to get very tired of sitting by her sister\n"
+        "on the bank, and of having nothing to do.\n\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK 11 ***\n"
+        "This text appears after the end marker and must be ignored.\n",
         encoding="utf-8",
     )
 
     assert list(iter_gutenberg_text(text, 11)) == [
         CollectedSentence(
-            text="Alice was beginning to get very tired of sitting by her sister on the bank.",
+            text=(
+                "Alice was beginning to get very tired of sitting by her sister on the bank, "
+                "and of having nothing to do."
+            ),
             source_item_id="11:1",
             source_author="Lewis Carroll",
             source_url="https://www.gutenberg.org/ebooks/11",
@@ -87,6 +132,34 @@ def test_gutenberg_reader_preserves_stable_id_author_and_source_url(tmp_path: Pa
             license_url="https://www.gutenberg.org/policy/license.html",
         )
     ]
+
+
+def test_wikinews_id_uses_pageid_when_title_changes(tmp_path: Path) -> None:
+    from tools.content_pipeline.wikinews import iter_wikinews_extracts
+
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    for path, title in ((first, "Original title"), (second, "Renamed title")):
+        path.write_text(
+            json.dumps(
+                {
+                    "query": {
+                        "pages": [
+                            {
+                                "pageid": 123,
+                                "title": title,
+                                "fullurl": "https://en.wikinews.org/wiki/Original_title",
+                                "extract": "Officials approved the regional transport plan today.",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    assert [item.source_item_id for item in iter_wikinews_extracts(first)] == ["123:1"]
+    assert [item.source_item_id for item in iter_wikinews_extracts(second)] == ["123:1"]
 
 
 def test_cli_imports_raw_items_and_clean_records_explicit_rejection(tmp_path: Path) -> None:

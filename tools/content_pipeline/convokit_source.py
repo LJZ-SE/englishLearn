@@ -44,6 +44,8 @@ def iter_convokit_utterances(
             speaker = record.get("speaker")
             speaker_id = speaker.get("id") if isinstance(speaker, dict) else speaker
             author = _speaker_name(speaker, speakers, speaker_id)
+            if not author:
+                continue
             yield CollectedSentence(
                 text=text,
                 source_url=source_url,

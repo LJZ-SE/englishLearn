@@ -8,7 +8,9 @@ import unicodedata
 _HTML_TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
-_SAFE_SPEAKER_PREFIX = re.compile(r"^[A-Z][a-z]{1,30}:\s+")
+_SAFE_SPEAKER_PREFIX = re.compile(
+    r"^(?:[A-Z]{2,}(?:\s+[A-Z]{2,})*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+):\s+"
+)
 _SUBTITLE_METADATA = re.compile(
     r"^\d{1,2}:\d{2}:\d{2}(?:[,.]\d{3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[,.]\d{3})?$"
 )
