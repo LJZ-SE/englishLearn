@@ -520,7 +520,7 @@ def _classify_items(
         "llm_required": 0,
         "out_of_candidate_pool": 0,
     }
-    model_version = "scene-candidate-v12"
+    model_version = "scene-candidate-v13"
     while batch := database.claim_stage_batch(
         "classify", limit=limit, stale_model_version=model_version
     ):

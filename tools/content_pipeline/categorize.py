@@ -505,6 +505,26 @@ _SCENE_PHRASES = {
 }
 
 
+_SINGLE_KEYWORD_WHITELIST = {
+    "work_jobs": _scene_words("salary employer unemployed"),
+    "travel_tourism": _scene_words("passport tourist"),
+    "travel_hotel": _scene_words("hotel"),
+    "daily_social": _scene_words("hello goodbye"),
+    "work_office": _scene_words("employee"),
+    "daily_shopping": _scene_words("shopping"),
+    "travel_transport": _scene_words("airport taxi subway"),
+    "study_exams": _scene_words("exam"),
+    "technology_software": _scene_words("software website"),
+    "technology_science": _scene_words("scientist"),
+    "news_public": _scene_words("police"),
+    "news_environment": _scene_words("climate earthquake"),
+}
+
+_SINGLE_KEYWORD_BLOCKED_PHRASES = {
+    "travel_hotel": ("hotel de ville",),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class SceneClassification:
     top_scene: str | None
@@ -628,7 +648,59 @@ class SceneClassifier:
                 0.45,
                 "candidate_source",
             )
+        whitelist_result = self._classify_single_keyword_whitelist(text)
+        if whitelist_result is not None:
+            return whitelist_result
         return SceneClassification(None, None, explicit.confidence, "out_of_candidate_pool")
+
+    def _classify_single_keyword_whitelist(
+        self, text: str
+    ) -> SceneClassification | None:
+        tokens = _normalized_tokens(text)
+        words = set(tokens)
+        whitelist_matches: dict[str, set[str]] = {}
+        for scene_key, whitelist in _SINGLE_KEYWORD_WHITELIST.items():
+            if matched_words := words.intersection(whitelist):
+                whitelist_matches[scene_key] = matched_words
+        if len(whitelist_matches) != 1:
+            return None
+        scene_key, matched_words = next(iter(whitelist_matches.items()))
+        if len(matched_words) != 1:
+            return None
+
+        evidence = {
+            candidate_scene: (
+                words.intersection(_SCENE_STRONG_KEYWORDS[candidate_scene]),
+                tuple(
+                    phrase
+                    for phrase in _SCENE_PHRASES.get(candidate_scene, ())
+                    if _phrase_present(tokens, phrase)
+                ),
+            )
+            for candidate_scene in SUB_SCENES
+        }
+        _, target_phrases = evidence[scene_key]
+        if target_phrases:
+            return None
+        if any(
+            _phrase_present(tokens, phrase)
+            for phrase in _SINGLE_KEYWORD_BLOCKED_PHRASES.get(scene_key, ())
+        ):
+            return None
+        if any(
+            keywords or phrases
+            for candidate_scene, (keywords, phrases) in evidence.items()
+            if candidate_scene != scene_key
+        ):
+            return None
+
+        scene = SUB_SCENES[scene_key]
+        return SceneClassification(
+            scene.top_key,
+            scene.key,
+            0.51,
+            "single_keyword_whitelist",
+        )
 
 
 def _normalized_words(text: str) -> set[str]:

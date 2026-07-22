@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.content_pipeline import categorize as categorize_module
 from tools.content_pipeline import cli
 from tools.content_pipeline.categorize import SceneClassifier
 from tools.content_pipeline.classification import (
@@ -425,6 +426,183 @@ def test_candidate_pool_rejects_reviewed_ambiguous_single_word_false_positives(
     assert result.method == "out_of_candidate_pool"
     assert result.sub_scene is None
     assert result.sub_scene != wrong_scene
+
+
+@pytest.mark.parametrize(
+    ("word", "expected_scene"),
+    (
+        ("salary", "work_jobs"),
+        ("employer", "work_jobs"),
+        ("unemployed", "work_jobs"),
+        ("passport", "travel_tourism"),
+        ("tourist", "travel_tourism"),
+        ("hotel", "travel_hotel"),
+        ("hello", "daily_social"),
+        ("goodbye", "daily_social"),
+        ("employee", "work_office"),
+        ("shopping", "daily_shopping"),
+        ("airport", "travel_transport"),
+        ("taxi", "travel_transport"),
+        ("subway", "travel_transport"),
+        ("exam", "study_exams"),
+        ("software", "technology_software"),
+        ("website", "technology_software"),
+        ("scientist", "technology_science"),
+        ("police", "news_public"),
+        ("climate", "news_environment"),
+        ("earthquake", "news_environment"),
+    ),
+)
+def test_candidate_pool_accepts_exact_safe_single_keyword_whitelist(
+    word: str,
+    expected_scene: str,
+) -> None:
+    result = SceneClassifier().classify_candidate(
+        f"They mentioned {word} yesterday."
+    )
+    assert (result.method, result.sub_scene, result.confidence) == (
+        "single_keyword_whitelist",
+        expected_scene,
+        0.51,
+    )
+
+
+def test_single_keyword_whitelist_is_exactly_twenty_words_across_twelve_scenes() -> None:
+    whitelist = categorize_module._SINGLE_KEYWORD_WHITELIST
+
+    assert len(whitelist) == 12
+    assert {word for words in whitelist.values() for word in words} == {
+        "salary",
+        "employer",
+        "unemployed",
+        "passport",
+        "tourist",
+        "hotel",
+        "hello",
+        "goodbye",
+        "employee",
+        "shopping",
+        "airport",
+        "taxi",
+        "subway",
+        "exam",
+        "software",
+        "website",
+        "scientist",
+        "police",
+        "climate",
+        "earthquake",
+    }
+
+
+@pytest.mark.parametrize(
+    ("word", "expected_scene"),
+    (
+        ("salaries", "work_jobs"),
+        ("employers", "work_jobs"),
+        ("tourists", "travel_tourism"),
+        ("websites", "technology_software"),
+        ("scientists", "technology_science"),
+        ("earthquakes", "news_environment"),
+    ),
+)
+def test_single_keyword_whitelist_uses_one_canonical_form_per_token(
+    word: str,
+    expected_scene: str,
+) -> None:
+    result = SceneClassifier().classify_candidate(f"They mentioned {word} yesterday.")
+
+    assert (result.method, result.sub_scene) == (
+        "single_keyword_whitelist",
+        expected_scene,
+    )
+
+
+@pytest.mark.parametrize(
+    "word",
+    (
+        "bill",
+        "match",
+        "forward",
+        "reception",
+        "running",
+        "prescription",
+        "law",
+        "business",
+        "examination",
+        "purchase",
+        "gym",
+        "workshop",
+        "deadline",
+        "resume",
+        "welcome",
+        "luggage",
+        "vacancy",
+        "visa",
+        "motel",
+    ),
+)
+def test_single_keyword_whitelist_keeps_reviewed_unsafe_words_out(word: str) -> None:
+    result = SceneClassifier().classify_candidate(f"They mentioned {word} yesterday.")
+
+    assert result.method == "out_of_candidate_pool"
+    assert result.sub_scene is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "The salary and airport were mentioned yesterday.",
+        "The salary and motel were mentioned yesterday.",
+        "The salary changed, so call me.",
+        "The Hotel de Ville was mentioned yesterday.",
+    ),
+)
+def test_single_keyword_whitelist_rejects_ambiguous_or_blocked_contexts(
+    text: str,
+) -> None:
+    result = SceneClassifier().classify_candidate(text)
+
+    assert result.method == "out_of_candidate_pool"
+    assert result.sub_scene is None
+
+
+def test_single_keyword_whitelist_never_overrides_existing_classification_branches() -> None:
+    classifier = SceneClassifier()
+
+    protected = classifier.classify_candidate("The salary changed.", protected=True)
+    source_fallback = classifier.classify_candidate(
+        "The police responded.", source_name="English Wikinews"
+    )
+    phrase = classifier.classify_candidate("The hotel room was quiet.")
+    two_strong_concepts = classifier.classify_candidate(
+        "The salary and employer were mentioned yesterday."
+    )
+
+    assert protected.method == "llm_required"
+    assert source_fallback.method == "candidate_source"
+    assert phrase.method == "keyword"
+    assert all(
+        result.method != "single_keyword_whitelist"
+        for result in (protected, source_fallback, phrase, two_strong_concepts)
+    )
+
+
+def test_classification_cli_persists_v13_whitelist_model_version(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = _ready_item(database, "salary", "They mentioned salary yesterday.")
+
+    cli._classify_items(database, 10)
+
+    with database.connect() as connection:
+        method, model_version = connection.execute(
+            "SELECT json_extract(payload_json, '$.method'), model_version "
+            "FROM stage_results WHERE item_id=? AND stage='classify'",
+            (item_id,),
+        ).fetchone()
+    assert method == "single_keyword_whitelist"
+    assert model_version == "scene-candidate-v13"
 
 
 def test_candidate_pool_accepts_two_consistent_context_signals() -> None:
