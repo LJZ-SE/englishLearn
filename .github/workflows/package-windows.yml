@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 75
     env:
       PYTHONUTF8: "1"
-      UV_CACHE_DIR: ${{ runner.temp }}\uv-cache
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
 
     steps:
       - name: 检出固定提交
