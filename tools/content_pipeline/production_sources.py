@@ -66,6 +66,7 @@ def import_all_sources(
     cache_root.mkdir(parents=True, exist_ok=True)
     expanded = list(_expanded_sources(manifest))
     _validate_expanded_sources(expanded, cache_root)
+    had_lock = lock_path.is_file()
     lock_payload = _read_lock_payload(lock_path)
     existing = {str(entry["key"]): entry for entry in lock_payload.get("sources", [])}
     valid_identities = {_raw_source_name(source) for source in expanded}
@@ -74,7 +75,7 @@ def import_all_sources(
     }
     if not pending_refresh_identities <= valid_identities:
         raise ValueError("source lock 包含无法映射到当前 manifest 的 pending identity")
-    if existing and not refresh_lock:
+    if had_lock and not refresh_lock:
         locked_manifest = lock_payload.get("manifest_sha256")
         if locked_manifest != manifest_sha256:
             raise ValueError("来源 manifest 已漂移；如需更新必须显式使用 --refresh-lock")
@@ -91,21 +92,20 @@ def import_all_sources(
                 raise ValueError(
                     f"refresh-lock 禁止改变来源 identity: {old_identity} -> {new_identity}"
                 )
-    added_keys = expanded_keys - existing_keys if existing else set()
-    existing_identities = {_locked_raw_source_name(entry) for entry in existing.values()}
+    added_keys = expanded_keys - existing_keys
     added_identities = {
         _raw_source_name(source) for source in expanded if str(source["key"]) in added_keys
-    } - existing_identities
+    }
     if (
         added_identities
-        and existing
+        and had_lock
         and not refresh_lock
         and not added_identities <= pending_refresh_identities
     ):
         raise ValueError("新增来源必须显式使用 --refresh-lock")
-    if added_identities and existing and refresh_lock:
+    if added_identities and (refresh_lock or not had_lock):
         pending_refresh_identities.update(added_identities)
-        # 先冻结待导入 identity，确保下载或导入中断后可无歧义恢复。
+        # 下载前先冻结全部待导入 identity，确保中断恢复不依赖 manifest 顺序。
         _checkpoint_source_lock(
             lock_path,
             manifest_path,
@@ -371,6 +371,7 @@ def _download_locked(
     if existing and cache_path.is_file():
         size, digest = _file_fingerprint(cache_path)
         if not refresh and size == existing.get("size_bytes") and digest == existing.get("sha256"):
+            _validate_downloaded_source(kind, cache_path, source, digest)
             return dict(existing)
     temporary = cache_path.with_suffix(cache_path.suffix + ".part")
     if kind != "wikinews":
@@ -379,13 +380,17 @@ def _download_locked(
         final_url = _download_wikinews_snapshot(url, temporary, source)
     else:
         final_url = _download_url(url, temporary)
-    size, digest = _file_fingerprint(temporary)
-    if existing and not refresh and (
-        size != existing.get("size_bytes") or digest != existing.get("sha256")
-    ):
+    try:
+        size, digest = _file_fingerprint(temporary)
+        _validate_downloaded_source(kind, temporary, source, digest)
+        if existing and not refresh and (
+            size != existing.get("size_bytes") or digest != existing.get("sha256")
+        ):
+            raise ValueError(f"上游来源字节已变化，拒绝覆盖冻结缓存: {key}")
+        temporary.replace(cache_path)
+    except BaseException:
         temporary.unlink(missing_ok=True)
-        raise ValueError(f"上游来源字节已变化，拒绝覆盖冻结缓存: {key}")
-    temporary.replace(cache_path)
+        raise
     return {
         "key": key,
         "kind": kind,
@@ -396,6 +401,52 @@ def _download_locked(
         "sha256": digest,
         "downloaded_at": datetime.now(UTC).isoformat(),
     }
+
+
+def _validate_downloaded_source(
+    kind: str,
+    path: Path,
+    source: dict[str, Any],
+    digest: str,
+) -> None:
+    expected_sha256 = source.get("expected_sha256")
+    if expected_sha256 is not None and digest != str(expected_sha256).lower():
+        raise ValueError(
+            f"来源 SHA-256 不匹配: {source['key']}，"
+            f"期望 {expected_sha256}，实际 {digest}"
+        )
+    if kind not in {"convokit", "multiwoz", "dailydialog", "mts-dialog"}:
+        return
+    if not zipfile.is_zipfile(path):
+        raise ValueError(f"来源下载内容不是有效 ZIP: {source['key']}")
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        if kind == "convokit":
+            valid = any(Path(name).name == "utterances.jsonl" for name in names)
+        elif kind == "multiwoz":
+            candidates = [
+                name
+                for name in names
+                if re.search(
+                    r"(?:^|/)data/MultiWOZ_2[.]2/(?:train|dev|test)/"
+                    r"dialogues_[0-9]+[.]json$",
+                    name,
+                )
+            ]
+            valid = bool(candidates) and isinstance(
+                json.loads(archive.read(candidates[0])), list
+            )
+        elif kind == "dailydialog":
+            valid = "data/dialogues.json" in names and isinstance(
+                json.loads(archive.read("data/dialogues.json")), list
+            )
+        else:
+            valid = any(
+                "/Main-Dataset/" in f"/{name}" and name.lower().endswith(".csv")
+                for name in names
+            )
+    if not valid:
+        raise ValueError(f"来源 ZIP 缺少最低数据结构: {source['key']}")
 
 
 def _download_url(url: str, target_path: Path) -> str:
@@ -684,6 +735,12 @@ def _validate_expanded_sources(sources: list[dict[str, Any]], cache_root: Path) 
         if path in paths:
             raise ValueError(f"来源 manifest 包含重复缓存路径: {path.name}")
         paths.add(path)
+        expected_sha256 = source.get("expected_sha256")
+        if expected_sha256 is not None and (
+            not isinstance(expected_sha256, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256)
+        ):
+            raise ValueError(f"来源 expected_sha256 格式无效: {key}")
 
 
 def _source_config(source: dict[str, Any], url: str) -> dict[str, Any]:
@@ -699,6 +756,7 @@ def _source_config(source: dict[str, Any], url: str) -> dict[str, Any]:
         "article_limit": source.get("article_limit"),
         "batch_size": source.get("batch_size"),
         "snapshot_version": source.get("snapshot_version"),
+        "expected_sha256": source.get("expected_sha256"),
     }
 
 

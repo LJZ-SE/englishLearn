@@ -9,8 +9,9 @@ from pathlib import Path
 from tools.content_pipeline.models import CollectedSentence
 
 _DIALOGUE_FILE = re.compile(r"(?:^|/)data/MultiWOZ_2[.]2/(train|dev|test)/dialogues_[0-9]+[.]json$")
-_SOURCE_URL = "https://github.com/budzianowski/multiwoz/tree/master/data/MultiWOZ_2.2"
-_LICENSE_URL = "https://github.com/budzianowski/multiwoz/blob/master/LICENSE"
+_REVISION = "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b"
+_SOURCE_URL = f"https://github.com/budzianowski/multiwoz/tree/{_REVISION}/data/MultiWOZ_2.2"
+_LICENSE_URL = f"https://github.com/budzianowski/multiwoz/blob/{_REVISION}/LICENSE"
 
 
 def iter_multiwoz_utterances(archive_path: Path) -> Iterator[CollectedSentence]:

@@ -9,7 +9,10 @@ from pathlib import Path
 
 from tools.content_pipeline.models import CollectedSentence
 
-_SOURCE_URL = "https://github.com/abachaa/MTS-Dialog/tree/main/Main-Dataset"
+_SOURCE_URL = (
+    "https://github.com/abachaa/MTS-Dialog/tree/"
+    "3ff0801933608d6f570468c13125125fb5cabdea/Main-Dataset"
+)
 _LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 _SPEAKER = re.compile(
     r"(?i)(?<!\S)(Doctor|Patient|Physician|Provider|Clinician|Guest_family|D|P)"

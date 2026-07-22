@@ -81,7 +81,7 @@ def build_fixture_database(
                 source_name="Open Example",
                 source_item_id=f"{scene.key}-{item_index}",
                 source_url=f"https://example.test/{scene.key}/{item_index}",
-                source_author=f"author-{scene_index}",
+                source_author=f"author-{scene_index}-{item_index}",
                 license_name="CC BY 4.0",
                 license_url="https://creativecommons.org/licenses/by/4.0/",
                 text=text,

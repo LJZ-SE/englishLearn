@@ -500,8 +500,16 @@ def _validate_temporary_artifacts(
                 connection.execute("SELECT COUNT(*) FROM question_variants").fetchone()[0]
             ),
         )
+        provenance_rows = connection.execute(
+            """
+            SELECT sub_scene_key, source_url, source_author, license_name, license_url
+            FROM sentences
+            ORDER BY sub_scene_key, id
+            """
+        ).fetchall()
     if counts != (sentence_count, variant_count):
         raise BuildError(f"候选临时数据库计数不一致: {counts}")
+    _validate_release_provenance(provenance_rows)
     try:
         report_payload = json.loads(report.read_text(encoding="utf-8"))
         source_payload = json.loads(sources.read_text(encoding="utf-8"))
@@ -518,6 +526,33 @@ def _validate_temporary_artifacts(
         if isinstance(item, dict)
     ) != sentence_count:
         raise BuildError("候选来源清单计数与数据库不一致")
+
+
+def _validate_release_provenance(
+    rows: list[tuple[str, str, str, str, str]],
+) -> None:
+    scene_totals: Counter[str] = Counter()
+    scene_authors: dict[str, Counter[str]] = {}
+    for scene, source_url, author, license_name, license_url in rows:
+        if not str(source_url).strip().startswith("https://"):
+            raise BuildError(f"候选库来源 URL 必须使用 HTTPS: {source_url!r}")
+        if not str(license_name).strip():
+            raise BuildError("候选库许可证名称不能为空")
+        if not str(license_url).strip().startswith("https://"):
+            raise BuildError(f"候选库许可证 URL 必须使用 HTTPS: {license_url!r}")
+        scene_key = str(scene)
+        scene_totals[scene_key] += 1
+        author_name = str(author).strip()
+        if author_name:
+            scene_authors.setdefault(scene_key, Counter())[author_name] += 1
+
+    for scene, named_authors in scene_authors.items():
+        author_limit = max(1, math.floor(scene_totals[scene] * 0.08))
+        if named_authors and max(named_authors.values()) > author_limit:
+            raise BuildError(
+                f"候选库子场景 {scene} 作者占比超过 8%: "
+                f"上限 {author_limit}，实际 {max(named_authors.values())}"
+            )
 
 
 def _commit_outputs_atomically(outputs: tuple[tuple[Path, Path], ...]) -> None:

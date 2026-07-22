@@ -57,7 +57,23 @@ def test_first_release_database_passes_all_structural_and_content_gates() -> Non
     assert len({row["normalized_hash"] for row in sentences}) == len(sentences)
     assert all(row["translation_zh"].strip() for row in sentences)
     assert all(row["source_url"].startswith("https://") for row in sentences)
-    assert all(row["source_author"] and row["license_url"] for row in sentences)
+    assert all(
+        row["license_name"] and row["license_url"].startswith("https://")
+        for row in sentences
+    )
+    if schema_version == 2:
+        rows_by_scene: dict[str, list[sqlite3.Row]] = {}
+        for row in sentences:
+            rows_by_scene.setdefault(row["sub_scene_key"], []).append(row)
+        for rows in rows_by_scene.values():
+            named_authors = Counter(
+                row["source_author"].strip()
+                for row in rows
+                if row["source_author"].strip()
+            )
+            assert not named_authors or max(named_authors.values()) <= max(
+                1, int(len(rows) * 0.08)
+            )
     assert all(rejection_reason(row["text"]) is None for row in sentences)
 
     texts = [row["text"] for row in sentences]

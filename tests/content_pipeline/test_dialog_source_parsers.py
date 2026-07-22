@@ -48,19 +48,31 @@ def test_multiwoz_reader_emits_only_original_turns_with_stable_provenance(
             text="I need a hotel near the station.",
             source_item_id="train:PMUL0012.json:turn:1",
             source_author="",
-            source_url=("https://github.com/budzianowski/multiwoz/tree/master/data/MultiWOZ_2.2"),
+            source_url=(
+                "https://github.com/budzianowski/multiwoz/tree/"
+                "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/data/MultiWOZ_2.2"
+            ),
             source_name="multiwoz-2-2",
             license_name="MIT",
-            license_url="https://github.com/budzianowski/multiwoz/blob/master/LICENSE",
+            license_url=(
+                "https://github.com/budzianowski/multiwoz/blob/"
+                "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/LICENSE"
+            ),
         ),
         CollectedSentence(
             text="What price range do you prefer?",
             source_item_id="train:PMUL0012.json:turn:2",
             source_author="",
-            source_url=("https://github.com/budzianowski/multiwoz/tree/master/data/MultiWOZ_2.2"),
+            source_url=(
+                "https://github.com/budzianowski/multiwoz/tree/"
+                "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/data/MultiWOZ_2.2"
+            ),
             source_name="multiwoz-2-2",
             license_name="MIT",
-            license_url="https://github.com/budzianowski/multiwoz/blob/master/LICENSE",
+            license_url=(
+                "https://github.com/budzianowski/multiwoz/blob/"
+                "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/LICENSE"
+            ),
         ),
     ]
 
@@ -69,33 +81,60 @@ def test_multiwoz_reader_emits_only_original_turns_with_stable_provenance(
     assert all(item.top_scene is None and item.sub_scene is None for item in expected)
 
 
-def test_dailydialog_reader_uses_line_and_turn_ids_without_topic_labels(tmp_path: Path) -> None:
+def test_dailydialog_reader_uses_original_and_turn_ids_without_metadata_labels(
+    tmp_path: Path,
+) -> None:
     archive_path = tmp_path / "dailydialog.zip"
+    payload = [
+        {
+            "dataset": "dailydialog",
+            "data_split": "train",
+            "dialogue_id": "dailydialog-train-7",
+            "original_id": "train-7",
+            "domains": ["Work"],
+            "turns": [
+                {
+                    "speaker": "user",
+                    "utterance": "We should start the meeting.",
+                    "utt_idx": 0,
+                    "dialogue_acts": {"binary": [], "categorical": [], "non-categorical": []},
+                    "emotion": "no emotion",
+                },
+                {
+                    "speaker": "system",
+                    "utterance": "Yes, let's begin.",
+                    "utt_idx": 1,
+                    "dialogue_acts": {"binary": [], "categorical": [], "non-categorical": []},
+                    "emotion": "happiness",
+                },
+            ],
+        }
+    ]
     with zipfile.ZipFile(archive_path, "w") as archive:
-        archive.writestr(
-            "ijcnlp_dailydialog/dialogues_text.txt",
-            "Good morning. __eou__ Did you sleep well? __eou__\n"
-            "We should start the meeting. __eou__ Yes, let's begin. __eou__\n",
-        )
-        archive.writestr("ijcnlp_dailydialog/dialogues_topic.txt", "1\n8\n")
+        archive.writestr("data/dialogues.json", json.dumps(payload))
+        archive.writestr("data/ontology.json", "{}")
 
     reader = _load_parser("dailydialog_source", "iter_dailydialog_utterances")
     items = list(reader(archive_path))
 
     assert [item.text for item in items] == [
-        "Good morning.",
-        "Did you sleep well?",
         "We should start the meeting.",
         "Yes, let's begin.",
     ]
     assert [item.source_item_id for item in items] == [
-        "dialogue:1:turn:1",
-        "dialogue:1:turn:2",
-        "dialogue:2:turn:1",
-        "dialogue:2:turn:2",
+        "train-7:turn:0",
+        "train-7:turn:1",
     ]
     assert all(item.source_author == "" for item in items)
     assert all(item.source_name == "daily-dialog" for item in items)
+    assert all(
+        item.source_url
+        == (
+            "https://huggingface.co/datasets/ConvLab/dailydialog/tree/"
+            "745c1796cfe209b469394567f496815d2bc495d2"
+        )
+        for item in items
+    )
     assert all(item.category_hint is None for item in items)
 
 
@@ -145,6 +184,14 @@ def test_mts_dialog_reader_ignores_summaries_and_augmented_data(tmp_path: Path) 
     assert all(item.source_author == "" for item in items)
     assert all("summary" not in item.text for item in items)
     assert all(item.source_name == "mts-dialog" for item in items)
+    assert all(
+        item.source_url
+        == (
+            "https://github.com/abachaa/MTS-Dialog/tree/"
+            "3ff0801933608d6f570468c13125125fb5cabdea/Main-Dataset"
+        )
+        for item in items
+    )
 
 
 def test_source_manifest_adds_three_official_dialogue_archives() -> None:
@@ -155,21 +202,36 @@ def test_source_manifest_adds_three_official_dialogue_archives() -> None:
     assert by_key["multiwoz-2-2"] == {
         "key": "multiwoz-2-2",
         "kind": "multiwoz",
-        "url": ("https://github.com/budzianowski/multiwoz/archive/refs/heads/master.zip"),
+        "url": (
+            "https://github.com/budzianowski/multiwoz/archive/"
+            "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b.zip"
+        ),
         "license_name": "MIT",
-        "license_url": "https://github.com/budzianowski/multiwoz/blob/master/LICENSE",
+        "license_url": (
+            "https://github.com/budzianowski/multiwoz/blob/"
+            "fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/LICENSE"
+        ),
     }
     assert by_key["daily-dialog"] == {
         "key": "daily-dialog",
         "kind": "dailydialog",
-        "url": "http://yanran.li/files/ijcnlp_dailydialog.zip",
+        "url": (
+            "https://huggingface.co/datasets/ConvLab/dailydialog/resolve/"
+            "745c1796cfe209b469394567f496815d2bc495d2/data.zip"
+        ),
+        "expected_sha256": (
+            "b1f38f3bf5431f9384107011a943f1a3446027721292e3a248a894b7766fa9d3"
+        ),
         "license_name": "CC BY-NC-SA 4.0",
         "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
     }
     assert by_key["mts-dialog"] == {
         "key": "mts-dialog",
         "kind": "mts-dialog",
-        "url": "https://github.com/abachaa/MTS-Dialog/archive/refs/heads/main.zip",
+        "url": (
+            "https://github.com/abachaa/MTS-Dialog/archive/"
+            "3ff0801933608d6f570468c13125125fb5cabdea.zip"
+        ),
         "license_name": "CC BY 4.0",
         "license_url": "https://creativecommons.org/licenses/by/4.0/",
     }

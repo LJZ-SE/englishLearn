@@ -41,21 +41,22 @@
   {
     "key": "multiwoz-2-2",
     "kind": "multiwoz",
-    "url": "https://github.com/budzianowski/multiwoz/archive/refs/heads/master.zip",
+    "url": "https://github.com/budzianowski/multiwoz/archive/fe0c8e65cfcd8462bd33c86e35f21addc84ca82b.zip",
     "license_name": "MIT",
-    "license_url": "https://github.com/budzianowski/multiwoz/blob/master/LICENSE"
+    "license_url": "https://github.com/budzianowski/multiwoz/blob/fe0c8e65cfcd8462bd33c86e35f21addc84ca82b/LICENSE"
   },
   {
     "key": "daily-dialog",
     "kind": "dailydialog",
-    "url": "http://yanran.li/files/ijcnlp_dailydialog.zip",
+    "url": "https://huggingface.co/datasets/ConvLab/dailydialog/resolve/745c1796cfe209b469394567f496815d2bc495d2/data.zip",
+    "expected_sha256": "b1f38f3bf5431f9384107011a943f1a3446027721292e3a248a894b7766fa9d3",
     "license_name": "CC BY-NC-SA 4.0",
     "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
   },
   {
     "key": "mts-dialog",
     "kind": "mts-dialog",
-    "url": "https://github.com/abachaa/MTS-Dialog/archive/refs/heads/main.zip",
+    "url": "https://github.com/abachaa/MTS-Dialog/archive/3ff0801933608d6f570468c13125125fb5cabdea.zip",
     "license_name": "CC BY 4.0",
     "license_url": "https://creativecommons.org/licenses/by/4.0/"
   }
