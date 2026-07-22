@@ -805,6 +805,70 @@ def test_all_content_session_uses_active_scene_label_without_overwriting_selecti
     assert users.get_setting("selected_top_scene") == "daily"
 
 
+def test_explicit_all_scene_selection_persists_and_drives_quantitative_session(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "user.db"
+    users = UserRepository(database)
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q-all", "listen")]),
+        users,
+        rng=random.Random(45),
+    )
+    controller = PracticeController(engine)
+
+    controller.setScene("", "")
+
+    assert controller.selectedTopScene == ""
+    assert controller.selectedSubScene == ""
+    assert controller.sceneLabel == "全部内容"
+    assert users.get_setting("selected_top_scene") == ""
+    assert users.get_setting("selected_sub_scene") is None
+
+    controller.startQuantitative("", "", "easy", 1)
+
+    assert engine.scene == SceneSelection(None, None)
+    assert controller.currentPage == "practice"
+    assert controller.sceneLabel == "全部内容"
+
+    restarted = PracticeController(
+        PracticeEngine(
+            FakeContentRepository([]),
+            UserRepository(database),
+            rng=random.Random(46),
+        )
+    )
+    assert restarted.selectedTopScene == ""
+    assert restarted.selectedSubScene == ""
+    assert restarted.sceneLabel == "全部内容"
+
+
+def test_explicit_all_scene_drives_endless_without_resume_overwriting_home_choice(
+    tmp_path: Path,
+) -> None:
+    questions = [_question(f"q-all-{index}", "listen") for index in range(3)]
+    engine = PracticeEngine(
+        FakeContentRepository(questions),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(47),
+    )
+    controller = PracticeController(engine)
+
+    controller.startEndless("", "")
+
+    assert engine.scene == SceneSelection(None, None)
+    assert controller.sceneLabel == "全部内容"
+    controller.goHome()
+    controller.setScene("daily", "")
+
+    controller.resumeLatest()
+
+    assert controller.currentPage == "practice"
+    assert controller.selectedTopScene == "daily"
+    assert controller.selectedSubScene == ""
+    assert controller.sceneLabel == "全部内容"
+
+
 def test_closing_settings_returns_to_the_page_that_opened_it(tmp_path: Path) -> None:
     questions = [_question(f"q{index}", "listen") for index in range(8)]
     controller = PracticeController(

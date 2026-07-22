@@ -339,6 +339,7 @@ class PracticeController(QObject):
         difficulty_or_count: str | int,
         count: int | None = None,
     ) -> None:
+        uses_hierarchical_scene = count is not None
         if count is None:
             scene = self._legacy_scene_selection(top_scene)
             difficulty = sub_scene_or_difficulty
@@ -352,23 +353,33 @@ class PracticeController(QObject):
             difficulty=Difficulty(difficulty),
             count=resolved_count,
         )
-        self._remember_scene_if_selectable(scene)
+        self._remember_scene_if_selectable(
+            scene,
+            allow_all=uses_hierarchical_scene,
+        )
         self._begin_practice_page()
 
     @Slot(str)
     @Slot(str, str)
     def startEndless(self, top_scene: str = "all", sub_scene: str | None = None) -> None:
+        uses_hierarchical_scene = sub_scene is not None
         if sub_scene is None:
             scene = self._legacy_scene_selection(top_scene)
         else:
             scene = self._validated_scene_selection(top_scene, sub_scene)
         self._engine.start_endless(scene=scene)
-        self._remember_scene_if_selectable(scene)
+        self._remember_scene_if_selectable(
+            scene,
+            allow_all=uses_hierarchical_scene,
+        )
         self._begin_practice_page()
 
     @Slot(str, str)
     def setScene(self, top_scene: str, sub_scene: str | None = None) -> None:
-        self._remember_scene_if_selectable(self._validated_scene_selection(top_scene, sub_scene))
+        self._remember_scene_if_selectable(
+            self._validated_scene_selection(top_scene, sub_scene),
+            allow_all=True,
+        )
 
     @Slot()
     def resumeLatest(self) -> None:
@@ -562,7 +573,8 @@ class PracticeController(QObject):
         stored_sub = self._engine.get_setting("selected_sub_scene", missing)
         top_scene = stored_top if isinstance(stored_top, str) else ""
         sub_scene = stored_sub if stored_sub is None or isinstance(stored_sub, str) else ""
-        valid = bool(top_scene) and self._is_valid_scene(top_scene, sub_scene)
+        has_saved_selection = isinstance(stored_top, str)
+        valid = has_saved_selection and self._is_valid_scene(top_scene, sub_scene)
 
         if valid:
             selected = (top_scene, sub_scene)
@@ -580,6 +592,8 @@ class PracticeController(QObject):
         return selected
 
     def _is_valid_scene(self, top_scene: str, sub_scene: str | None) -> bool:
+        if not top_scene:
+            return sub_scene in {None, ""}
         top_entry = self._scene_by_key.get(top_scene)
         if top_entry is None:
             return False
@@ -597,6 +611,8 @@ class PracticeController(QObject):
         normalized_sub_scene = sub_scene or None
         if not self._is_valid_scene(top_scene, normalized_sub_scene):
             raise ValueError("所选场景不存在或不属于当前大类")
+        if not top_scene:
+            return SceneSelection(None, None)
         return SceneSelection(top_scene, normalized_sub_scene)
 
     def _legacy_scene_selection(self, category: str) -> SceneSelection:
@@ -609,17 +625,28 @@ class PracticeController(QObject):
             raise ValueError("无场景目录时只支持旧版内置分类")
         return self._validated_scene_selection(category, None)
 
-    def _remember_scene_if_selectable(self, scene: SceneSelection) -> None:
-        if scene.top_scene is None or not self._is_valid_scene(scene.top_scene, scene.sub_scene):
+    def _remember_scene_if_selectable(
+        self,
+        scene: SceneSelection,
+        *,
+        allow_all: bool = False,
+    ) -> None:
+        if scene.top_scene is None:
+            if not allow_all or scene.sub_scene is not None:
+                return
+            selected_top_scene = ""
+        else:
+            selected_top_scene = scene.top_scene
+        if not self._is_valid_scene(selected_top_scene, scene.sub_scene):
             return
         if (
-            scene.top_scene == self._selected_top_scene
+            selected_top_scene == self._selected_top_scene
             and scene.sub_scene == self._selected_sub_scene
         ):
             return
-        self._selected_top_scene = scene.top_scene
+        self._selected_top_scene = selected_top_scene
         self._selected_sub_scene = scene.sub_scene
-        self._engine.set_setting("selected_top_scene", scene.top_scene)
+        self._engine.set_setting("selected_top_scene", selected_top_scene)
         self._engine.set_setting("selected_sub_scene", scene.sub_scene)
         self.sceneSelectionChanged.emit()
         self.sceneLabelChanged.emit()

@@ -10,6 +10,7 @@ Control {
 
     implicitWidth: label.implicitWidth + 34
     implicitHeight: 38
+    clip: true
 
     background: Rectangle {
         radius: 12
@@ -25,6 +26,7 @@ Control {
         font.family: "Segoe UI"
         font.pixelSize: 15
         font.weight: control.selected ? Font.DemiBold : Font.Normal
+        elide: Text.ElideRight
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }

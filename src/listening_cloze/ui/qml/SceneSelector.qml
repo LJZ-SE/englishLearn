@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    objectName: "sceneSelector"
     property var controller
     readonly property var sceneCatalog: root.controller && root.controller.sceneCatalog
                                         ? root.controller.sceneCatalog : []
@@ -44,11 +45,31 @@ Item {
             font.pixelSize: 14
         }
 
+        ChoiceChip {
+            objectName: "allScenes"
+            text: "全部场景"
+            selected: root.selectedTopScene === ""
+            activeFocusOnTab: true
+            Keys.onReturnPressed: clicked()
+            Keys.onEnterPressed: clicked()
+            Keys.onSpacePressed: clicked()
+            onClicked: if (root.controller) root.controller.setScene("", "")
+        }
+
         Flow {
             id: topSceneFlow
+            objectName: "topSceneFlow"
             width: parent.width
             spacing: 8
-            readonly property int rowCount: Math.ceil(topSceneRepeater.count / 4)
+            readonly property int minimumChipWidth: 112
+            readonly property int columnCount: Math.max(
+                                                   1,
+                                                   Math.min(
+                                                       4,
+                                                       Math.floor(
+                                                           (width + spacing)
+                                                           / (minimumChipWidth + spacing))))
+            readonly property int rowCount: Math.ceil(topSceneRepeater.count / columnCount)
             height: rowCount > 0 ? rowCount * 40 + (rowCount - 1) * spacing : 0
 
             Repeater {
@@ -58,7 +79,9 @@ Item {
                 ChoiceChip {
                     required property var modelData
                     objectName: "topScene_" + modelData.key
-                    width: (topSceneFlow.width - topSceneFlow.spacing * 3) / 4
+                    width: (topSceneFlow.width
+                            - topSceneFlow.spacing * (topSceneFlow.columnCount - 1))
+                           / topSceneFlow.columnCount
                     height: 40
                     text: modelData.label
                     selected: root.selectedTopScene === modelData.key

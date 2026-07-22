@@ -2,10 +2,20 @@ import random
 from dataclasses import replace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPointF, Qt
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QMetaObject,
+    QObject,
+    QPoint,
+    QPointF,
+    Qt,
+    QUrl,
+)
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtQuick import QQuickItem
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQuick import QQuickItem, QQuickWindow
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from listening_cloze.application.controller import PracticeController
@@ -165,6 +175,19 @@ def _find_visual_item(root, object_name: str):
     )
 
 
+def _mouse_click_item(window, item) -> None:
+    center = item.mapToItem(
+        window.contentItem(), QPointF(item.width() / 2, item.height() / 2)
+    )
+    QTest.mouseClick(
+        window,
+        Qt.LeftButton,
+        Qt.NoModifier,
+        QPoint(round(center.x()), round(center.y())),
+    )
+    _process_qml_events()
+
+
 @pytest.mark.qt_serial
 def test_home_scene_selector_uses_controller_catalog_and_starts_with_both_keys(
     tmp_path, qtbot, qtlog
@@ -217,10 +240,12 @@ def test_home_scene_selector_uses_controller_catalog_and_starts_with_both_keys(
     top_news = _find_visual_item(root, "topScene_news")
     top_travel = _find_visual_item(root, "topScene_travel")
     all_sub_scenes = root.findChild(QQuickItem, "allSubScenes")
+    all_scenes = root.findChild(QQuickItem, "allScenes")
     assert top_daily is not None
     assert top_news is not None
     assert top_travel is not None
     assert all_sub_scenes is not None
+    assert all_scenes is not None
     top_scene_items = [
         item
         for item in _visual_descendants(root.contentItem())
@@ -234,10 +259,15 @@ def test_home_scene_selector_uses_controller_catalog_and_starts_with_both_keys(
         for row_position in row_positions
     )
 
-    QMetaObject.invokeMethod(top_news, "clicked")
-    _process_qml_events()
+    _mouse_click_item(root, all_scenes)
+    assert controller.selectedTopScene == ""
+    assert controller.selectedSubScene == ""
+    assert all_scenes.property("selected") is True
+
+    _mouse_click_item(root, top_news)
     assert controller.selectedTopScene == "news"
     assert controller.selectedSubScene == ""
+    assert top_news.property("selected") is True
 
     QMetaObject.invokeMethod(top_travel, "clicked")
     _process_qml_events()
@@ -348,6 +378,113 @@ def test_home_qml_no_longer_contains_the_legacy_four_category_model() -> None:
     assert "news_podcasts" not in source
     assert "selectedCategory" not in source
     assert "sceneCatalog" in source
+
+
+@pytest.mark.qt_serial
+def test_scene_selector_reflows_to_three_columns_at_narrow_component_width(
+    tmp_path, qtbot
+) -> None:
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    engine = QQmlApplicationEngine()
+    component = QQmlComponent(engine)
+    component.loadUrl(QUrl.fromLocalFile(str(ui_path("SceneSelector.qml"))))
+    selector = component.createWithInitialProperties({"controller": controller})
+    assert selector is not None, [error.toString() for error in component.errors()]
+    window = QQuickWindow()
+    window.resize(360, 500)
+    selector.setParentItem(window.contentItem())
+    selector.setWidth(360)
+    window.show()
+    _process_qml_events()
+
+    top_flow = selector.findChild(QQuickItem, "topSceneFlow")
+    top_scene_items = [
+        item
+        for item in _visual_descendants(selector)
+        if item.objectName().startswith("topScene_")
+    ]
+    assert top_flow is not None
+    assert len(top_scene_items) == 8
+    row_positions = {round(item.y()) for item in top_scene_items}
+    assert len(row_positions) == 3
+    assert sorted(
+        sum(round(item.y()) == row_position for item in top_scene_items)
+        for row_position in row_positions
+    ) == [2, 3, 3]
+    assert top_flow.height() == 136
+    assert max(item.x() + item.width() for item in top_scene_items) <= selector.width()
+
+
+@pytest.mark.qt_serial
+def test_compact_practice_header_keeps_essential_controls_inside_window(
+    tmp_path, qtbot
+) -> None:
+    question = ContentQuestion(
+        id="q-compact-header",
+        sentence_id="s-compact-header",
+        sentence_text="Engineers tested the software carefully.",
+        category="technology",
+        top_scene="technology",
+        sub_scene="technology_engineering",
+        source_url="https://example.test/compact-header",
+        normalized_hash="compact-header-hash",
+        difficulty="easy",
+        answer_start=10,
+        answer_end=16,
+        canonical_answer="tested",
+        answer_word_count=1,
+        difficulty_score=1.0,
+        rationale="窄屏页头布局测试",
+        aliases=(),
+    )
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    controller.startQuantitative("technology", "technology_engineering", "easy", 1)
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"backend": controller})
+    engine.load(ui_path("Main.qml"))
+    root = engine.rootObjects()[0]
+
+    for width in (1024, 960):
+        root.setWidth(width)
+        root.setHeight(700)
+        _process_qml_events()
+        for object_name in (
+            "backHomeButton",
+            "headerDifficulty",
+            "headerSceneLabel",
+            "headerProgress",
+            "settingsButton",
+        ):
+            item = root.findChild(QQuickItem, object_name)
+            assert item is not None
+            assert item.property("visible") is True
+            position = item.mapToItem(root.contentItem(), QPointF(0, 0))
+            assert position.x() >= 0
+            assert position.x() + item.width() <= width
+
+        offline_badge = root.findChild(QQuickItem, "offlineBadge")
+        assert offline_badge is not None
+        assert offline_badge.property("visible") is False
+
+
+def test_main_qml_uses_empty_scene_placeholder_without_backend() -> None:
+    source = ui_path("Main.qml").read_text(encoding="utf-8")
+
+    assert 'appWindow.backend ? appWindow.backend.sceneLabel : ""' in source
 
 
 @pytest.mark.qt_serial
