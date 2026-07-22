@@ -25,6 +25,8 @@ def iter_gutenberg_text(path: str | Path, ebook_id: int) -> Iterator[CollectedSe
                 if matched:
                     author = matched.group("author").strip()
                 if _START.match(line):
+                    if not author:
+                        return
                     in_body = True
                 continue
             if _END.match(line):

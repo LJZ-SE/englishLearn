@@ -5,7 +5,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tools.content_pipeline.clean import clean_sentence, rejection_reason
+from tools.content_pipeline.cli import _import_items
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.models import CollectedSentence
@@ -17,18 +20,9 @@ def test_clean_rejects_subtitle_metadata_and_accepts_complete_dialogue() -> None
     assert rejection_reason("[Door slams]") == "stage_direction"
     assert rejection_reason("SPEAKER 2: We need to leave now.") == "speaker_label"
     assert rejection_reason("We need to leave before the last train.") is None
-    assert clean_sentence("MIA: We need to leave before the last train.") == (
-        "We need to leave before the last train."
-    )
-    assert clean_sentence("Warning: We need to leave before the last train.") == (
-        "Warning: We need to leave before the last train."
-    )
-    assert clean_sentence("Note: We need to leave before the last train.") == (
-        "Note: We need to leave before the last train."
-    )
-    assert clean_sentence("Today: We need to leave before the last train.") == (
-        "Today: We need to leave before the last train."
-    )
+    for prefix in ("WARNING:", "IMPORTANT NOTICE:", "New York:", "Alice:"):
+        text = f"{prefix} We need to leave before the last train."
+        assert clean_sentence(text) == text
 
 
 def test_source_manifest_declares_the_fixed_initial_source_set() -> None:
@@ -132,6 +126,38 @@ def test_gutenberg_reader_preserves_stable_id_author_and_source_url(tmp_path: Pa
             license_url="https://www.gutenberg.org/policy/license.html",
         )
     ]
+
+
+def test_gutenberg_reader_skips_books_without_a_header_author(tmp_path: Path) -> None:
+    text = tmp_path / "missing-author.txt"
+    text.write_text(
+        "Title: Unknown Work\n\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK 99 ***\n"
+        "The first complete sentence in this book has no author metadata.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK 99 ***\n",
+        encoding="utf-8",
+    )
+
+    assert list(iter_gutenberg_text(text, 99)) == []
+
+
+def test_cli_rejects_items_with_missing_required_provenance(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item = CollectedSentence(
+        text="The train arrives at nine o'clock.",
+        source_name="Example",
+        source_item_id="example-1",
+        source_url="https://example.test/items/1",
+        source_author="",
+        license_name="Example terms",
+        license_url="https://example.test/license",
+    )
+
+    with pytest.raises(ValueError, match="source_author"):
+        _import_items(database, [item])
+
+    assert database.stage_counts() == {"raw": 0, "rejected": 0}
 
 
 def test_wikinews_id_uses_pageid_when_title_changes(tmp_path: Path) -> None:

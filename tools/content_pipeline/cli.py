@@ -62,6 +62,20 @@ def _add_import_parser(
 
 def _import_items(database: WorkDatabase, items: Iterable[CollectedSentence]) -> None:
     for item in items:
+        missing = [
+            field
+            for field in (
+                "source_name",
+                "source_item_id",
+                "source_url",
+                "source_author",
+                "license_name",
+                "license_url",
+            )
+            if not getattr(item, field).strip()
+        ]
+        if missing:
+            raise ValueError(f"来源条目缺少必需溯源字段: {', '.join(missing)}")
         database.upsert_raw(
             source_name=item.source_name,
             source_item_id=item.source_item_id,

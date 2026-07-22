@@ -8,9 +8,6 @@ import unicodedata
 _HTML_TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
-_SAFE_SPEAKER_PREFIX = re.compile(
-    r"^(?:[A-Z]{2,}(?:\s+[A-Z]{2,})*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+):\s+"
-)
 _SUBTITLE_METADATA = re.compile(
     r"^\d{1,2}:\d{2}:\d{2}(?:[,.]\d{3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[,.]\d{3})?$"
 )
@@ -37,8 +34,7 @@ def clean_sentence(raw: str) -> str:
     text = _HTML_TAG.sub(" ", text)
     text = unicodedata.normalize("NFKC", text).translate(_QUOTE_TRANSLATION)
     text = _INVISIBLE.sub("", text)
-    text = _SPACE.sub(" ", text).strip()
-    return _SAFE_SPEAKER_PREFIX.sub("", text)
+    return _SPACE.sub(" ", text).strip()
 
 
 def normalized_text(text: str) -> str:
