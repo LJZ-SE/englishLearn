@@ -14,10 +14,19 @@
 
 - 目标操作系统：Windows 11 x64。
 - 开发环境：先在 macOS 上完成跨平台代码、自动化测试和界面开发。
-- 最终构建与验收：在 Windows 11 x64 真机完成。
+- Windows 构建环境：GitHub Actions 托管的固定 x64 Runner `windows-2025`。不在 macOS 上交叉编译 Windows 可执行文件。
+- 最终验收：从 GitHub Actions 下载安装包后，在 Windows 11 x64 真机完成。
 - 运行环境：目标电脑无需预装 Python。
 - 打包方式：PyInstaller 生成目录式应用，再由 Inno Setup 生成 `ListeningClozeSetup.exe` 安装程序。目录式打包避免大型 TTS 模型在每次启动时解压。
+- 首版安装程序不配置商业代码签名证书；Windows SmartScreen 可能显示未知发布者提示，此提示不视为安装包功能故障。
 - 首版不发布到 Microsoft Store，不公开分发，不盈利。
+
+### 2.1 从 macOS 触发 Windows 构建
+
+- 仓库提供 `.github/workflows/package-windows.yml`，支持 `workflow_dispatch` 手动触发和 `v*` 版本标签触发。
+- 开发者可在 macOS 运行 `gh workflow run package-windows.yml --ref <分支或标签>` 发起构建，并使用 `gh run watch` 查看进度。
+- 构建完成后可通过 `gh run download` 下载 `listening-cloze-windows` 构建产物，无需本地 Windows 构建环境。
+- GitHub Actions 仅用于测试、取回固定版本的构建依赖和生成安装包，不参与应用运行。安装后的应用仍然完全离线。
 
 ## 3. 技术栈
 
@@ -29,9 +38,23 @@
 - spaCy + wordfreq + 自定义英文短语规则
 - pytest + pytest-qt + pytest-xdist
 - uv 管理依赖与开发命令
-- PyInstaller + Inno Setup 打包 Windows 安装程序
+- PyInstaller + Inno Setup 打包 Windows 安装程序，由 GitHub Actions `windows-2025` Runner 执行
 
-Supertonic 模型、分词资源和美式女声文件随安装包提供。运行时必须使用本地资产路径，并禁用自动下载。
+Supertonic 模型、分词资源和美式女声文件随安装包提供。运行时必须使用本地资产路径，并禁用自动下载。体积较大的第三方模型资产允许在 GitHub Actions 构建阶段从清单指定的官方地址下载，但清单必须固定版本与 SHA-256；下载失败或校验不一致时构建立即失败。
+
+### 3.1 Windows 构建流水线
+
+`package-windows.yml` 按以下顺序执行，任一步失败都不得发布产物：
+
+1. 在 `windows-2025` x64 Runner 检出指定提交，安装固定的 Python 3.12 和 uv 版本，并通过锁文件恢复依赖。
+2. 以 `pytest -n auto` 运行完整自动化测试；共享资源测试按测试策略单独串行。
+3. 根据资产清单下载或恢复 Supertonic、分词资源和美式女声文件，并逐项校验 SHA-256。
+4. 使用 PyInstaller 生成 `onedir` 应用，验证入口导入、资源定位和 Qt offscreen 启动冒烟测试。
+5. 使用 Inno Setup 命令行编译器生成 `ListeningClozeSetup.exe`。
+6. 为安装程序生成 `SHA256SUMS.txt` 和包含提交、依赖锁摘要、模型版本、构建时间的 `build-manifest.json`。
+7. 以私有工作流 Artifact `listening-cloze-windows` 上传安装程序、校验文件、构建清单和测试报告，保留 14 天。
+
+工作流默认只授予 `contents: read` 权限，不写入 GitHub Release，不需要 TTS 或应用密钥。若来源资产无法公开下载，应改用私有仓库 Secret 或受控 Release Asset，并继续执行相同的版本固定和哈希校验。
 
 ## 4. 视觉设计
 
@@ -403,10 +426,20 @@ QML 不直接访问 SQLite、文件系统或 Supertonic。QML 只调用公开的
 - 1440×900 的批准状态截图对比。
 - Windows 100%、125%、150% DPI 真机检查。
 
+### 16.6 Windows 构建测试
+
+- GitHub Actions 仅接受锁文件未漂移且完整测试通过的提交。
+- 验证 PyInstaller 产物中包含 QML、Qt 插件、题库、Supertonic、分词资源和固定女声资产。
+- 使用 Qt offscreen 模式完成无界面启动、应用初始化和本地资产定位冒烟测试。
+- 验证安装包、`SHA256SUMS.txt` 与 `build-manifest.json` 的一致性。
+- 工作流构建成功不替代 Windows 11 真机上的安装、音频、性能和 DPI 验收。
+
 自动化测试默认使用 `pytest -n auto` 并行运行。若发现共享资源冲突，再针对相关测试组回退为串行定位。
 
 ## 17. 最终验收标准
 
+- 在 macOS 上可通过 GitHub CLI 触发指定提交的 Windows 构建，并下载可校验来源的私有 Artifact。
+- `ListeningClozeSetup.exe` 的 SHA-256 与工作流产出的 `SHA256SUMS.txt` 一致。
 - 在未安装 Python 的 Windows 11 x64 电脑上可安装、启动和卸载。
 - 断网环境下完成定量练习与无尽模式。
 - 应用启动后 5 秒内界面可操作。
@@ -432,6 +465,10 @@ QML 不直接访问 SQLite、文件系统或 Supertonic。QML 只调用公开的
 ## 19. 参考实现资料
 
 - Supertonic 3：https://github.com/supertone-inc/supertonic
+- GitHub 托管 Runner：https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+- GitHub 工作流 Artifact：https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts
+- GitHub CLI 下载 Artifact：https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts
+- PyInstaller 平台说明：https://pyinstaller.org/en/stable/index.html
 - Qt Quick Controls 自定义：https://doc.qt.io/qt-6/qtquickcontrols-customize.html
 - Qt Quick MultiEffect：https://doc.qt.io/qt-6/qml-qtquick-effects-multieffect.html
 - Qt Multimedia MediaPlayer：https://doc.qt.io/qt-6/qml-qtmultimedia-mediaplayer.html
