@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
+import tempfile
 from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass
@@ -46,6 +48,13 @@ class _LegacyIds:
     aliases: dict[tuple[str, str], tuple[str, ...]]
     all_sentence_ids: frozenset[str]
     all_question_ids: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _OutputBackup:
+    target: Path
+    path: Path | None
+    payload: bytes | None
 
 
 def stable_sentence_id(text: str) -> str:
@@ -207,14 +216,24 @@ def build_database(
             json.dumps(source_manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        database_temporary.replace(database_path)
-        report_temporary.replace(report_path)
-        sources_temporary.replace(sources_path)
+        _validate_temporary_artifacts(
+            database_temporary,
+            report_temporary,
+            sources_temporary,
+            sentence_count=len(rows),
+            variant_count=len(rows) * 3,
+        )
     except Exception:
-        for temporary in (database_temporary, report_temporary, sources_temporary):
-            if temporary.exists():
-                temporary.unlink()
+        _cleanup_paths((database_temporary, report_temporary, sources_temporary))
         raise
+
+    _commit_outputs_atomically(
+        (
+            (database_temporary, database_path),
+            (report_temporary, report_path),
+            (sources_temporary, sources_path),
+        )
+    )
 
     return BuildResult(
         sentence_count=len(rows),
@@ -365,6 +384,8 @@ def _parse_variants(
             raise BuildError(f"条目 {item_id} 的 aliases 无效")
         if start < 0 or end <= start or end > len(text) or text[start:end] != answer:
             raise BuildError(f"条目 {item_id} 的答案区间无法精确填回原句")
+        if not 1 <= word_count <= 4:
+            raise BuildError(f"条目 {item_id} 的 answer_word_count 必须为 1 到 4")
         if word_count != len(answer.split()):
             raise BuildError(f"条目 {item_id} 的 answer_word_count 与答案不一致")
         parsed[difficulty] = QuestionVariant(
@@ -458,3 +479,141 @@ def _allocate_sentence_ids(
 
 def _random_key(digest: str) -> int:
     return int.from_bytes(bytes.fromhex(digest)[:8], "big") & _POSITIVE_63_BIT_MASK
+
+
+def _validate_temporary_artifacts(
+    database: Path,
+    report: Path,
+    sources: Path,
+    *,
+    sentence_count: int,
+    variant_count: int,
+) -> None:
+    with closing(sqlite3.connect(database)) as connection:
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            raise BuildError("候选临时数据库完整性检查失败")
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise BuildError("候选临时数据库外键检查失败")
+        counts = (
+            int(connection.execute("SELECT COUNT(*) FROM sentences").fetchone()[0]),
+            int(
+                connection.execute("SELECT COUNT(*) FROM question_variants").fetchone()[0]
+            ),
+        )
+    if counts != (sentence_count, variant_count):
+        raise BuildError(f"候选临时数据库计数不一致: {counts}")
+    try:
+        report_payload = json.loads(report.read_text(encoding="utf-8"))
+        source_payload = json.loads(sources.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BuildError("候选报告或来源清单无法重新读取") from error
+    if (
+        report_payload.get("sentence_count") != sentence_count
+        or report_payload.get("variant_count") != variant_count
+    ):
+        raise BuildError("候选报告计数与数据库不一致")
+    if not isinstance(source_payload, list) or sum(
+        int(item.get("sentence_count", 0))
+        for item in source_payload
+        if isinstance(item, dict)
+    ) != sentence_count:
+        raise BuildError("候选来源清单计数与数据库不一致")
+
+
+def _commit_outputs_atomically(outputs: tuple[tuple[Path, Path], ...]) -> None:
+    temporaries = tuple(temporary for temporary, _ in outputs)
+    try:
+        backups = _create_output_backups(tuple(target for _, target in outputs))
+    except Exception:
+        _cleanup_paths(temporaries)
+        raise
+
+    try:
+        for temporary, target in outputs:
+            temporary.replace(target)
+    except Exception as error:
+        rollback_errors = _restore_outputs(backups)
+        cleanup_errors = _cleanup_paths(
+            (*temporaries, *(backup.path for backup in backups if backup.path is not None))
+        )
+        if rollback_errors:
+            detail = "; ".join((*rollback_errors, *cleanup_errors))
+            raise BuildError(f"候选三文件提交失败且回滚不完整: {detail}") from error
+        raise
+
+    backup_paths = tuple(backup.path for backup in backups if backup.path is not None)
+    cleanup_errors = _cleanup_paths(backup_paths)
+    if not cleanup_errors:
+        return
+
+    rollback_errors = _restore_outputs(backups)
+    residual_errors = _cleanup_paths((*temporaries, *backup_paths))
+    if rollback_errors:
+        detail = "; ".join((*cleanup_errors, *rollback_errors, *residual_errors))
+        raise BuildError(f"清理备份失败且候选回滚不完整: {detail}")
+    detail = "; ".join((*cleanup_errors, *residual_errors))
+    raise BuildError(f"清理备份失败，已恢复全部旧目标: {detail}")
+
+
+def _create_output_backups(targets: tuple[Path, ...]) -> tuple[_OutputBackup, ...]:
+    backups: list[_OutputBackup] = []
+    try:
+        for target in targets:
+            if not target.exists():
+                backups.append(_OutputBackup(target, None, None))
+                continue
+            payload = target.read_bytes()
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".bak", dir=target.parent
+            )
+            backup_path = Path(raw_path)
+            backups.append(_OutputBackup(target, backup_path, payload))
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+    except Exception:
+        _cleanup_paths(
+            tuple(backup.path for backup in backups if backup.path is not None)
+        )
+        raise
+    return tuple(backups)
+
+
+def _restore_outputs(backups: tuple[_OutputBackup, ...]) -> tuple[str, ...]:
+    errors: list[str] = []
+    for backup in backups:
+        try:
+            if backup.payload is None:
+                if backup.target.exists():
+                    backup.target.unlink()
+                continue
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix=f".{backup.target.name}.",
+                suffix=".restore",
+                dir=backup.target.parent,
+            )
+            restore_path = Path(raw_path)
+            try:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(backup.payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                restore_path.replace(backup.target)
+            except Exception:
+                _cleanup_paths((restore_path,))
+                raise
+        except Exception as error:
+            errors.append(f"恢复 {backup.target} 失败: {error}")
+    return tuple(errors)
+
+
+def _cleanup_paths(paths: tuple[Path, ...]) -> tuple[str, ...]:
+    errors: list[str] = []
+    for path in paths:
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as error:
+            errors.append(f"清理 {path} 失败: {error}")
+    return tuple(errors)

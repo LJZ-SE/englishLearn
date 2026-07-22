@@ -764,3 +764,141 @@ def test_builder_rejects_malformed_variant_payload(
             first.sources,
         )
     assert first.database.read_bytes() == before
+
+
+@pytest.mark.parametrize("invalid_word_count", [0, -1, 5])
+def test_builder_rejects_answer_word_count_outside_one_to_four(
+    tmp_path: Path, invalid_word_count: int
+) -> None:
+    fixture_root = tmp_path / "fixture"
+    first = build_fixture_database(fixture_root)
+    work_database = WorkDatabase(fixture_root / "work.db")
+    with work_database.connect() as connection:
+        item_id, text, raw_payload = connection.execute(
+            """
+            SELECT variants.item_id, raw.text, variants.payload_json
+            FROM stage_results AS variants
+            JOIN raw_items AS raw ON raw.id = variants.item_id
+            WHERE variants.stage = 'variants'
+            ORDER BY variants.item_id
+            LIMIT 1
+            """
+        ).fetchone()
+        payload = json.loads(raw_payload)
+        variant = payload["variants"][0]
+        if invalid_word_count == 5:
+            answer = " ".join(text.split()[:5])
+            variant["answer_start"] = 0
+            variant["answer_end"] = len(answer)
+            variant["canonical_answer"] = answer
+        variant["answer_word_count"] = invalid_word_count
+        connection.execute(
+            "UPDATE stage_results SET payload_json = ? WHERE item_id = ? AND stage = 'variants'",
+            (json.dumps(payload), item_id),
+        )
+
+    old_bytes = {
+        path: path.read_bytes() for path in (first.database, first.report, first.sources)
+    }
+    with pytest.raises(BuildError, match="answer_word_count"):
+        build_database(
+            work_database,
+            first.database,
+            first.report,
+            first.sources,
+        )
+    assert {
+        path: path.read_bytes() for path in (first.database, first.report, first.sources)
+    } == old_bytes
+
+
+@pytest.mark.parametrize(
+    ("failure_target", "targets_exist"),
+    [("report", True), ("sources", True), ("sources", False)],
+)
+def test_builder_rolls_back_all_outputs_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_target: str,
+    targets_exist: bool,
+) -> None:
+    fixture_root = tmp_path / "fixture"
+    build_fixture_database(fixture_root)
+    work_database = WorkDatabase(fixture_root / "work.db")
+    output_root = tmp_path / "atomic"
+    database = output_root / "candidate.db"
+    report = output_root / "quality-report.json"
+    sources = output_root / "sources.json"
+    targets = {"database": database, "report": report, "sources": sources}
+    output_root.mkdir()
+    before: dict[Path, bytes | None] = {}
+    for name, path in targets.items():
+        payload = f"old-{name}".encode()
+        if targets_exist:
+            path.write_bytes(payload)
+            before[path] = payload
+        else:
+            before[path] = None
+
+    original_replace = Path.replace
+    failing_temporary = targets[failure_target].with_suffix(
+        targets[failure_target].suffix + ".tmp"
+    )
+    injected = False
+
+    def replace_with_failure(path: Path, target: Path) -> Path:
+        nonlocal injected
+        if path == failing_temporary and not injected:
+            injected = True
+            raise OSError(f"simulated {failure_target} replace failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", replace_with_failure)
+
+    with pytest.raises(OSError, match=failure_target):
+        build_database(work_database, database, report, sources)
+
+    assert injected is True
+    for path, old_payload in before.items():
+        if old_payload is None:
+            assert not path.exists()
+        else:
+            assert path.read_bytes() == old_payload
+
+
+def test_builder_rolls_back_all_outputs_when_backup_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture_root = tmp_path / "fixture"
+    build_fixture_database(fixture_root)
+    work_database = WorkDatabase(fixture_root / "work.db")
+    output_root = tmp_path / "atomic"
+    output_root.mkdir()
+    targets = (
+        output_root / "candidate.db",
+        output_root / "quality-report.json",
+        output_root / "sources.json",
+    )
+    before = {}
+    for index, path in enumerate(targets):
+        payload = f"old-{index}".encode()
+        path.write_bytes(payload)
+        before[path] = payload
+
+    original_unlink = Path.unlink
+    injected = False
+
+    def unlink_with_failure(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal injected
+        if path.suffix == ".bak" and not injected:
+            injected = True
+            raise OSError("simulated backup cleanup failure")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink_with_failure)
+
+    with pytest.raises(BuildError, match="清理备份"):
+        build_database(work_database, *targets)
+
+    assert injected is True
+    assert {path: path.read_bytes() for path in targets} == before
