@@ -187,31 +187,36 @@ class ContentRepository:
                 top_scene=top_scene,
                 sub_scene=sub_scene,
             )
-            selected: list[ContentQuestion] = []
-            selected_ids: set[str] = set()
+            selected_ids: list[str] = []
+            selected_id_set: set[str] = set()
             for comparison in (">=", "<"):
-                remaining = limit - len(selected)
+                remaining = limit - len(selected_ids)
                 if remaining <= 0:
                     break
-                excluded = frozenset((*exclude_ids, *selected_ids))
-                rows = connection.execute(
-                    self._sample_range_query(
-                        scene_count=len(scene_keys),
-                        exclude_count=len(excluded),
-                        comparison=comparison,
-                    ),
-                    self._sample_range_parameters(
-                        difficulty=difficulty,
-                        scene_keys=scene_keys,
-                        seed=seed,
-                        exclude_ids=excluded,
-                        limit=remaining,
-                    ),
-                ).fetchall()
-                batch = self._questions_from_joined_rows(rows)
-                selected.extend(batch)
-                selected_ids.update(question.id for question in batch)
-            return selected
+                excluded = frozenset((*exclude_ids, *selected_id_set))
+                candidates: list[sqlite3.Row] = []
+                query = self._sample_candidate_query(
+                    exclude_count=len(excluded),
+                    comparison=comparison,
+                )
+                for scene_key in scene_keys:
+                    candidates.extend(
+                        connection.execute(
+                            query,
+                            self._sample_candidate_parameters(
+                                scene_key=scene_key,
+                                seed=seed,
+                                difficulty=difficulty,
+                                exclude_ids=excluded,
+                                limit=remaining,
+                            ),
+                        ).fetchall()
+                    )
+                candidates.sort(key=lambda row: (row["random_key"], row["sentence_id"]))
+                for row in candidates[:remaining]:
+                    selected_ids.append(row["question_id"])
+                    selected_id_set.add(row["question_id"])
+            return self._get_questions_by_ids(connection, selected_ids)
 
     def get_questions_by_ids(self, ids: list[str] | tuple[str, ...]) -> list[ContentQuestion]:
         if isinstance(ids, (str, bytes)):
@@ -224,6 +229,17 @@ class ContentRepository:
         if not requested_ids:
             return []
 
+        with self.connect() as connection:
+            return self._get_questions_by_ids(connection, requested_ids)
+
+    @classmethod
+    def _get_questions_by_ids(
+        cls,
+        connection: sqlite3.Connection,
+        requested_ids: tuple[str, ...] | list[str],
+    ) -> list[ContentQuestion]:
+        if not requested_ids:
+            return []
         unique_ids = tuple(dict.fromkeys(requested_ids))
         placeholders = ", ".join("?" for _ in unique_ids)
         query = f"""
@@ -252,9 +268,8 @@ class ContentRepository:
             WHERE q.id IN ({placeholders})
             ORDER BY q.id, a.alias
         """
-        with self.connect() as connection:
-            rows = connection.execute(query, unique_ids).fetchall()
-        by_id = {question.id: question for question in self._questions_from_joined_rows(rows)}
+        rows = connection.execute(query, unique_ids).fetchall()
+        by_id = {question.id: question for question in cls._questions_from_joined_rows(rows)}
         return [by_id[question_id] for question_id in requested_ids if question_id in by_id]
 
     @staticmethod
@@ -310,67 +325,40 @@ class ContentRepository:
         return keys
 
     @staticmethod
-    def _sample_range_query(
+    def _sample_candidate_query(
         *,
-        scene_count: int,
         exclude_count: int,
         comparison: str,
     ) -> str:
         if comparison not in {">=", "<"}:
             raise ValueError("不支持的 random_key 比较符")
-        scene_placeholders = ", ".join("?" for _ in range(scene_count))
         exclude_clause = ""
         if exclude_count:
             exclude_placeholders = ", ".join("?" for _ in range(exclude_count))
             exclude_clause = f" AND q.id NOT IN ({exclude_placeholders})"
         return f"""
-            WITH selected AS (
-                SELECT q.id AS question_id, s.random_key, s.id AS sentence_id
-                FROM sentences AS s INDEXED BY idx_sentences_scene_random
-                JOIN question_variants AS q INDEXED BY idx_variants_sentence_difficulty
-                    ON q.sentence_id = s.id AND q.difficulty = ?
-                WHERE s.sub_scene_key IN ({scene_placeholders})
-                    AND s.random_key {comparison} ?
-                    {exclude_clause}
-                ORDER BY s.random_key, s.id
-                LIMIT ?
-            )
-            SELECT
-                q.id,
-                q.sentence_id,
-                s.text AS sentence_text,
-                s.translation_zh,
-                scenes.top_key AS top_scene,
-                scenes.key AS sub_scene,
-                s.source_url,
-                s.normalized_hash,
-                q.difficulty,
-                q.answer_start,
-                q.answer_end,
-                q.canonical_answer,
-                q.answer_word_count,
-                q.difficulty_score,
-                q.rationale,
-                a.alias
-            FROM selected
-            JOIN question_variants AS q ON q.id = selected.question_id
-            JOIN sentences AS s ON s.id = q.sentence_id
-            JOIN sub_scenes AS scenes ON scenes.key = s.sub_scene_key
-            LEFT JOIN aliases AS a INDEXED BY idx_aliases_question
-                ON a.question_variant_id = q.id
-            ORDER BY selected.random_key, selected.sentence_id, a.alias
+            SELECT q.id AS question_id, s.random_key, s.id AS sentence_id
+            FROM sentences AS s
+            CROSS JOIN question_variants AS q
+            WHERE s.sub_scene_key = ?
+                AND s.random_key {comparison} ?
+                AND q.sentence_id = s.id
+                AND q.difficulty = ?
+                {exclude_clause}
+            ORDER BY s.random_key, s.id
+            LIMIT ?
         """
 
     @staticmethod
-    def _sample_range_parameters(
+    def _sample_candidate_parameters(
         *,
-        difficulty: str,
-        scene_keys: tuple[str, ...],
+        scene_key: str,
         seed: int,
+        difficulty: str,
         exclude_ids: frozenset[str],
         limit: int,
     ) -> tuple[str | int, ...]:
-        return (difficulty, *scene_keys, seed, *sorted(exclude_ids), limit)
+        return (scene_key, seed, difficulty, *sorted(exclude_ids), limit)
 
     @staticmethod
     def _questions_from_joined_rows(rows: list[sqlite3.Row]) -> list[ContentQuestion]:

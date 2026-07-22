@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import listening_cloze.infrastructure.database as database_module
 from listening_cloze.infrastructure.database import (
     CURRENT_SCHEMA_VERSION,
     MIGRATIONS,
@@ -193,6 +194,27 @@ def create_hierarchical_content_database(path: Path) -> None:
         connection.executemany(
             "INSERT INTO aliases(question_variant_id, alias) VALUES (?, ?)",
             [("q1", "Sample"), ("q3", "Illustration")],
+        )
+
+
+def expand_hierarchical_scene_count(
+    path: Path,
+    *,
+    top_scene: str | None,
+    target_count: int,
+) -> None:
+    with sqlite3.connect(path) as connection:
+        where = " WHERE top_key = ?" if top_scene is not None else ""
+        parameters = (top_scene,) if top_scene is not None else ()
+        existing = connection.execute(
+            f"SELECT COUNT(*) FROM sub_scenes{where}", parameters
+        ).fetchone()[0]
+        connection.executemany(
+            "INSERT INTO sub_scenes VALUES (?, 'travel', ?, 0, ?)",
+            [
+                (f"travel_extra_{index}", f"扩展场景 {index}", 100 + index)
+                for index in range(target_count - existing)
+            ],
         )
 
 
@@ -412,15 +434,14 @@ def test_sample_query_plan_uses_scene_and_variant_indexes(
     database = tmp_path / "content-v2.db"
     create_hierarchical_content_database(database)
     repository = ContentRepository(database)
-    query = repository._sample_range_query(
-        scene_count=1,
+    query = repository._sample_candidate_query(
         exclude_count=len(exclude_ids),
         comparison=">=",
     )
-    parameters = repository._sample_range_parameters(
-        difficulty="easy",
-        scene_keys=("travel_hotel",),
+    parameters = repository._sample_candidate_parameters(
+        scene_key="travel_hotel",
         seed=450,
+        difficulty="easy",
         exclude_ids=exclude_ids,
         limit=10,
     )
@@ -430,10 +451,67 @@ def test_sample_query_plan_uses_scene_and_variant_indexes(
 
     assert any("idx_sentences_scene_random" in detail for detail in details)
     assert any("idx_variants_sentence_difficulty" in detail for detail in details)
+    assert not any("USE TEMP B-TREE" in detail for detail in details)
     assert not any(
         "SCAN q" in detail and "USING INDEX idx_variants_sentence_difficulty" not in detail
         for detail in details
     )
+
+
+@pytest.mark.parametrize(
+    ("top_scene", "scene_count"),
+    [("travel", 4), (None, 32)],
+)
+def test_sample_queries_each_scene_with_bounded_index_range_without_temp_sort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    top_scene: str | None,
+    scene_count: int,
+) -> None:
+    database = tmp_path / "content-v2.db"
+    create_hierarchical_content_database(database)
+    expand_hierarchical_scene_count(
+        database,
+        top_scene=top_scene,
+        target_count=scene_count,
+    )
+    traced_statements: list[str] = []
+    real_connect = database_module.sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        connection.set_trace_callback(traced_statements.append)
+        return connection
+
+    monkeypatch.setattr(database_module.sqlite3, "connect", traced_connect)
+
+    rows = ContentRepository(database).sample_questions(
+        top_scene=top_scene,
+        sub_scene=None,
+        difficulty="hard",
+        limit=10,
+        exclude_ids=frozenset(),
+        seed=450,
+    )
+
+    assert rows == []
+    candidate_queries = [
+        statement
+        for statement in traced_statements
+        if "SELECT q.id AS question_id" in statement and "FROM sentences AS s" in statement
+    ]
+    assert len(candidate_queries) == scene_count * 2
+    assert all("s.sub_scene_key =" in statement for statement in candidate_queries)
+    assert all("s.sub_scene_key IN" not in statement for statement in candidate_queries)
+    assert all("INDEXED BY" not in statement for statement in candidate_queries)
+
+    with real_connect(database) as connection:
+        for query in candidate_queries:
+            details = [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {query}")]
+            assert any("idx_sentences_scene_random" in detail for detail in details)
+            assert any("idx_variants_sentence_difficulty" in detail for detail in details)
+            assert not any("USE TEMP B-TREE" in detail for detail in details)
+            assert not any(detail.startswith("SCAN q") for detail in details)
 
 
 def test_new_user_database_has_current_schema_version(tmp_path: Path) -> None:
