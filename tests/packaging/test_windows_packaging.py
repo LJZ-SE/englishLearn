@@ -127,6 +127,7 @@ def test_inno_setup_builds_unsigned_installer_and_preserves_data_by_default() ->
     setup = INNO_SETUP.read_text(encoding="utf-8")
 
     assert "OutputBaseFilename=ListeningClozeSetup" in setup
+    assert "ChineseSimplified.isl" not in setup
     assert 'Source: "dist\\ListeningCloze\\*"' in setup
     assert "PrivilegesRequired=lowest" in setup
     assert "Uninstallable=yes" in setup

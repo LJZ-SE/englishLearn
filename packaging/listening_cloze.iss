@@ -24,9 +24,6 @@ Uninstallable=yes
 CloseApplications=yes
 RestartApplications=no
 
-[Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-
 [Files]
 Source: "dist\ListeningCloze\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
