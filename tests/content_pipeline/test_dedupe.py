@@ -410,3 +410,106 @@ def test_select_recomputes_from_all_classified_rows_and_is_idempotent(
 
     assert len(first) == 25
     assert second == first
+
+
+def _database_with_selected_snapshot(
+    path: Path, monkeypatch: pytest.MonkeyPatch, *, candidate_count: int
+) -> tuple[WorkDatabase, dict[int, dict[str, object]]]:
+    _single_test_scene(monkeypatch)
+    database = WorkDatabase(path)
+    database.initialize()
+    raw_by_id: dict[int, dict[str, object]] = {}
+    for row in _candidates()[:candidate_count]:
+        raw = {
+            "source_name": row.source_name,
+            "source_item_id": str(row.id),
+            "source_url": f"https://example.test/{row.id}",
+            "source_author": row.source_author,
+            "license_name": "CC BY 4.0",
+            "license_url": "https://creativecommons.org/licenses/by/4.0/",
+            "text": row.text,
+            "protected": row.protected,
+            "top_scene": row.top_scene,
+            "sub_scene": row.sub_scene,
+        }
+        item_id = database.upsert_raw(**raw)
+        raw_by_id[item_id] = raw
+        database.mark_stage(item_id, "clean", payload={})
+        database.mark_stage(item_id, "dedupe", payload={})
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={"top_scene": row.top_scene, "sub_scene": row.sub_scene},
+        )
+    _select_items(database)
+    _populate_snapshot_downstream(database)
+    return database, raw_by_id
+
+
+def _populate_snapshot_downstream(database: WorkDatabase) -> None:
+    with database.connect() as connection:
+        selected_ids = [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT item_id FROM stage_results WHERE stage = ? ORDER BY item_id", ("select",)
+            )
+        ]
+    for item_id in selected_ids:
+        database.mark_stage(item_id, "translate", payload={})
+        database.mark_stage(item_id, "variants", payload={})
+
+
+@pytest.mark.parametrize("change", ("upsert", "rejection"))
+def test_upstream_candidate_change_invalidates_entire_selection_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    database, raw_by_id = _database_with_selected_snapshot(
+        tmp_path / "work.db", monkeypatch, candidate_count=25
+    )
+    target_id = min(raw_by_id)
+    if change == "upsert":
+        database.upsert_raw(**(raw_by_id[target_id] | {"text": "A changed upstream sentence."}))
+    else:
+        database.record_rejection(target_id, "classify", "manual_rejection")
+
+    counts = database.stage_counts()
+    assert counts.get("select", 0) == 0
+    assert counts.get("translate", 0) == 0
+    assert counts.get("variants", 0) == 0
+    with pytest.raises(SceneQuotaError):
+        _select_items(database)
+    assert database.stage_counts().get("select", 0) == 0
+
+
+def test_identical_upsert_keeps_complete_selection_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, raw_by_id = _database_with_selected_snapshot(
+        tmp_path / "work.db", monkeypatch, candidate_count=25
+    )
+
+    database.upsert_raw(**raw_by_id[min(raw_by_id)])
+
+    counts = database.stage_counts()
+    assert counts["select"] == 25
+    assert counts["translate"] == 25
+    assert counts["variants"] == 25
+
+
+def test_identical_rejection_keeps_rebuilt_selection_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, raw_by_id = _database_with_selected_snapshot(
+        tmp_path / "work.db", monkeypatch, candidate_count=26
+    )
+    target_id = min(raw_by_id)
+    database.record_rejection(target_id, "classify", "manual_rejection")
+    _select_items(database)
+    _populate_snapshot_downstream(database)
+
+    database.record_rejection(target_id, "classify", "manual_rejection")
+
+    counts = database.stage_counts()
+    assert counts["select"] == 25
+    assert counts["translate"] == 25
+    assert counts["variants"] == 25

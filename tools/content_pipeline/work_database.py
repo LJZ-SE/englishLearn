@@ -133,6 +133,7 @@ class WorkDatabase:
                 if tuple(existing[1:]) != derived_input:
                     connection.execute("DELETE FROM stage_results WHERE item_id = ?", (item_id,))
                     connection.execute("DELETE FROM rejections WHERE item_id = ?", (item_id,))
+                    _invalidate_selection_snapshot(connection)
         return item_id
 
     def claim_batch(self, stage: str, limit: int) -> list[WorkItem]:
@@ -344,6 +345,13 @@ class WorkDatabase:
     def record_rejection(self, item_id: int, stage: str, reason: str) -> None:
         _previous_stage(stage)
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT stage, reason FROM rejections WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            if existing == (stage, reason):
+                return
+            _invalidate_selection_snapshot(connection)
             connection.execute(
                 """
                 INSERT INTO rejections(item_id, stage, reason, updated_at)
@@ -464,3 +472,10 @@ def _migrate_raw_scene_columns(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE raw_items ADD COLUMN top_scene TEXT")
     if "sub_scene" not in columns:
         connection.execute("ALTER TABLE raw_items ADD COLUMN sub_scene TEXT")
+
+
+def _invalidate_selection_snapshot(connection: sqlite3.Connection) -> None:
+    connection.executemany(
+        "DELETE FROM stage_results WHERE stage = ?",
+        ((stage,) for stage in ("select", "translate", "variants")),
+    )
