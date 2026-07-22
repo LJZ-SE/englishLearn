@@ -70,6 +70,41 @@ def test_sgd_maps_only_unambiguous_services_and_writes_explicit_scenes(tmp_path:
     assert all(item.source_name == "sgd" for item in items)
 
 
+def test_sgd_skips_empty_string_turns_and_keeps_valid_turns(tmp_path: Path) -> None:
+    from tools.content_pipeline.sgd_source import iter_sgd_utterances
+
+    archive_path = tmp_path / "sgd.zip"
+    _write_sgd_archive(
+        archive_path,
+        [
+            {
+                "dialogue_id": "goodbye-with-empty-system-utterance",
+                "services": ["Flights_1"],
+                "turns": [
+                    {
+                        "speaker": "SYSTEM",
+                        "utterance": " \t\n ",
+                        "frames": [{"service": "Flights_1"}],
+                    },
+                    {
+                        "speaker": "USER",
+                        "utterance": "Book a flight tomorrow.",
+                        "frames": [{"service": "Flights_1"}],
+                    },
+                ],
+            }
+        ],
+        [{"service_name": "Flights_1", "description": "Search and book flights."}],
+    )
+
+    [item] = list(iter_sgd_utterances(archive_path))
+
+    assert item.text == "Book a flight tomorrow."
+    assert item.source_item_id == (
+        "sgd:train:goodbye-with-empty-system-utterance:turn:1"
+    )
+
+
 def test_sgd_uses_schema_description_for_health_services(tmp_path: Path) -> None:
     from tools.content_pipeline.sgd_source import iter_sgd_utterances
 
