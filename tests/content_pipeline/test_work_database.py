@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from tools.content_pipeline import work_database
 from tools.content_pipeline.work_database import WorkDatabase
 
 
@@ -160,3 +162,36 @@ def test_upsert_raw_invalidates_derived_state_only_when_source_fields_change(
     assert database.upsert_raw(**(raw | changed_fields)) == item_id
     assert database.stage_counts() == {"raw": 1, "rejected": 0}
     assert [item.id for item in database.claim_batch("clean", limit=10)] == [item_id]
+
+
+def test_initialize_rolls_back_every_schema_change_when_ddl_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "work.db"
+    monkeypatch.setattr(
+        work_database,
+        "_schema_statements",
+        lambda: ("CREATE TABLE rollback_probe(id INTEGER PRIMARY KEY)", "INVALID SQL"),
+        raising=False,
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        WorkDatabase(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rollback_probe'"
+        ).fetchall()
+    assert tables == []
+
+
+def test_mark_stage_rejects_items_already_rejected_at_any_stage(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.record_rejection(item_id, "clean", "sensitive")
+
+    with pytest.raises(ValueError, match="已拒绝"):
+        database.mark_stage(item_id, "clean", payload={"clean_text": "Unexpected result"})
+
+    assert database.stage_counts() == {"raw": 1, "rejected": 1}

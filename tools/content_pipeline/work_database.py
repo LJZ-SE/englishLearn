@@ -41,48 +41,9 @@ class WorkDatabase:
 
     def initialize(self) -> None:
         with self.connect() as connection:
-            connection.executescript(
-                """
-                PRAGMA foreign_keys = ON;
-                CREATE TABLE IF NOT EXISTS raw_items(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_name TEXT NOT NULL,
-                    source_item_id TEXT NOT NULL,
-                    source_url TEXT NOT NULL,
-                    source_author TEXT NOT NULL,
-                    license_name TEXT NOT NULL,
-                    license_url TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    protected INTEGER NOT NULL DEFAULT 0 CHECK(protected IN (0, 1)),
-                    created_at TEXT NOT NULL,
-                    UNIQUE(source_name, source_item_id)
-                );
-                CREATE TABLE IF NOT EXISTS stage_results(
-                    item_id INTEGER NOT NULL REFERENCES raw_items(id),
-                    stage TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    model_version TEXT NOT NULL DEFAULT '',
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY(item_id, stage)
-                );
-                CREATE TABLE IF NOT EXISTS rejections(
-                    item_id INTEGER PRIMARY KEY REFERENCES raw_items(id),
-                    stage TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS build_runs(
-                    id TEXT PRIMARY KEY,
-                    command TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('running','passed','failed')),
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT NOT NULL DEFAULT '',
-                    detail_json TEXT NOT NULL DEFAULT '{}'
-                );
-                CREATE INDEX IF NOT EXISTS idx_stage_results_stage ON stage_results(stage, item_id);
-                CREATE INDEX IF NOT EXISTS idx_rejections_stage ON rejections(stage, item_id);
-                """
-            )
+            connection.execute("BEGIN")
+            for statement in _schema_statements():
+                connection.execute(statement)
 
     def upsert_raw(
         self,
@@ -97,6 +58,7 @@ class WorkDatabase:
         protected: bool = False,
     ) -> int:
         with self.connect() as connection:
+            connection.execute("BEGIN")
             existing = connection.execute(
                 """
                 SELECT id, source_url, source_author, license_name, license_url, text, protected
@@ -213,6 +175,12 @@ class WorkDatabase:
     ) -> None:
         previous_stage = _previous_stage(stage)
         with self.connect() as connection:
+            connection.execute("BEGIN")
+            rejection = connection.execute(
+                "SELECT 1 FROM rejections WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            if rejection is not None:
+                raise ValueError(f"条目 {item_id} 已拒绝，不能写入阶段结果")
             if previous_stage is not None:
                 predecessor = connection.execute(
                     "SELECT 1 FROM stage_results WHERE item_id = ? AND stage = ?",
@@ -266,6 +234,56 @@ def _previous_stage(stage: str) -> str | None:
         return STAGE_PREDECESSORS[stage]
     except KeyError as error:
         raise ValueError(f"不支持的处理阶段: {stage}") from error
+
+
+def _schema_statements() -> tuple[str, ...]:
+    return (
+        """
+        CREATE TABLE IF NOT EXISTS raw_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_name TEXT NOT NULL,
+            source_item_id TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_author TEXT NOT NULL,
+            license_name TEXT NOT NULL,
+            license_url TEXT NOT NULL,
+            text TEXT NOT NULL,
+            protected INTEGER NOT NULL DEFAULT 0 CHECK(protected IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE(source_name, source_item_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS stage_results(
+            item_id INTEGER NOT NULL REFERENCES raw_items(id),
+            stage TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            model_version TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(item_id, stage)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS rejections(
+            item_id INTEGER PRIMARY KEY REFERENCES raw_items(id),
+            stage TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS build_runs(
+            id TEXT PRIMARY KEY,
+            command TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('running','passed','failed')),
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL DEFAULT '',
+            detail_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_stage_results_stage ON stage_results(stage, item_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rejections_stage ON rejections(stage, item_id)",
+    )
 
 
 def _now() -> str:
