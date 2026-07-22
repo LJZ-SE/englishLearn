@@ -3,6 +3,7 @@
     "key": "tatoeba-eng",
     "kind": "tatoeba",
     "url": "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences_detailed.tsv.bz2",
+    "max_items": 150000,
     "license_name": "CC BY 2.0 FR",
     "license_url": "https://creativecommons.org/licenses/by/2.0/fr/"
   },

@@ -12,6 +12,11 @@ from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.dedupe import NearDuplicateIndex, simhash64
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.models import CollectedSentence
+from tools.content_pipeline.production_sources import (
+    import_all_sources,
+    import_legacy_database,
+    report_sources,
+)
 from tools.content_pipeline.selection import select_scene_quotas
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.translation import (
@@ -42,6 +47,17 @@ def main() -> None:
     for command in ("init", "status"):
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument("work_db", type=Path)
+    import_all_parser = subparsers.add_parser("import-all")
+    import_all_parser.add_argument("work_db", type=Path)
+    import_all_parser.add_argument("--manifest", type=Path, required=True)
+    import_all_parser.add_argument("--lock", type=Path, required=True)
+    import_legacy_parser = subparsers.add_parser("import-legacy")
+    import_legacy_parser.add_argument("legacy_db", type=Path)
+    import_legacy_parser.add_argument("work_db", type=Path)
+    import_legacy_parser.add_argument("--protected", action="store_true")
+    report_parser = subparsers.add_parser("report-sources")
+    report_parser.add_argument("work_db", type=Path)
+    report_parser.add_argument("--output", type=Path, required=True)
     _add_import_parser(subparsers, "import-tatoeba", "path")
     convokit_parser = _add_import_parser(subparsers, "import-convokit", "path")
     convokit_parser.add_argument("source_name", choices=("cornell-movie-dialogs", "switchboard"))
@@ -75,7 +91,32 @@ def main() -> None:
         print(json.dumps(database.stage_counts(), ensure_ascii=False))
         return
     database.initialize()
-    if arguments.command == "import-tatoeba":
+    if arguments.command == "import-all":
+        source_counts = import_all_sources(
+            database,
+            arguments.manifest,
+            arguments.lock,
+        )
+        print(
+            json.dumps(
+                {
+                    "source_kinds": len(source_counts),
+                    "source_counts": source_counts,
+                    **database.stage_counts(),
+                },
+                ensure_ascii=False,
+            )
+        )
+    elif arguments.command == "import-legacy":
+        count = import_legacy_database(
+            arguments.legacy_db,
+            database,
+            protected=arguments.protected,
+        )
+        print(json.dumps({"legacy_sentences": count}, ensure_ascii=False))
+    elif arguments.command == "report-sources":
+        print(json.dumps(report_sources(database, arguments.output), ensure_ascii=False))
+    elif arguments.command == "import-tatoeba":
         _import_items(database, iter_tatoeba_detailed(arguments.path))
     elif arguments.command == "import-convokit":
         _import_items(database, iter_convokit_utterances(arguments.path, arguments.source_name))
