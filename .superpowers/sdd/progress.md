@@ -23,7 +23,7 @@ Task App Integration 4: complete (commits fbf6d3b..3108ada, review clean after t
 Task App Integration 5: complete (commits 3108ada..6055de5, review clean after one fix loop; controller verification 274 non-Qt plus 13 Qt-serial passed, Ruff and diff checks clean).
 Task App Integration 6: complete (commits 6055de5..2f39c83, review clean; controller verification performance sample median 1.49 ms/get median 0.23 ms, 276 non-Qt plus 13 Qt-serial passed, Ruff and diff checks clean).
 Task Production 1: complete (commits 2f39c83..8c31a76, review clean after five fix loops; controller verification 140 content tests passed, source lock verified, raw 641445/Wikinews 2590/provenance missing 0, Ruff and diff checks clean).
-Task Production 2: fix checkpoint committed, still awaiting source expansion + independent review (strict dry-run selected 28255/30000, shortage 1745 across 10 scenes; stale 30000-row snapshot is not releasable; llm_required 0; 185 content tests passed, Ruff, uv lock, and diff checks clean).
+Task Production 2: second strict-fix checkpoint ready, still incomplete and awaiting safe single-word whitelist analysis, source expansion, exact selection, and independent review (six second-review findings fixed; v12 real DB dry-run selected 10989/30000, shortage 19011; protected 300/300; selected snapshot remains 0; methods keyword 7420/context_keywords 5073/candidate_source 2130/llm_repair 1104/llm_rejected 2898/out_of_candidate_pool 229029; all 7420 keyword rows satisfy phrase-or-two-concept gate; focused 70 tests and sibling-excluded 230 content tests passed; Ruff and diff checks clean; full suite has 2 known sibling provenance-fixture failures).
 
 Minor findings carried forward:
 

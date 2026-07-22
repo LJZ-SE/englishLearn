@@ -100,7 +100,7 @@ def main() -> None:
     select_parser.add_argument("--exact-quotas", action="store_true")
     recall_parser = subparsers.add_parser("recall-classification")
     recall_parser.add_argument("work_db", type=Path)
-    recall_parser.add_argument("--sub-scene", required=True)
+    recall_parser.add_argument("--sub-scene", choices=tuple(SUB_SCENES), required=True)
     recall_parser.add_argument("--prototypes", type=Path, required=True)
     recall_parser.add_argument("--model-path", type=Path, required=True)
     recall_parser.add_argument("--model-name", default="sentence-transformers/all-MiniLM-L6-v2")
@@ -110,7 +110,7 @@ def main() -> None:
     recall_parser.add_argument("--output", type=Path, required=True)
     recall_parser.add_argument("--checkpoint", type=Path, required=True)
     recall_parser.add_argument("--exclude", type=Path, nargs="*", default=[])
-    recall_parser.add_argument("--top-k", type=_positive_int, required=True)
+    recall_parser.add_argument("--top-k", type=_recall_top_k, required=True)
     recall_parser.add_argument("--batch-size", type=_positive_int, default=512)
     recalls_parser = subparsers.add_parser("recall-classifications")
     recalls_parser.add_argument("work_db", type=Path)
@@ -315,6 +315,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _recall_top_k(value: str) -> int:
+    parsed = int(value)
+    if not 1 <= parsed <= 500:
+        raise argparse.ArgumentTypeError("必须是 1 到 500 之间的整数")
+    return parsed
+
+
 def _load_recall_prototypes(path: Path, sub_scene: str) -> tuple[str, ...]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -363,7 +370,11 @@ def _load_recall_scenes(path: Path) -> tuple[RecallScene, ...]:
             or any(not isinstance(text, str) or not text.strip() for text in prototypes)
         ):
             raise ValueError(f"多场景语义召回 scenes[{index}] prototypes 非法")
-        if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 1:
+        if (
+            not isinstance(top_k, int)
+            or isinstance(top_k, bool)
+            or not 1 <= top_k <= 500
+        ):
             raise ValueError(f"多场景语义召回 scenes[{index}] top_k 非法")
         scenes.append(
             RecallScene(
@@ -509,7 +520,7 @@ def _classify_items(
         "llm_required": 0,
         "out_of_candidate_pool": 0,
     }
-    model_version = "scene-candidate-v11"
+    model_version = "scene-candidate-v12"
     while batch := database.claim_stage_batch(
         "classify", limit=limit, stale_model_version=model_version
     ):

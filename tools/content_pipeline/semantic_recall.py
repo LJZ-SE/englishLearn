@@ -12,7 +12,10 @@ from typing import Protocol
 import numpy as np
 
 from tools.content_pipeline.scenes import SUB_SCENES
-from tools.content_pipeline.selection import select_scene_partial
+from tools.content_pipeline.selection import (
+    select_scene_partial,
+    select_with_remaining_capacity,
+)
 from tools.content_pipeline.work_database import WorkDatabase
 
 
@@ -43,6 +46,16 @@ class _RecallSelectionRow:
 
 
 @dataclass(frozen=True, slots=True)
+class _RecallRankedRow:
+    id: int
+    text: str
+    source_name: str
+    source_author: str
+    confidence: float
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class SelectionCapacity:
     source_limit: int
     author_limit: int
@@ -62,6 +75,21 @@ class SelectionCapacity:
             "source_counts": dict(sorted(self.source_counts.items())),
             "author_counts": dict(sorted(self.author_counts.items())),
         }
+
+    def select(
+        self,
+        rows: list[_RecallRankedRow],
+        *,
+        needed: int,
+    ) -> list[_RecallRankedRow]:
+        return select_with_remaining_capacity(
+            rows,
+            needed=needed,
+            source_limit=self.source_limit,
+            author_limit=self.author_limit,
+            source_counts=self.source_counts,
+            author_counts=self.author_counts,
+        )
 
 
 class Embedder(Protocol):
@@ -115,25 +143,36 @@ def run_semantic_recall(
     top_k: int,
     batch_size: int,
 ) -> dict[str, int | bool]:
+    if sub_scene not in SUB_SCENES:
+        raise ValueError(f"未知场景: {sub_scene}")
     if not prototypes:
         raise ValueError("语义召回至少需要一条原型句")
-    if top_k < 1 or batch_size < 1:
-        raise ValueError("top_k 与 batch_size 必须大于 0")
+    if not 1 <= top_k <= 500:
+        raise ValueError("top_k 必须在 1 到 500 之间")
+    if batch_size < 1:
+        raise ValueError("batch_size 必须大于 0")
     capacity = selection_capacity(database, sub_scene)
-    fingerprint = _fingerprint(
+    config_fingerprint = _fingerprint(
         sub_scene=sub_scene,
         prototypes=prototypes,
         metadata=embedder.metadata,
         exclude_ids=exclude_ids,
         top_k=top_k,
         batch_size=batch_size,
-        capacity=capacity,
     )
-    state = _load_checkpoint(checkpoint_path, fingerprint)
+    candidate_pool = database.recall_candidate_pool_fingerprint()
+    fingerprint = _execution_fingerprint(
+        config_fingerprint,
+        capacities={sub_scene: capacity},
+        candidate_pool=candidate_pool,
+    )
+    state = _load_checkpoint(checkpoint_path, fingerprint, config_fingerprint)
     resumed = state is not None
     if state is None:
         state = {
             "fingerprint": fingerprint,
+            "config_fingerprint": config_fingerprint,
+            "candidate_pool": candidate_pool,
             "model": asdict(embedder.metadata),
             "sub_scene": sub_scene,
             "last_item_id": 0,
@@ -195,7 +234,8 @@ def run_semantic_recall(
                             "suggested_scene": sub_scene,
                         },
                     )
-                    if len(heap) < top_k:
+                    reservoir_size = top_k * 16
+                    if len(heap) < reservoir_size:
                         heapq.heappush(heap, entry)
                     elif entry[:2] > heap[0][:2]:
                         heapq.heapreplace(heap, entry)
@@ -209,7 +249,21 @@ def run_semantic_recall(
             )
             _write_json_atomic(checkpoint_path, state)
 
-    ranked = [entry[2] for entry in sorted(heap, key=lambda entry: (-entry[0], -entry[1]))]
+    ranked = _rank_with_capacity(heap, capacity, top_k)
+    reservoir_size = top_k * 16
+    while len(ranked) < top_k and reservoir_size < processed:
+        reservoir_size = min(reservoir_size * 2, processed)
+        heap = _rescan_single_reservoir(
+            database,
+            sub_scene=sub_scene,
+            prototype_vectors=prototype_vectors,
+            embedder=embedder,
+            exclude_ids=exclude_ids,
+            capacity=capacity,
+            batch_size=batch_size,
+            reservoir_size=reservoir_size,
+        )
+        ranked = _rank_with_capacity(heap, capacity, top_k)
     _write_jsonl_atomic(output_path, ranked)
     state.update({"heap": ranked, "completed": True})
     _write_json_atomic(checkpoint_path, state)
@@ -231,18 +285,25 @@ def run_semantic_recall_many(
     capacities = {
         scene.sub_scene: selection_capacity(database, scene.sub_scene) for scene in scenes
     }
-    fingerprint = _fingerprint_many(
+    config_fingerprint = _fingerprint_many(
         scenes=scenes,
         metadata=embedder.metadata,
         exclude_ids=exclude_ids,
         batch_size=batch_size,
-        capacities=capacities,
     )
-    state = _load_checkpoint(checkpoint_path, fingerprint)
+    candidate_pool = database.recall_candidate_pool_fingerprint()
+    fingerprint = _execution_fingerprint(
+        config_fingerprint,
+        capacities=capacities,
+        candidate_pool=candidate_pool,
+    )
+    state = _load_checkpoint(checkpoint_path, fingerprint, config_fingerprint)
     resumed = state is not None
     if state is None:
         state = {
             "fingerprint": fingerprint,
+            "config_fingerprint": config_fingerprint,
+            "candidate_pool": candidate_pool,
             "model": asdict(embedder.metadata),
             "scenes": [asdict(scene) for scene in scenes],
             "last_item_id": 0,
@@ -335,7 +396,8 @@ def run_semantic_recall_many(
                                 "suggested_scene": scene.sub_scene,
                             },
                         )
-                        if len(heap) < scene.top_k:
+                        reservoir_size = scene.top_k * 16
+                        if len(heap) < reservoir_size:
                             heapq.heappush(heap, entry)
                         elif entry[:2] > heap[0][:2]:
                             heapq.heapreplace(heap, entry)
@@ -353,11 +415,39 @@ def run_semantic_recall_many(
             _write_json_atomic(checkpoint_path, state)
 
     ranked = {
-        sub_scene: [
-            entry[2] for entry in sorted(heap, key=lambda entry: (-entry[0], -entry[1]))
-        ]
-        for sub_scene, heap in heaps.items()
+        scene.sub_scene: _rank_with_capacity(
+            heaps[scene.sub_scene], capacities[scene.sub_scene], scene.top_k
+        )
+        for scene in scenes
     }
+    reservoir_sizes = {scene.sub_scene: scene.top_k * 16 for scene in scenes}
+    scene_map = {scene.sub_scene: scene for scene in scenes}
+    while deficient := tuple(
+        sub_scene
+        for sub_scene, rows in ranked.items()
+        if len(rows) < scene_map[sub_scene].top_k
+        and reservoir_sizes[sub_scene] < processed
+    ):
+        for sub_scene in deficient:
+            reservoir_sizes[sub_scene] = min(
+                reservoir_sizes[sub_scene] * 2,
+                processed,
+            )
+        rescanned = _rescan_many_reservoirs(
+            database,
+            scenes=tuple(scene_map[sub_scene] for sub_scene in deficient),
+            prototype_vectors=prototype_vectors,
+            embedder=embedder,
+            exclude_ids=exclude_ids,
+            capacities=capacities,
+            batch_size=batch_size,
+            reservoir_sizes=reservoir_sizes,
+        )
+        for sub_scene in deficient:
+            heaps[sub_scene] = rescanned[sub_scene]
+            ranked[sub_scene] = _rank_with_capacity(
+                heaps[sub_scene], capacities[sub_scene], scene_map[sub_scene].top_k
+            )
     for sub_scene, rows in ranked.items():
         _write_jsonl_atomic(output_paths[sub_scene], rows)
     state.update({"heaps": ranked, "completed": True})
@@ -411,8 +501,8 @@ def _validate_recall_scenes(scenes: tuple[RecallScene, ...], batch_size: int) ->
             raise ValueError(f"未知场景: {scene.sub_scene}")
         if not scene.prototypes:
             raise ValueError(f"{scene.sub_scene} 至少需要一条原型句")
-        if scene.top_k < 1:
-            raise ValueError(f"{scene.sub_scene} top_k 必须大于 0")
+        if not 1 <= scene.top_k <= 500:
+            raise ValueError(f"{scene.sub_scene} top_k 必须在 1 到 500 之间")
 
 
 def _checkpoint_heap(heaps: dict[object, object], sub_scene: str) -> list[object]:
@@ -436,7 +526,6 @@ def _fingerprint(
     exclude_ids: set[int],
     top_k: int,
     batch_size: int,
-    capacity: SelectionCapacity,
 ) -> str:
     payload = json.dumps(
         {
@@ -446,7 +535,6 @@ def _fingerprint(
             "exclude_ids": sorted(exclude_ids),
             "top_k": top_k,
             "batch_size": batch_size,
-            "capacity": capacity.fingerprint_payload(),
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -461,7 +549,6 @@ def _fingerprint_many(
     metadata: ModelMetadata,
     exclude_ids: set[int],
     batch_size: int,
-    capacities: dict[str, SelectionCapacity],
 ) -> str:
     payload = json.dumps(
         {
@@ -469,10 +556,6 @@ def _fingerprint_many(
             "model": asdict(metadata),
             "exclude_ids": sorted(exclude_ids),
             "batch_size": batch_size,
-            "capacities": {
-                key: capacity.fingerprint_payload()
-                for key, capacity in sorted(capacities.items())
-            },
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -481,16 +564,44 @@ def _fingerprint_many(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def _load_checkpoint(path: Path, fingerprint: str) -> dict[str, object] | None:
+def _execution_fingerprint(
+    config_fingerprint: str,
+    *,
+    capacities: dict[str, SelectionCapacity],
+    candidate_pool: dict[str, int | str],
+) -> str:
+    payload = json.dumps(
+        {
+            "config_fingerprint": config_fingerprint,
+            "capacities": {
+                key: capacity.fingerprint_payload()
+                for key, capacity in sorted(capacities.items())
+            },
+            "candidate_pool": candidate_pool,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _load_checkpoint(
+    path: Path, fingerprint: str, config_fingerprint: str
+) -> dict[str, object] | None:
     if not path.exists():
         return None
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"无法读取语义召回 checkpoint: {error}") from error
-    if not isinstance(state, dict) or state.get("fingerprint") != fingerprint:
-        raise ValueError("语义召回 checkpoint 与当前模型或参数不匹配")
-    return state
+    if not isinstance(state, dict):
+        raise ValueError("语义召回 checkpoint 格式非法")
+    if state.get("fingerprint") == fingerprint:
+        return state
+    if state.get("config_fingerprint") == config_fingerprint:
+        return None
+    raise ValueError("语义召回 checkpoint 与当前模型或参数不匹配")
 
 
 def _heap_entry(row: object) -> tuple[float, int, dict[str, object]]:
@@ -504,6 +615,157 @@ def _checkpoint_rows(
     heap: list[tuple[float, int, dict[str, object]]],
 ) -> list[dict[str, object]]:
     return [entry[2] for entry in heap]
+
+
+def _rank_with_capacity(
+    heap: list[tuple[float, int, dict[str, object]]],
+    capacity: SelectionCapacity,
+    top_k: int,
+) -> list[dict[str, object]]:
+    candidates = [
+        _RecallRankedRow(
+            id=int(payload["item_id"]),
+            text=str(payload["text"]),
+            source_name=str(payload["source_name"]),
+            source_author=str(payload["source_author"]),
+            confidence=float(payload["similarity"]),
+            payload=payload,
+        )
+        for _, _, payload in heap
+    ]
+    selected = capacity.select(candidates, needed=top_k)
+    selected.sort(key=lambda row: (-row.confidence, row.id))
+    return [row.payload for row in selected]
+
+
+def _rescan_single_reservoir(
+    database: WorkDatabase,
+    *,
+    sub_scene: str,
+    prototype_vectors: np.ndarray,
+    embedder: Embedder,
+    exclude_ids: set[int],
+    capacity: SelectionCapacity,
+    batch_size: int,
+    reservoir_size: int,
+) -> list[tuple[float, int, dict[str, object]]]:
+    heap: list[tuple[float, int, dict[str, object]]] = []
+    with database.connect() as connection:
+        cursor = connection.execute(_RECALL_CANDIDATE_QUERY)
+        while raw_rows := cursor.fetchmany(batch_size):
+            rows = [
+                row
+                for row in raw_rows
+                if int(row[0]) not in exclude_ids
+                and capacity.allows(str(row[2]), str(row[3]))
+            ]
+            if not rows:
+                continue
+            vectors = _normalize(embedder.encode([str(row[1]) for row in rows]))
+            similarities = np.max(vectors @ prototype_vectors.T, axis=1)
+            for similarity, row in zip(similarities, rows, strict=True):
+                _push_semantic_candidate(
+                    heap,
+                    item_id=int(row[0]),
+                    text=str(row[1]),
+                    source_name=str(row[2]),
+                    source_author=str(row[3]),
+                    similarity=float(similarity),
+                    sub_scene=sub_scene,
+                    reservoir_size=reservoir_size,
+                )
+    return heap
+
+
+def _rescan_many_reservoirs(
+    database: WorkDatabase,
+    *,
+    scenes: tuple[RecallScene, ...],
+    prototype_vectors: dict[str, np.ndarray],
+    embedder: Embedder,
+    exclude_ids: set[int],
+    capacities: dict[str, SelectionCapacity],
+    batch_size: int,
+    reservoir_sizes: dict[str, int],
+) -> dict[str, list[tuple[float, int, dict[str, object]]]]:
+    heaps: dict[str, list[tuple[float, int, dict[str, object]]]] = {
+        scene.sub_scene: [] for scene in scenes
+    }
+    with database.connect() as connection:
+        cursor = connection.execute(_RECALL_CANDIDATE_QUERY)
+        while raw_rows := cursor.fetchmany(batch_size):
+            rows = [row for row in raw_rows if int(row[0]) not in exclude_ids]
+            if not rows:
+                continue
+            vectors = _normalize(embedder.encode([str(row[1]) for row in rows]))
+            for scene in scenes:
+                allowed_indexes = [
+                    index
+                    for index, row in enumerate(rows)
+                    if capacities[scene.sub_scene].allows(str(row[2]), str(row[3]))
+                ]
+                if not allowed_indexes:
+                    continue
+                similarities = np.max(
+                    vectors[allowed_indexes] @ prototype_vectors[scene.sub_scene].T,
+                    axis=1,
+                )
+                for similarity, index in zip(similarities, allowed_indexes, strict=True):
+                    row = rows[index]
+                    _push_semantic_candidate(
+                        heaps[scene.sub_scene],
+                        item_id=int(row[0]),
+                        text=str(row[1]),
+                        source_name=str(row[2]),
+                        source_author=str(row[3]),
+                        similarity=float(similarity),
+                        sub_scene=scene.sub_scene,
+                        reservoir_size=reservoir_sizes[scene.sub_scene],
+                    )
+    return heaps
+
+
+def _push_semantic_candidate(
+    heap: list[tuple[float, int, dict[str, object]]],
+    *,
+    item_id: int,
+    text: str,
+    source_name: str,
+    source_author: str,
+    similarity: float,
+    sub_scene: str,
+    reservoir_size: int,
+) -> None:
+    entry = (
+        similarity,
+        -item_id,
+        {
+            "item_id": item_id,
+            "text": text,
+            "source_name": source_name,
+            "source_author": source_author,
+            "similarity": similarity,
+            "suggested_scene": sub_scene,
+        },
+    )
+    if len(heap) < reservoir_size:
+        heapq.heappush(heap, entry)
+    elif entry[:2] > heap[0][:2]:
+        heapq.heapreplace(heap, entry)
+
+
+_RECALL_CANDIDATE_QUERY = """
+    SELECT r.id, r.text, r.source_name, r.source_author
+    FROM stage_results AS classified
+    JOIN raw_items AS r ON r.id=classified.item_id
+    LEFT JOIN rejections AS rejected ON rejected.item_id=r.id
+    WHERE classified.stage='classify'
+      AND json_extract(
+            classified.payload_json, '$.method'
+          )='out_of_candidate_pool'
+      AND rejected.item_id IS NULL
+    ORDER BY r.id
+"""
 
 
 def _write_json_atomic(path: Path, payload: object) -> None:

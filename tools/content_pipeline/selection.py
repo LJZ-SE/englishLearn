@@ -74,6 +74,26 @@ def select_scene_partial[RowT](scene: SceneDefinition, rows: Iterable[RowT]) -> 
     return selected
 
 
+def select_with_remaining_capacity[RowT](
+    rows: Iterable[RowT],
+    *,
+    needed: int,
+    source_limit: int,
+    author_limit: int,
+    source_counts: Counter[str],
+    author_counts: Counter[str],
+) -> list[RowT]:
+    """在现有来源与作者占用基础上选择最大质量的新增可行集合。"""
+    return _select_regular_rows(
+        list(rows),
+        needed=needed,
+        source_limit=source_limit,
+        author_limit=author_limit,
+        source_counts=source_counts.copy(),
+        author_counts=author_counts.copy(),
+    )
+
+
 def _select_scene[RowT](
     scene: SceneDefinition, scene_rows: list[RowT]
 ) -> tuple[list[RowT], list[str]]:

@@ -87,8 +87,16 @@ _KEYWORDS = {
 }
 
 
+def _canonical_word(word: str) -> str:
+    if word.endswith("ies") and len(word) > 4:
+        return f"{word[:-3]}y"
+    if word.endswith("s") and len(word) > 3:
+        return word[:-1]
+    return word
+
+
 def _scene_words(value: str) -> frozenset[str]:
-    return frozenset(value.split())
+    return frozenset(_canonical_word(word) for word in value.split())
 
 
 _SCENE_KEYWORDS = {
@@ -516,10 +524,10 @@ class SceneClassifier:
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         keywords, phrases = self.strong_signals(sub_scene)
         words = _normalized_words(text)
-        normalized = text.casefold().replace("-", " ")
+        tokens = _normalized_tokens(text)
         return (
             tuple(sorted(words.intersection(keywords))),
-            tuple(phrase for phrase in phrases if phrase in normalized),
+            tuple(phrase for phrase in phrases if _phrase_present(tokens, phrase)),
         )
 
     def scene_scores(self, text: str) -> dict[str, float]:
@@ -528,9 +536,11 @@ class SceneClassifier:
             scene_key: 2.0 * len(words.intersection(keywords))
             for scene_key, keywords in _SCENE_STRONG_KEYWORDS.items()
         }
-        normalized = text.casefold().replace("-", " ")
+        tokens = _normalized_tokens(text)
         for scene_key, phrases in _SCENE_PHRASES.items():
-            scores[scene_key] += 2.0 * sum(phrase in normalized for phrase in phrases)
+            scores[scene_key] += 2.0 * sum(
+                _phrase_present(tokens, phrase) for phrase in phrases
+            )
         return scores
 
     def classify(
@@ -556,12 +566,21 @@ class SceneClassifier:
             )
 
         scores = self.scene_scores(text)
+        evidence = {
+            scene_key: self.strong_signal_evidence(text, scene_key)
+            for scene_key in SUB_SCENES
+        }
+        qualified = {
+            scene_key
+            for scene_key, (keywords, phrases) in evidence.items()
+            if phrases or len(keywords) >= 2
+        }
         ordered = sorted(scores, key=lambda key: (-scores[key], key))
         best, runner_up = ordered[:2]
         best_score = scores[best]
         margin = best_score - scores[runner_up]
         confidence = min(1.0, (best_score + margin) / 6.0)
-        if best_score < 2.0 or margin < 0.75:
+        if best not in qualified or best_score < 2.0 or margin < 0.75:
             return SceneClassification(None, None, confidence, "llm_required")
         scene = SUB_SCENES[best]
         return SceneClassification(scene.top_key, scene.key, confidence, "keyword")
@@ -613,14 +632,17 @@ class SceneClassifier:
 
 
 def _normalized_words(text: str) -> set[str]:
-    raw_words = set(re.findall(r"[a-z]+", text.casefold()))
-    words = set(raw_words)
-    for word in raw_words:
-        if word.endswith("ies") and len(word) > 4:
-            words.add(f"{word[:-3]}y")
-        elif word.endswith("s") and len(word) > 3:
-            words.add(word[:-1])
-    return words
+    return set(_normalized_tokens(text))
+
+
+def _normalized_tokens(text: str) -> tuple[str, ...]:
+    return tuple(_canonical_word(word) for word in re.findall(r"[a-z]+", text.casefold()))
+
+
+def _phrase_present(tokens: tuple[str, ...], phrase: str) -> bool:
+    phrase_tokens = tuple(_canonical_word(word) for word in phrase.split())
+    width = len(phrase_tokens)
+    return any(tokens[index : index + width] == phrase_tokens for index in range(len(tokens)))
 
 
 class CategoryClassifier:

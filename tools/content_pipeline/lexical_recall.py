@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-import heapq
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from tools.content_pipeline.categorize import SceneClassifier
 from tools.content_pipeline.semantic_recall import selection_capacity
 from tools.content_pipeline.work_database import WorkDatabase
+
+
+@dataclass(frozen=True, slots=True)
+class _LexicalRankedRow:
+    id: int
+    text: str
+    source_name: str
+    source_author: str
+    confidence: float
+    payload: dict[str, object]
 
 
 def run_lexical_conflict_recall(
@@ -37,7 +47,7 @@ def run_lexical_conflict_recall(
         raise ValueError("lexical conflict recall 至少需要一个注册强信号")
 
     capacity = selection_capacity(database, sub_scene)
-    heap: list[tuple[int, float, float, int, dict[str, object]]] = []
+    matches: list[tuple[int, float, float, int, dict[str, object]]] = []
     matched = 0
     with database.connect() as connection:
         rows = connection.execute(
@@ -94,19 +104,34 @@ def run_lexical_conflict_recall(
                 "competing_scene": competing_scene,
                 "competing_score": competing_score,
             }
-            entry = (
-                int(bool(trigger_phrases)),
-                target_score,
-                -competing_score,
-                -item_id,
-                payload,
+            matches.append(
+                (
+                    int(bool(trigger_phrases)),
+                    target_score,
+                    -competing_score,
+                    -item_id,
+                    payload,
+                )
             )
-            if len(heap) < top_k:
-                heapq.heappush(heap, entry)
-            elif entry[:4] > heap[0][:4]:
-                heapq.heapreplace(heap, entry)
 
-    ranked = [entry[4] for entry in sorted(heap, key=lambda entry: entry[:4], reverse=True)]
+    candidates = [
+        _LexicalRankedRow(
+            id=int(payload["item_id"]),
+            text=str(payload["text"]),
+            source_name=str(payload["source_name"]),
+            source_author=str(payload["source_author"]),
+            confidence=(
+                (0.75 if has_phrase else 0.25)
+                + min(target_score, 100.0) / 1_000.0
+                - min(-negative_competing_score, 100.0) / 100_000.0
+            ),
+            payload=payload,
+        )
+        for has_phrase, target_score, negative_competing_score, _, payload in matches
+    ]
+    selected = capacity.select(candidates, needed=top_k)
+    selected.sort(key=lambda row: (-row.confidence, row.id))
+    ranked = [row.payload for row in selected]
     _write_jsonl_atomic(output_path, ranked)
     return {"matched": matched, "selected": len(ranked)}
 

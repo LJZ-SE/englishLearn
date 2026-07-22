@@ -78,6 +78,7 @@ class WorkDatabase:
                 connection.execute(statement)
             _migrate_raw_scene_columns(connection)
             _migrate_translation_generation(connection)
+            _migrate_classification_rejections(connection)
 
     def upsert_raw(
         self,
@@ -571,6 +572,42 @@ class WorkDatabase:
             ).fetchall()
         return {str(method): int(count) for method, count in rows}
 
+    def recall_candidate_pool_fingerprint(self) -> dict[str, int | str]:
+        """返回覆盖候选成员及召回输入内容的稳定版本指纹。"""
+        digest = hashlib.sha256()
+        eligible_count = 0
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT classified.item_id, r.text, r.source_name, r.source_author,
+                       classified.payload_json, classified.model_version,
+                       classified.updated_at
+                FROM stage_results AS classified
+                JOIN raw_items AS r ON r.id=classified.item_id
+                LEFT JOIN rejections AS rejected ON rejected.item_id=classified.item_id
+                WHERE classified.stage='classify'
+                  AND json_extract(
+                        classified.payload_json, '$.method'
+                      )='out_of_candidate_pool'
+                  AND rejected.item_id IS NULL
+                ORDER BY classified.item_id
+                """
+            )
+            for row in rows:
+                eligible_count += 1
+                digest.update(
+                    json.dumps(
+                        tuple(row),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
+                digest.update(b"\n")
+        return {
+            "eligible_count": eligible_count,
+            "pool_version": digest.hexdigest(),
+        }
+
     def rejection_reason_counts(self, stage: str) -> dict[str, int]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -648,7 +685,7 @@ class WorkDatabase:
                                 "method": (
                                     "llm_repair"
                                     if sub_scene is not None
-                                    else "out_of_candidate_pool"
+                                    else "llm_rejected"
                                 ),
                                 "reason": reason,
                             }
@@ -1379,6 +1416,19 @@ def _migrate_translation_generation(connection: sqlite3.Connection) -> None:
         WHERE selection_generation = ''
         """,
         (generation,),
+    )
+
+
+def _migrate_classification_rejections(connection: sqlite3.Connection) -> None:
+    """把旧版 LLM 明确拒绝与尚未审核的候选池状态永久区分。"""
+    connection.execute(
+        """
+        UPDATE stage_results
+        SET payload_json=json_set(payload_json, '$.method', 'llm_rejected')
+        WHERE stage='classify'
+          AND model_version='llm-repair'
+          AND json_extract(payload_json, '$.method')='out_of_candidate_pool'
+        """
     )
 
 

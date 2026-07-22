@@ -251,7 +251,37 @@ def test_classification_import_atomically_records_explicit_out_of_pool_decisions
                 "FROM stage_results WHERE stage='classify' ORDER BY item_id"
             )
         )
-    assert methods == {accepted: "llm_repair", rejected: "out_of_candidate_pool"}
+    assert methods == {accepted: "llm_repair", rejected: "llm_rejected"}
+
+
+def test_initialize_migrates_legacy_explicit_classification_rejections(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = _ready_item(database, "legacy-rejected", "No reliable scene applies here.")
+    database.mark_stage(
+        item_id,
+        "classify",
+        payload={
+            "top_scene": None,
+            "sub_scene": None,
+            "confidence": 0.0,
+            "method": "out_of_candidate_pool",
+            "reason": "explicit prior rejection",
+        },
+        model_version="llm-repair",
+    )
+
+    database.initialize()
+
+    with database.connect() as connection:
+        method = connection.execute(
+            "SELECT json_extract(payload_json, '$.method') FROM stage_results "
+            "WHERE item_id=? AND stage='classify'",
+            (item_id,),
+        ).fetchone()[0]
+    assert method == "llm_rejected"
 
 
 def test_classification_import_rejects_half_null_scene_decision(tmp_path: Path) -> None:
@@ -372,6 +402,19 @@ def test_candidate_pool_uses_wikinews_fallback_without_restoring_broad_keywords(
         ("She decided to switch jobs after lunch.", "technology_devices"),
         ("There was no news from the family that evening.", "news_current"),
         ("Sounds like you're not leaving much room for discussion.", "work_meetings"),
+        (
+            "I caught it, and prying its bill open, I thrust the stone down its throat.",
+            "daily_shopping",
+        ),
+        ("Just pulled the old match gag, see!", "culture_sports"),
+        ("It began to sway backwards and forwards.", "work_contact"),
+        ("The Reception of the day before yesterday was a cold one.", "travel_hotel"),
+        ("They were appointed by universal prescription.", "health_pharmacy"),
+        ("The day is running by more quickly than I thought.", "health_fitness"),
+        ("The new law surprised everyone.", "news_public"),
+        ("That is none of your business.", "work_office"),
+        ("His words were cruel.", "study_language"),
+        ("Do you even recall me?", "work_contact"),
     ),
 )
 def test_candidate_pool_rejects_reviewed_ambiguous_single_word_false_positives(

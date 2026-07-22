@@ -23,7 +23,7 @@ class FakeTranslator:
 
 
 SCENE_KEYWORDS = {
-    "daily_home": ("kitchen", "cupboard", "laundry", "dishes", "family", "house"),
+    "daily_home": ("kitchen", "cupboard", "laundry", "dishes", "bathroom", "house"),
     "daily_social": ("friend", "invite", "party", "neighbor", "welcome", "visit"),
     "daily_shopping": ("buy", "shop", "price", "cashier", "refund", "store"),
     "daily_food": ("breakfast", "lunch", "dinner", "cook", "restaurant", "menu"),
@@ -51,12 +51,12 @@ SCENE_KEYWORDS = {
     "health_fitness": ("exercise", "gym", "fitness", "workout", "running", "walking"),
     "health_wellbeing": ("sleep", "stress", "relax", "wellbeing", "mental", "healthy"),
     "technology_devices": ("phone", "computer", "laptop", "screen", "device", "battery"),
-    "technology_software": ("software", "app", "internet", "website", "password", "account"),
+    "technology_software": ("software", "app", "internet", "website", "password", "server"),
     "technology_engineering": (
         "engineer",
         "engineering",
         "machine",
-        "system",
+        "technical",
         "design",
         "technical",
     ),

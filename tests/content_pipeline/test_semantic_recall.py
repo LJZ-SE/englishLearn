@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ from tools.content_pipeline import semantic_recall as recall_module
 from tools.content_pipeline.semantic_recall import (
     ModelMetadata,
     RecallScene,
+    SelectionCapacity,
     run_semantic_recall,
     run_semantic_recall_many,
 )
@@ -204,6 +206,92 @@ def test_semantic_recall_rejects_checkpoint_from_other_model(tmp_path: Path) -> 
             top_k=1,
             batch_size=1,
         )
+
+
+def test_completed_semantic_checkpoint_rescans_when_candidate_pool_changes(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    first = _out_of_pool_item(database, 1, "low similarity")
+    vectors = {
+        "prototype": (1.0, 0.0),
+        "low similarity": (0.6, 0.4),
+        "high similarity": (1.0, 0.0),
+    }
+    checkpoint = tmp_path / "checkpoint.json"
+    output = tmp_path / "recall.jsonl"
+    run_semantic_recall(
+        database,
+        sub_scene="travel_hotel",
+        prototypes=("prototype",),
+        embedder=FakeEmbedder(vectors),
+        output_path=output,
+        checkpoint_path=checkpoint,
+        exclude_ids=set(),
+        top_k=1,
+        batch_size=2,
+    )
+    assert json.loads(output.read_text())["item_id"] == first
+
+    second = _out_of_pool_item(database, 2, "high similarity")
+    summary = run_semantic_recall(
+        database,
+        sub_scene="travel_hotel",
+        prototypes=("prototype",),
+        embedder=FakeEmbedder(vectors),
+        output_path=output,
+        checkpoint_path=checkpoint,
+        exclude_ids=set(),
+        top_k=1,
+        batch_size=2,
+    )
+
+    assert summary["resumed"] is False
+    assert json.loads(output.read_text())["item_id"] == second
+
+
+def test_candidate_pool_version_changes_when_membership_swaps_at_same_size(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    first = _out_of_pool_item(database, 1, "first candidate")
+    replacement = _out_of_pool_item(database, 2, "replacement candidate")
+    _out_of_pool_item(database, 3, "stable maximum candidate")
+    database.mark_stage(
+        replacement,
+        "classify",
+        payload={"method": "llm_rejected", "top_scene": None, "sub_scene": None},
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE stage_results SET updated_at='fixed' WHERE stage='classify'"
+        )
+    before = database.recall_candidate_pool_fingerprint()
+
+    database.mark_stage(
+        first,
+        "classify",
+        payload={"method": "llm_rejected", "top_scene": None, "sub_scene": None},
+    )
+    database.mark_stage(
+        replacement,
+        "classify",
+        payload={
+            "method": "out_of_candidate_pool",
+            "top_scene": None,
+            "sub_scene": None,
+        },
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE stage_results SET updated_at='fixed' WHERE stage='classify'"
+        )
+
+    after = database.recall_candidate_pool_fingerprint()
+    assert before["eligible_count"] == after["eligible_count"] == 2
+    assert before != after
 
 
 def test_semantic_recall_cli_loads_prototypes_exclusions_and_model_metadata(
@@ -460,17 +548,16 @@ def test_semantic_recall_does_not_rank_saturated_source_above_available_source(
         source_name="available-source",
     )
 
-    class CapacityFixture:
-        def allows(self, source_name: str, source_author: str) -> bool:
-            return source_name != "saturated-source"
-
-        def fingerprint_payload(self) -> dict[str, str]:
-            return {"fixture": "capacity"}
-
+    capacity = SelectionCapacity(
+        source_limit=1,
+        author_limit=1,
+        source_counts=Counter({"saturated-source": 1}),
+        author_counts=Counter(),
+    )
     monkeypatch.setattr(
         recall_module,
         "selection_capacity",
-        lambda *args, **kwargs: CapacityFixture(),
+        lambda *args, **kwargs: capacity,
         raising=False,
     )
     output_dir = tmp_path / "recalls"
@@ -495,6 +582,96 @@ def test_semantic_recall_does_not_rank_saturated_source_above_available_source(
     assert row["item_id"] != saturated
 
 
+def test_semantic_recall_consumes_remaining_source_capacity_across_top_k(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    first_a = _out_of_pool_named(database, 1, "highest A", source_name="source-a")
+    _out_of_pool_named(database, 2, "second A", source_name="source-a")
+    candidate_b = _out_of_pool_named(database, 3, "lower B", source_name="source-b")
+    capacity = SelectionCapacity(
+        source_limit=2,
+        author_limit=2,
+        source_counts=Counter({"source-a": 1}),
+        author_counts=Counter(),
+    )
+    monkeypatch.setattr(
+        recall_module,
+        "selection_capacity",
+        lambda *args, **kwargs: capacity,
+    )
+    output = tmp_path / "recall.jsonl"
+
+    run_semantic_recall(
+        database,
+        sub_scene="travel_hotel",
+        prototypes=("prototype",),
+        embedder=FakeEmbedder(
+            {
+                "prototype": (1.0, 0.0),
+                "highest A": (1.0, 0.0),
+                "second A": (0.99, 0.01),
+                "lower B": (0.8, 0.2),
+            }
+        ),
+        output_path=output,
+        checkpoint_path=tmp_path / "checkpoint.json",
+        exclude_ids=set(),
+        top_k=2,
+        batch_size=3,
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert {row["item_id"] for row in rows} == {first_a, candidate_b}
+
+
+def test_semantic_recall_expands_reservoir_until_capacity_can_fill_top_k(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    vectors = {"prototype": (1.0, 0.0), "lower B": (0.6, 0.4)}
+    first_a = 0
+    for index in range(1, 34):
+        text = f"high A {index}"
+        item_id = _out_of_pool_named(database, index, text, source_name="source-a")
+        first_a = first_a or item_id
+        vectors[text] = (1.0 - index / 1_000, index / 1_000)
+    candidate_b = _out_of_pool_named(database, 34, "lower B", source_name="source-b")
+    capacity = SelectionCapacity(
+        source_limit=2,
+        author_limit=100,
+        source_counts=Counter({"source-a": 1}),
+        author_counts=Counter(),
+    )
+    monkeypatch.setattr(
+        recall_module,
+        "selection_capacity",
+        lambda *args, **kwargs: capacity,
+    )
+    output = tmp_path / "hotel.jsonl"
+    embedder = FakeEmbedder(vectors)
+
+    run_semantic_recall(
+        database,
+        sub_scene="travel_hotel",
+        prototypes=("prototype",),
+        embedder=embedder,
+        output_path=output,
+        checkpoint_path=tmp_path / "checkpoint.json",
+        exclude_ids=set(),
+        top_k=2,
+        batch_size=8,
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert {row["item_id"] for row in rows} == {first_a, candidate_b}
+    assert embedder.calls == 11
+
+
 def test_single_scene_semantic_recall_also_excludes_saturated_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -514,17 +691,16 @@ def test_single_scene_semantic_recall_also_excludes_saturated_source(
         source_name="available-source",
     )
 
-    class CapacityFixture:
-        def allows(self, source_name: str, source_author: str) -> bool:
-            return source_name != "saturated-source"
-
-        def fingerprint_payload(self) -> dict[str, str]:
-            return {"fixture": "capacity"}
-
+    capacity = SelectionCapacity(
+        source_limit=1,
+        author_limit=1,
+        source_counts=Counter({"saturated-source": 1}),
+        author_counts=Counter(),
+    )
     monkeypatch.setattr(
         recall_module,
         "selection_capacity",
-        lambda *args, **kwargs: CapacityFixture(),
+        lambda *args, **kwargs: capacity,
     )
     output = tmp_path / "recall.jsonl"
     run_semantic_recall(
@@ -546,3 +722,145 @@ def test_single_scene_semantic_recall_also_excludes_saturated_source(
     )
 
     assert json.loads(output.read_text())["item_id"] == available
+
+
+def test_semantic_recall_never_requeues_explicit_llm_rejection(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    rejected = _out_of_pool_item(database, 1, "hotel-like")
+    database.mark_stage(
+        rejected,
+        "classify",
+        payload={"method": "llm_required", "top_scene": None, "sub_scene": None},
+    )
+    database.apply_classification_repairs(
+        [(rejected, None, None, "independent review rejected this candidate")]
+    )
+    output = tmp_path / "recall.jsonl"
+
+    summary = run_semantic_recall(
+        database,
+        sub_scene="travel_hotel",
+        prototypes=("prototype",),
+        embedder=FakeEmbedder(
+            {"prototype": (1.0, 0.0), "hotel-like": (1.0, 0.0)}
+        ),
+        output_path=output,
+        checkpoint_path=tmp_path / "checkpoint.json",
+        exclude_ids=set(),
+        top_k=1,
+        batch_size=1,
+    )
+
+    assert summary["selected"] == 0
+    assert output.read_text() == ""
+
+
+def test_single_semantic_recall_rejects_unknown_scene(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+
+    with pytest.raises(ValueError, match="未知场景"):
+        run_semantic_recall(
+            database,
+            sub_scene="unknown_scene",
+            prototypes=("prototype",),
+            embedder=FakeEmbedder({"prototype": (1.0, 0.0)}),
+            output_path=tmp_path / "recall.jsonl",
+            checkpoint_path=tmp_path / "checkpoint.json",
+            exclude_ids=set(),
+            top_k=1,
+            batch_size=1,
+        )
+
+
+@pytest.mark.parametrize("top_k", (0, 501))
+def test_single_semantic_recall_limits_top_k(tmp_path: Path, top_k: int) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+
+    with pytest.raises(ValueError, match="1 到 500"):
+        run_semantic_recall(
+            database,
+            sub_scene="travel_hotel",
+            prototypes=("prototype",),
+            embedder=FakeEmbedder({"prototype": (1.0, 0.0)}),
+            output_path=tmp_path / "recall.jsonl",
+            checkpoint_path=tmp_path / "checkpoint.json",
+            exclude_ids=set(),
+            top_k=top_k,
+            batch_size=1,
+        )
+
+
+def test_multi_semantic_recall_limits_each_scene_top_k(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+
+    with pytest.raises(ValueError, match="1 到 500"):
+        run_semantic_recall_many(
+            database,
+            scenes=(RecallScene("travel_hotel", ("prototype",), 501),),
+            embedder=FakeEmbedder({"prototype": (1.0, 0.0)}),
+            output_dir=tmp_path / "recalls",
+            checkpoint_path=tmp_path / "checkpoint.json",
+            exclude_ids=set(),
+            batch_size=1,
+        )
+
+
+def test_single_semantic_recall_cli_rejects_top_k_above_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "listening-cloze-content",
+            "recall-classification",
+            str(tmp_path / "work.db"),
+            "--sub-scene",
+            "travel_hotel",
+            "--prototypes",
+            str(tmp_path / "prototypes.json"),
+            "--model-path",
+            str(tmp_path / "model"),
+            "--model-revision",
+            "fixture-revision",
+            "--model-sha256",
+            "a" * 64,
+            "--output",
+            str(tmp_path / "recall.jsonl"),
+            "--checkpoint",
+            str(tmp_path / "checkpoint.json"),
+            "--top-k",
+            "501",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        cli.main()
+
+
+def test_multi_semantic_recall_config_rejects_top_k_above_limit(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "recall-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "scenes": [
+                    {
+                        "sub_scene": "travel_hotel",
+                        "prototypes": ["hotel prototype"],
+                        "top_k": 501,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="top_k 非法"):
+        cli._load_recall_scenes(config_path)
