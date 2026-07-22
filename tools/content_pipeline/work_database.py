@@ -39,6 +39,17 @@ class StageInput:
     stage_payload: dict[str, Any] | None
 
 
+@dataclass(frozen=True, slots=True)
+class TranslationRepair:
+    item: WorkItem
+    draft: str
+    issues: tuple[str, ...]
+    model_version: str
+    top_scene: str
+    sub_scene: str
+    review_note: str
+
+
 class WorkDatabase:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -133,6 +144,9 @@ class WorkDatabase:
                 if tuple(existing[1:]) != derived_input:
                     connection.execute("DELETE FROM stage_results WHERE item_id = ?", (item_id,))
                     connection.execute("DELETE FROM rejections WHERE item_id = ?", (item_id,))
+                    connection.execute(
+                        "DELETE FROM translation_repairs WHERE item_id = ?", (item_id,)
+                    )
                     _invalidate_selection_snapshot(connection)
         return item_id
 
@@ -292,6 +306,8 @@ class WorkDatabase:
 
             for descendant in _stage_descendants(stage):
                 connection.execute("DELETE FROM stage_results WHERE stage = ?", (descendant,))
+            if stage in {"clean", "dedupe", "classify", "select"}:
+                connection.execute("DELETE FROM translation_repairs")
             connection.execute("DELETE FROM stage_results WHERE stage = ?", (stage,))
             updated_at = _now()
             connection.executemany(
@@ -304,6 +320,186 @@ class WorkDatabase:
                     (item_id, stage, payload_json, model_version, updated_at)
                     for item_id, payload_json in serialized
                 ],
+            )
+        return True
+
+    def claim_translation_batch(self, limit: int) -> list[WorkItem]:
+        if limit < 1:
+            return []
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
+                       r.license_name, r.license_url, r.text, r.protected,
+                       r.top_scene, r.sub_scene
+                FROM raw_items AS r
+                JOIN stage_results AS selected
+                  ON selected.item_id = r.id AND selected.stage = 'select'
+                LEFT JOIN stage_results AS translated
+                  ON translated.item_id = r.id AND translated.stage = 'translate'
+                LEFT JOIN translation_repairs AS repair ON repair.item_id = r.id
+                LEFT JOIN rejections AS rejected ON rejected.item_id = r.id
+                WHERE translated.item_id IS NULL
+                  AND repair.item_id IS NULL
+                  AND rejected.item_id IS NULL
+                ORDER BY r.id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_work_item(row) for row in rows]
+
+    def checkpoint_translation_batch(
+        self,
+        results: list[tuple[int, str, tuple[str, ...]]],
+        *,
+        model_version: str,
+    ) -> None:
+        item_ids = [item_id for item_id, _, _ in results]
+        if len(set(item_ids)) != len(item_ids):
+            raise ValueError("翻译批次包含重复条目")
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            eligible = {
+                int(row[0])
+                for row in connection.execute(
+                    "SELECT item_id FROM stage_results WHERE stage = 'select'"
+                )
+            }
+            rejected = {int(row[0]) for row in connection.execute("SELECT item_id FROM rejections")}
+            invalid = sorted((set(item_ids) - eligible) | (set(item_ids) & rejected))
+            if invalid:
+                raise ValueError(f"翻译批次包含不可写条目: {invalid}")
+
+            updated_at = _now()
+            for item_id, translation, issues in results:
+                connection.execute(
+                    "DELETE FROM stage_results WHERE item_id = ? AND stage = 'variants'",
+                    (item_id,),
+                )
+                if issues:
+                    connection.execute(
+                        "DELETE FROM stage_results WHERE item_id = ? AND stage = 'translate'",
+                        (item_id,),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO translation_repairs(
+                            item_id, draft, issues_json, model_version, review_note, updated_at
+                        ) VALUES (?, ?, ?, ?, '', ?)
+                        ON CONFLICT(item_id) DO UPDATE SET
+                            draft = excluded.draft,
+                            issues_json = excluded.issues_json,
+                            model_version = excluded.model_version,
+                            review_note = '',
+                            updated_at = excluded.updated_at
+                        """,
+                        (item_id, translation, json.dumps(issues), model_version, updated_at),
+                    )
+                    continue
+                connection.execute("DELETE FROM translation_repairs WHERE item_id = ?", (item_id,))
+                connection.execute(
+                    """
+                    INSERT INTO stage_results(
+                        item_id, stage, payload_json, model_version, updated_at
+                    ) VALUES (?, 'translate', ?, ?, ?)
+                    ON CONFLICT(item_id, stage) DO UPDATE SET
+                        payload_json = excluded.payload_json,
+                        model_version = excluded.model_version,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        item_id,
+                        _dump_payload({"translation_zh": translation, "issues": []}),
+                        model_version,
+                        updated_at,
+                    ),
+                )
+
+    def translation_repairs(self) -> list[TranslationRepair]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
+                       r.license_name, r.license_url, r.text, r.protected,
+                       r.top_scene, r.sub_scene, repair.draft, repair.issues_json,
+                       repair.model_version, selected.payload_json, repair.review_note
+                FROM translation_repairs AS repair
+                JOIN raw_items AS r ON r.id = repair.item_id
+                JOIN stage_results AS selected
+                  ON selected.item_id = r.id AND selected.stage = 'select'
+                ORDER BY r.id
+                """
+            ).fetchall()
+        repairs: list[TranslationRepair] = []
+        for row in rows:
+            selected = json.loads(row[14])
+            repairs.append(
+                TranslationRepair(
+                    item=_work_item(row),
+                    draft=str(row[11]),
+                    issues=tuple(str(issue) for issue in json.loads(row[12])),
+                    model_version=str(row[13]),
+                    top_scene=str(selected.get("top_scene") or ""),
+                    sub_scene=str(selected.get("sub_scene") or ""),
+                    review_note=str(row[15]),
+                )
+            )
+        return repairs
+
+    def apply_translation_repair(
+        self,
+        item_id: int,
+        *,
+        translation: str,
+        issues: tuple[str, ...],
+        review_note: str,
+    ) -> bool:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            repair = connection.execute(
+                "SELECT 1 FROM translation_repairs WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            if repair is None:
+                raise ValueError(f"条目 {item_id} 不在待修正队列中")
+            selected = connection.execute(
+                "SELECT 1 FROM stage_results WHERE item_id = ? AND stage = 'select'", (item_id,)
+            ).fetchone()
+            if selected is None:
+                raise ValueError(f"条目 {item_id} 已不在当前选择快照中")
+            updated_at = _now()
+            if issues:
+                connection.execute(
+                    """
+                    UPDATE translation_repairs
+                    SET draft = ?, issues_json = ?, review_note = ?, updated_at = ?
+                    WHERE item_id = ?
+                    """,
+                    (translation, json.dumps(issues), review_note, updated_at, item_id),
+                )
+                return False
+
+            connection.execute("DELETE FROM translation_repairs WHERE item_id = ?", (item_id,))
+            connection.execute(
+                """
+                INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
+                VALUES (?, 'translate', ?, 'llm-repair', ?)
+                ON CONFLICT(item_id, stage) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    model_version = excluded.model_version,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    item_id,
+                    _dump_payload(
+                        {
+                            "translation_zh": translation,
+                            "issues": [],
+                            "review_note": review_note,
+                        }
+                    ),
+                    updated_at,
+                ),
             )
         return True
 
@@ -438,6 +634,16 @@ def _schema_statements() -> tuple[str, ...]:
         )
         """,
         """
+        CREATE TABLE IF NOT EXISTS translation_repairs(
+            item_id INTEGER PRIMARY KEY REFERENCES raw_items(id),
+            draft TEXT NOT NULL,
+            issues_json TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            review_note TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS build_runs(
             id TEXT PRIMARY KEY,
             command TEXT NOT NULL,
@@ -494,3 +700,4 @@ def _invalidate_selection_snapshot(connection: sqlite3.Connection) -> None:
         "DELETE FROM stage_results WHERE stage = ?",
         ((stage,) for stage in ("select", "translate", "variants")),
     )
+    connection.execute("DELETE FROM translation_repairs")

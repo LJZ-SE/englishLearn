@@ -14,6 +14,13 @@ from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.selection import select_scene_quotas
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
+from tools.content_pipeline.translation import (
+    OpusMtTranslator,
+    TranslationImportError,
+    export_llm_repairs,
+    import_llm_repairs,
+    run_translation_stage,
+)
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
 from tools.content_pipeline.work_database import WorkDatabase, WorkItem
 
@@ -50,6 +57,14 @@ def main() -> None:
         stage_parser.add_argument("--limit", type=int, default=1000)
     select_parser = subparsers.add_parser("select")
     select_parser.add_argument("work_db", type=Path)
+    translate_parser = subparsers.add_parser("translate")
+    translate_parser.add_argument("work_db", type=Path)
+    translate_parser.add_argument("--batch-size", type=int, default=32)
+    translate_parser.add_argument("--revision", default="main")
+    for command in ("export-llm-repairs", "import-llm-repairs"):
+        exchange_parser = subparsers.add_parser(command)
+        exchange_parser.add_argument("work_db", type=Path)
+        exchange_parser.add_argument("path", type=Path)
     arguments = parser.parse_args()
     database = WorkDatabase(arguments.work_db)
 
@@ -74,8 +89,21 @@ def main() -> None:
         _dedupe_items(database, arguments.limit)
     elif arguments.command == "classify":
         _classify_items(database, arguments.limit)
-    else:
+    elif arguments.command == "select":
         _select_items(database)
+    elif arguments.command == "translate":
+        translator = OpusMtTranslator(
+            batch_size=arguments.batch_size,
+            revision=arguments.revision,
+        )
+        run_translation_stage(database, translator, batch_size=arguments.batch_size)
+    elif arguments.command == "export-llm-repairs":
+        export_llm_repairs(database, arguments.path)
+    else:
+        try:
+            import_llm_repairs(database, arguments.path)
+        except TranslationImportError as error:
+            parser.error(str(error))
 
 
 def _add_import_parser(
