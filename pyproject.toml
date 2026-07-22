@@ -58,7 +58,7 @@ include = ["listening_cloze*", "tools*"]
 
 [tool.setuptools.package-data]
 listening_cloze = ["ui/qml/*", "data/*", "data/**/*"]
-"tools.content_pipeline" = ["*.json"]
+"tools.content_pipeline" = ["*.json", "snapshots/*.json"]
 
 [tool.ruff]
 target-version = "py312"

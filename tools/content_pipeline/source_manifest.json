@@ -109,5 +109,71 @@
     "expected_sha256": "19644360954006d06e9ad3df07bddb34f8535c081b831d48f604603c713ac167",
     "license_name": "CC BY-NC 3.0",
     "license_url": "https://creativecommons.org/licenses/by-nc/3.0/"
+  },
+  {
+    "key": "taskmaster2-movies",
+    "kind": "taskmaster2",
+    "domain": "movies",
+    "schema_version": 1,
+    "url": "https://raw.githubusercontent.com/google-research-datasets/Taskmaster/d92cb6af3005f1dc09c39e75e7daf4a04905e00b/TM-2-2020/data/movies.json",
+    "expected_sha256": "6f67c9a1f04abc111186e5bcfbe3050be01d0737fd6422901402715bc1f3dd0d",
+    "max_items": 10000,
+    "license_name": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  {
+    "key": "taskmaster2-sports",
+    "kind": "taskmaster2",
+    "domain": "sports",
+    "schema_version": 1,
+    "url": "https://raw.githubusercontent.com/google-research-datasets/Taskmaster/d92cb6af3005f1dc09c39e75e7daf4a04905e00b/TM-2-2020/data/sports.json",
+    "expected_sha256": "8191531bfa5a8426b1508c396ab9886a19c7c620b443c436ec10d8d4708d0eac",
+    "max_items": 10000,
+    "license_name": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  {
+    "key": "stackexchange-api-workplace",
+    "kind": "stackexchange-api",
+    "site": "workplace",
+    "schema_version": 1,
+    "bundled_path": "snapshots/stackexchange-workplace-api-v1.json",
+    "expected_sha256": "e2994240647fc9e38aa78f5e1052eebbcb386fdc7da2b75113d4a651e0691da0",
+    "max_items": 15000,
+    "license_name": "per-item CC BY-SA",
+    "license_url": "https://stackoverflow.com/help/licensing"
+  },
+  {
+    "key": "stackexchange-api-academia",
+    "kind": "stackexchange-api",
+    "site": "academia",
+    "schema_version": 1,
+    "bundled_path": "snapshots/stackexchange-academia-api-v1.json",
+    "expected_sha256": "0908dcf456e08036da9b08fc6cca111c43001ac47dba055df4dab01beefc03be",
+    "max_items": 15000,
+    "license_name": "per-item CC BY-SA",
+    "license_url": "https://stackoverflow.com/help/licensing"
+  },
+  {
+    "key": "stackexchange-api-softwareengineering",
+    "kind": "stackexchange-api",
+    "site": "softwareengineering",
+    "schema_version": 1,
+    "bundled_path": "snapshots/stackexchange-softwareengineering-api-v1.json",
+    "expected_sha256": "6a01a9d0e046a017ba3d8c70aa22830c4e61159e8ca4c8e822455e60e6588bf7",
+    "max_items": 15000,
+    "license_name": "per-item CC BY-SA",
+    "license_url": "https://stackoverflow.com/help/licensing"
+  },
+  {
+    "key": "stackexchange-fitness",
+    "kind": "stackexchange",
+    "site": "fitness",
+    "schema_version": 1,
+    "url": "https://archive.org/download/stackexchange/fitness.stackexchange.com.7z",
+    "expected_sha256": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+    "max_items": 15000,
+    "license_name": "per-item CC BY-SA",
+    "license_url": "https://stackoverflow.com/help/licensing"
   }
 ]

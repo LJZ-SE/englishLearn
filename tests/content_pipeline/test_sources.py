@@ -84,6 +84,12 @@ def test_source_manifest_preserves_initial_sources_and_adds_dialogue_sources() -
         ("ami-manual-v1-6-2", "ami"),
         ("medquad", "medquad"),
         ("sciq-train", "sciq"),
+        ("taskmaster2-movies", "taskmaster2"),
+        ("taskmaster2-sports", "taskmaster2"),
+        ("stackexchange-api-workplace", "stackexchange-api"),
+        ("stackexchange-api-academia", "stackexchange-api"),
+        ("stackexchange-api-softwareengineering", "stackexchange-api"),
+        ("stackexchange-fitness", "stackexchange"),
     ]
 
 

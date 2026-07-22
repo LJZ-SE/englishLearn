@@ -32,6 +32,11 @@ from tools.content_pipeline.mts_dialog_source import iter_mts_dialog_utterances
 from tools.content_pipeline.multiwoz_source import iter_multiwoz_utterances
 from tools.content_pipeline.sciq_source import iter_sciq_questions
 from tools.content_pipeline.sgd_source import iter_sgd_utterances
+from tools.content_pipeline.stackexchange_api_source import (
+    iter_stackexchange_api_sentences,
+)
+from tools.content_pipeline.stackexchange_source import iter_stackexchange_sentences
+from tools.content_pipeline.taskmaster_source import iter_taskmaster2_utterances
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
 from tools.content_pipeline.work_database import WorkDatabase
@@ -55,6 +60,12 @@ _WIKINEWS_QUERY = {
 }
 _SAFE_KEY = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _LOCK_VERSION = 2
+_STACKEXCHANGE_SITES = frozenset(
+    {"workplace", "academia", "softwareengineering", "fitness"}
+)
+_STACKEXCHANGE_API_SITES = frozenset(
+    {"workplace", "academia", "softwareengineering"}
+)
 
 
 def import_all_sources(
@@ -358,6 +369,10 @@ def _expanded_sources(manifest: list[object]) -> Iterator[dict[str, Any]]:
 
 def _source_url(source: dict[str, Any]) -> str:
     kind = _required_string(source, "kind")
+    if kind == "stackexchange-api":
+        bundled_path = _required_string(source, "bundled_path")
+        _bundled_source_path(source)
+        return f"bundled://{bundled_path}"
     if kind == "convokit" and not source.get("url"):
         name = _required_string(source, "download_name")
         return _CONVOKIT_URL.format(name=name)
@@ -391,11 +406,29 @@ def _download_locked(
         if not refresh and size == existing.get("size_bytes") and digest == existing.get("sha256"):
             _validate_downloaded_source(kind, cache_path, source, digest)
             return dict(existing)
+    if not existing and not refresh and cache_path.is_file():
+        size, digest = _file_fingerprint(cache_path)
+        expected_sha256 = source.get("expected_sha256")
+        if isinstance(expected_sha256, str) and digest == expected_sha256.lower():
+            _validate_downloaded_source(kind, cache_path, source, digest)
+            return {
+                "key": key,
+                "kind": kind,
+                "requested_url": url,
+                "final_url": url,
+                "cache_path": str(cache_path.relative_to(cache_path.parent.parent)),
+                "size_bytes": size,
+                "sha256": digest,
+                "downloaded_at": datetime.now(UTC).isoformat(),
+            }
     temporary = cache_path.with_suffix(cache_path.suffix + ".part")
     if kind != "wikinews":
         temporary.unlink(missing_ok=True)
     if kind == "wikinews" and url.startswith(("http://", "https://")):
         final_url = _download_wikinews_snapshot(url, temporary, source)
+    elif url.startswith("bundled://"):
+        shutil.copyfile(_bundled_source_path(source), temporary)
+        final_url = url
     else:
         final_url = _download_url(url, temporary)
     try:
@@ -444,6 +477,9 @@ def _validate_downloaded_source(
         "ami",
         "medquad",
         "sciq",
+        "stackexchange",
+        "stackexchange-api",
+        "taskmaster2",
     }:
         return
     if kind == "massive":
@@ -459,6 +495,26 @@ def _validate_downloaded_source(
     if kind == "sciq":
         if not _iterator_has_record(iter_sciq_questions(path)):
             raise ValueError(f"来源 Parquet 没有有效记录: {source['key']}")
+        return
+    if kind == "stackexchange":
+        if not _iterator_has_record(
+            iter_stackexchange_sentences(path, site=_stackexchange_site(source))
+        ):
+            raise ValueError(f"来源 7z 没有有效记录: {source['key']}")
+        return
+    if kind == "stackexchange-api":
+        if not _iterator_has_record(
+            iter_stackexchange_api_sentences(
+                path, site=_stackexchange_api_site(source)
+            )
+        ):
+            raise ValueError(f"来源 API 快照没有有效记录: {source['key']}")
+        return
+    if kind == "taskmaster2":
+        if not _iterator_has_record(
+            iter_taskmaster2_utterances(path, domain=_required_string(source, "domain"))
+        ):
+            raise ValueError(f"来源 JSON 没有有效记录: {source['key']}")
         return
     if not zipfile.is_zipfile(path):
         raise ValueError(f"来源下载内容不是有效 ZIP: {source['key']}")
@@ -698,6 +754,18 @@ def _iter_source(
         return iter_medquad_questions(cache_path)
     if kind == "sciq":
         return iter_sciq_questions(cache_path)
+    if kind == "stackexchange":
+        return iter_stackexchange_sentences(
+            cache_path, site=_stackexchange_site(source)
+        )
+    if kind == "stackexchange-api":
+        return iter_stackexchange_api_sentences(
+            cache_path, site=_stackexchange_api_site(source)
+        )
+    if kind == "taskmaster2":
+        return iter_taskmaster2_utterances(
+            cache_path, domain=_required_string(source, "domain")
+        )
     raise ValueError(f"不支持的来源类型: {kind}")
 
 
@@ -817,6 +885,16 @@ def _source_kind(source_name: str) -> str:
     }
     if source_name in {"cornell-movie-dialogs", "switchboard"}:
         return "convokit"
+    if source_name.startswith("taskmaster2-"):
+        return "taskmaster2"
+    if source_name.startswith("stackexchange-") and source_name.endswith(
+        "-official-dump"
+    ):
+        return "stackexchange"
+    if source_name.startswith("stackexchange-") and source_name.endswith(
+        "-official-api-snapshot"
+    ):
+        return "stackexchange-api"
     return known.get(source_name, source_name)
 
 
@@ -912,6 +990,9 @@ def _source_config(source: dict[str, Any], url: str) -> dict[str, Any]:
     }
     if "normalization_version" in source:
         config["normalization_version"] = source["normalization_version"]
+    for field in ("domain", "site", "schema_version", "bundled_path"):
+        if field in source:
+            config[field] = source[field]
     return config
 
 
@@ -946,6 +1027,14 @@ def _raw_source_name(source: dict[str, Any]) -> str:
         return "ami-meeting-corpus-v1.6.2"
     if kind == "sciq":
         return "SciQ"
+    if kind == "stackexchange":
+        return f"stackexchange-{_stackexchange_site(source)}-official-dump"
+    if kind == "stackexchange-api":
+        return (
+            f"stackexchange-{_stackexchange_api_site(source)}-official-api-snapshot"
+        )
+    if kind == "taskmaster2":
+        return f"taskmaster2-{_required_string(source, 'domain')}"
     return str(source["key"])
 
 
@@ -961,6 +1050,35 @@ def _required_string(source: dict[str, Any], field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"来源 manifest 缺少字段: {field}")
     return value
+
+
+def _stackexchange_site(source: dict[str, Any]) -> str:
+    site = _required_string(source, "site")
+    if site not in _STACKEXCHANGE_SITES:
+        raise ValueError(f"Stack Exchange site 必须使用规范值: {site!r}")
+    return site
+
+
+def _stackexchange_api_site(source: dict[str, Any]) -> str:
+    site = _required_string(source, "site")
+    if site not in _STACKEXCHANGE_API_SITES:
+        raise ValueError(f"Stack Exchange API site 必须使用规范值: {site!r}")
+    return site
+
+
+def _bundled_source_path(source: dict[str, Any]) -> Path:
+    value = _required_string(source, "bundled_path")
+    relative_path = Path(value)
+    snapshots_root = (Path(__file__).parent / "snapshots").resolve()
+    candidate = (Path(__file__).parent / relative_path).resolve()
+    if (
+        relative_path.is_absolute()
+        or not candidate.is_relative_to(snapshots_root)
+        or not candidate.is_file()
+        or candidate.is_symlink()
+    ):
+        raise ValueError(f"来源 bundled_path 不安全或不存在: {value}")
+    return candidate
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
