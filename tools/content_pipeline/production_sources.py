@@ -19,8 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
+from tools.content_pipeline.dailydialog_source import iter_dailydialog_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.models import CollectedSentence
+from tools.content_pipeline.mts_dialog_source import iter_mts_dialog_utterances
+from tools.content_pipeline.multiwoz_source import iter_multiwoz_utterances
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
 from tools.content_pipeline.work_database import WorkDatabase
@@ -75,8 +78,43 @@ def import_all_sources(
         locked_manifest = lock_payload.get("manifest_sha256")
         if locked_manifest != manifest_sha256:
             raise ValueError("来源 manifest 已漂移；如需更新必须显式使用 --refresh-lock")
-    if refresh_lock and existing and set(existing) != {str(row["key"]) for row in expanded}:
-        raise ValueError("refresh-lock 不允许增删来源 key，避免遗留 stale raw")
+    expanded_keys = {str(row["key"]) for row in expanded}
+    existing_keys = set(existing)
+    if refresh_lock and existing and not existing_keys <= expanded_keys:
+        raise ValueError("refresh-lock 不允许删除或重命名来源 key")
+    expanded_by_key = {str(source["key"]): source for source in expanded}
+    if refresh_lock:
+        for key in sorted(existing_keys):
+            old_identity = _locked_raw_source_name(existing[key])
+            new_identity = _raw_source_name(expanded_by_key[key])
+            if old_identity != new_identity:
+                raise ValueError(
+                    f"refresh-lock 禁止改变来源 identity: {old_identity} -> {new_identity}"
+                )
+    added_keys = expanded_keys - existing_keys if existing else set()
+    existing_identities = {_locked_raw_source_name(entry) for entry in existing.values()}
+    added_identities = {
+        _raw_source_name(source) for source in expanded if str(source["key"]) in added_keys
+    } - existing_identities
+    if (
+        added_identities
+        and existing
+        and not refresh_lock
+        and not added_identities <= pending_refresh_identities
+    ):
+        raise ValueError("新增来源必须显式使用 --refresh-lock")
+    if added_identities and existing and refresh_lock:
+        pending_refresh_identities.update(added_identities)
+        # 先冻结待导入 identity，确保下载或导入中断后可无歧义恢复。
+        _checkpoint_source_lock(
+            lock_path,
+            manifest_path,
+            manifest_sha256,
+            [],
+            existing,
+            pending_refresh_identities=pending_refresh_identities,
+            complete=False,
+        )
     locked: list[dict[str, Any]] = []
     prepared: list[tuple[dict[str, Any], str, Path]] = []
     changed_identities: set[str] = set()
@@ -454,6 +492,12 @@ def _iter_source(
         return iter_wikinews_extracts(cache_path)
     if kind == "gutenberg":
         return iter_gutenberg_text(cache_path, int(source["ebook_id"]))
+    if kind == "multiwoz":
+        return iter_multiwoz_utterances(cache_path)
+    if kind == "dailydialog":
+        return iter_dailydialog_utterances(cache_path)
+    if kind == "mts-dialog":
+        return iter_mts_dialog_utterances(cache_path)
     raise ValueError(f"不支持的来源类型: {kind}")
 
 
@@ -513,7 +557,6 @@ def _import_items(
                 "source_name",
                 "source_item_id",
                 "source_url",
-                "source_author",
                 "license_name",
                 "license_url",
             )

@@ -37,5 +37,26 @@
     "ebook_ids": [11, 74, 76, 84, 98, 1342, 1661, 2701, 345, 174],
     "license_name": "per-item terms",
     "license_url": "https://www.gutenberg.org/policy/license.html"
+  },
+  {
+    "key": "multiwoz-2-2",
+    "kind": "multiwoz",
+    "url": "https://github.com/budzianowski/multiwoz/archive/refs/heads/master.zip",
+    "license_name": "MIT",
+    "license_url": "https://github.com/budzianowski/multiwoz/blob/master/LICENSE"
+  },
+  {
+    "key": "daily-dialog",
+    "kind": "dailydialog",
+    "url": "http://yanran.li/files/ijcnlp_dailydialog.zip",
+    "license_name": "CC BY-NC-SA 4.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+  },
+  {
+    "key": "mts-dialog",
+    "kind": "mts-dialog",
+    "url": "https://github.com/abachaa/MTS-Dialog/archive/refs/heads/main.zip",
+    "license_name": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/"
   }
 ]
