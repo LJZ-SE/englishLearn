@@ -82,7 +82,9 @@ jobs:
           }
 
       - name: 安装固定版本 Inno Setup
-        run: choco install innosetup --version=6.4.3 --yes --no-progress
+        run: >-
+          choco install innosetup --version=6.4.3
+          --allow-downgrade --yes --no-progress
 
       - name: 生成安装包
         shell: pwsh

@@ -41,6 +41,8 @@ def test_workflow_has_pinned_windows_toolchain_and_minimal_permissions() -> None
     assert 'version: "0.9.28"' in workflow
     assert "uv sync --locked --all-groups" in workflow
     assert "uv run python tools/run_tests.py" in workflow
+    assert "choco install innosetup --version=6.4.3" in workflow
+    assert "--allow-downgrade" in workflow
     assert "$env:PACKAGE_VERSION = $version" in workflow
 
 
