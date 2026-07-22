@@ -1,7 +1,7 @@
 {
   "version": 2,
   "manifest": "tools/content_pipeline/source_manifest.json",
-  "manifest_sha256": "8306e418932d031f5dabaaf8699fce0b3b7f87d995849ce6578f2584b8f4834b",
+  "manifest_sha256": "96de8bb11f23d7506a27b1217f379f9ff8b699f04a0556e8414473822cd0a0a7",
   "complete": true,
   "pending_refresh_identities": [],
   "sources": [
@@ -505,6 +505,81 @@
         "snapshot_version": null,
         "expected_sha256": "7df623fd2d300a4d235d6ee5bd396c9a28258d3a0ccb29abdb054506eba153f8",
         "normalization_version": 1
+      }
+    },
+    {
+      "key": "ami-manual-v1-6-2",
+      "kind": "ami",
+      "requested_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
+      "final_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
+      "cache_path": "downloads/ami-manual-v1-6-2.6.2.zip",
+      "size_bytes": 22887865,
+      "sha256": "b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d",
+      "downloaded_at": "2026-07-22T21:40:31.044282+00:00",
+      "config_fingerprint": "aab1394eceb31bae2d8af5c6b2875bb353023b2c2a8db8ea2b580b8b9b8acca8",
+      "config": {
+        "config_version": 2,
+        "key": "ami-manual-v1-6-2",
+        "kind": "ami",
+        "requested_url": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
+        "max_items": null,
+        "license_name": "CC BY 4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null,
+        "expected_sha256": "b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d"
+      }
+    },
+    {
+      "key": "medquad",
+      "kind": "medquad",
+      "requested_url": "https://github.com/abachaa/MedQuAD/archive/577bd37b96c02d1833b2c9eed2de9f96964e96cb.zip",
+      "final_url": "https://codeload.github.com/abachaa/MedQuAD/zip/577bd37b96c02d1833b2c9eed2de9f96964e96cb",
+      "cache_path": "downloads/medquad.zip",
+      "size_bytes": 16953181,
+      "sha256": "161d948f8ce8f82accca1f5769a512dff2a01af2b3004d48f2b3da2758a38a09",
+      "downloaded_at": "2026-07-22T21:40:36.219621+00:00",
+      "config_fingerprint": "62aa58357e2fc574f0f1349f7d71d4832161ed4a6fef87c7723347167dcf023e",
+      "config": {
+        "config_version": 2,
+        "key": "medquad",
+        "kind": "medquad",
+        "requested_url": "https://github.com/abachaa/MedQuAD/archive/577bd37b96c02d1833b2c9eed2de9f96964e96cb.zip",
+        "max_items": null,
+        "license_name": "CC BY 4.0",
+        "license_url": "https://github.com/abachaa/MedQuAD/blob/577bd37b96c02d1833b2c9eed2de9f96964e96cb/LICENSE.txt",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null,
+        "expected_sha256": "161d948f8ce8f82accca1f5769a512dff2a01af2b3004d48f2b3da2758a38a09"
+      }
+    },
+    {
+      "key": "sciq-train",
+      "kind": "sciq",
+      "requested_url": "https://huggingface.co/datasets/allenai/sciq/resolve/2c94ad3e1aafab77146f384e23536f97a4849815/data/train-00000-of-00001.parquet",
+      "final_url": "https://us.aws.cdn.hf.co/xet-bridge-us/621ffdd236468d709f181f6e/288167e29fcc363c5de0ea7daee22436d750f08f69b8aef425e2afca96eb38b7?user_id=public&X-Xet-Cas-Uid=public&response-content-disposition=inline%3B+filename*%3DUTF-8%27%27train-00000-of-00001.parquet%3B+filename%3D%22train-00000-of-00001.parquet%22%3B&Expires=1784760036&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly91cy5hd3MuY2RuLmhmLmNvL3hldC1icmlkZ2UtdXMvNjIxZmZkZDIzNjQ2OGQ3MDlmMTgxZjZlLzI4ODE2N2UyOWZjYzM2M2M1ZGUwZWE3ZGFlZTIyNDM2ZDc1MGYwOGY2OWI4YWVmNDI1ZTJhZmNhOTZlYjM4YjdcXD91c2VyX2lkPXB1YmxpYyZYLVhldC1DYXMtVWlkPXB1YmxpYyZyZXNwb25zZS1jb250ZW50LWRpc3Bvc2l0aW9uPWlubGluZSUzQitmaWxlbmFtZSUyQSUzRFVURi04JTI3JTI3dHJhaW4tMDAwMDAtb2YtMDAwMDEucGFycXVldCUzQitmaWxlbmFtZSUzRCUyMnRyYWluLTAwMDAwLW9mLTAwMDAxLnBhcnF1ZXQlMjIlM0IiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkVwb2NoVGltZSI6MTc4NDc2MDAzNn19fV19&Signature=MEUCIQDbSgqbgx7kUd%7EYx-CfqB78Kl1ODAHAd5scewqddBmJVAIgcuV8U0Ea1nMzGpFzue6sU8wTJH9X92DxztH0VS7qbhA_&Key-Pair-Id=01KXEF4KZ1B6FV465MAWR4M21F",
+      "cache_path": "downloads/sciq-train.parquet",
+      "size_bytes": 3993099,
+      "sha256": "19644360954006d06e9ad3df07bddb34f8535c081b831d48f604603c713ac167",
+      "downloaded_at": "2026-07-22T21:40:39.198534+00:00",
+      "config_fingerprint": "a751960058371fdf6e988b1555c5a596ed89ad7d74a48f741bf07183d1c509c0",
+      "config": {
+        "config_version": 2,
+        "key": "sciq-train",
+        "kind": "sciq",
+        "requested_url": "https://huggingface.co/datasets/allenai/sciq/resolve/2c94ad3e1aafab77146f384e23536f97a4849815/data/train-00000-of-00001.parquet",
+        "max_items": null,
+        "license_name": "CC BY-NC 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-nc/3.0/",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null,
+        "expected_sha256": "19644360954006d06e9ad3df07bddb34f8535c081b831d48f604603c713ac167"
       }
     }
   ]
