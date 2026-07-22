@@ -110,6 +110,8 @@ class WorkDatabase:
                 top_scene,
                 sub_scene,
             )
+            if existing is not None and tuple(existing[1:]) == derived_input:
+                return int(existing[0])
             connection.execute(
                 """
                 INSERT INTO raw_items(

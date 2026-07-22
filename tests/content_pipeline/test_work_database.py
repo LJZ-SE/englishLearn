@@ -39,6 +39,24 @@ def test_work_database_is_idempotent_and_resumes_pending_rows(tmp_path: Path) ->
     assert [row.id for row in database.claim_batch("dedupe", limit=10)] == [first_id]
 
 
+def test_upsert_raw_does_not_write_when_source_fields_are_unchanged(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    with database.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TRIGGER reject_unchanged_raw_update
+            BEFORE UPDATE ON raw_items
+            BEGIN
+                SELECT RAISE(ABORT, 'unchanged row should not be updated');
+            END;
+            """
+        )
+
+    assert add_raw_item(database) == item_id
+
+
 def test_work_database_preserves_provenance_and_excludes_rejected_rows(tmp_path: Path) -> None:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
