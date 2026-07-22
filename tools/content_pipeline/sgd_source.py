@@ -80,18 +80,16 @@ def iter_sgd_utterances(archive_path: Path) -> Iterator[CollectedSentence]:
                         raise ValueError(f"SGD turn 不是对象: {dialogue_id}")
                     utterance = turn.get("utterance")
                     if not isinstance(utterance, str):
-                        raise ValueError(
-                            f"SGD utterance: {dialogue_id} 必须是非空字符串"
-                        )
+                        raise ValueError(f"SGD utterance: {dialogue_id} 必须是字符串")
                     _required_json_string(
                         turn.get("speaker"), f"SGD speaker: {dialogue_id}"
                     )
-                    text = utterance.strip()
-                    if not text:
-                        continue
                     frames = turn.get("frames")
                     if not isinstance(frames, list):
                         raise ValueError(f"SGD turn 缺少 frames 数组: {dialogue_id}")
+                    text = utterance.strip()
+                    if not text:
+                        continue
                     service = _unambiguous_service(frames, dialogue_services)
                     sub_scene = _service_scene(service, schemas[split]) if service else None
                     if not sub_scene:

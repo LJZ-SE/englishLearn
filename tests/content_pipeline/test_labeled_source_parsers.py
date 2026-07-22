@@ -105,6 +105,33 @@ def test_sgd_skips_empty_string_turns_and_keeps_valid_turns(tmp_path: Path) -> N
     )
 
 
+def test_sgd_rejects_invalid_frames_container_on_empty_turn(tmp_path: Path) -> None:
+    from tools.content_pipeline.sgd_source import iter_sgd_utterances
+
+    archive_path = tmp_path / "sgd.zip"
+    _write_sgd_archive(
+        archive_path,
+        [
+            {
+                "dialogue_id": "malformed-empty-turn",
+                "services": ["Flights_1"],
+                "turns": [
+                    {"speaker": "SYSTEM", "utterance": "  ", "frames": 7},
+                    {
+                        "speaker": "USER",
+                        "utterance": "Book a flight tomorrow.",
+                        "frames": [{"service": "Flights_1"}],
+                    },
+                ],
+            }
+        ],
+        [{"service_name": "Flights_1", "description": "Search and book flights."}],
+    )
+
+    with pytest.raises(ValueError, match="SGD turn 缺少 frames 数组"):
+        list(iter_sgd_utterances(archive_path))
+
+
 def test_sgd_uses_schema_description_for_health_services(tmp_path: Path) -> None:
     from tools.content_pipeline.sgd_source import iter_sgd_utterances
 
@@ -229,17 +256,17 @@ def test_sgd_rejects_frame_service_outside_dialogue_services(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
-    ("field", "invalid_value"),
+    ("field", "invalid_value", "expected_message"),
     [
-        ("dialogue_id", 7),
-        ("services_item", 7),
-        ("speaker", 7),
-        ("utterance", 7),
-        ("frame_service", 7),
+        ("dialogue_id", 7, "必须是非空字符串"),
+        ("services_item", 7, "必须是非空字符串"),
+        ("speaker", 7, "必须是非空字符串"),
+        ("utterance", 7, "必须是字符串"),
+        ("frame_service", 7, "必须是非空字符串"),
     ],
 )
 def test_sgd_rejects_non_string_json_fields(
-    tmp_path: Path, field: str, invalid_value: object
+    tmp_path: Path, field: str, invalid_value: object, expected_message: str
 ) -> None:
     from tools.content_pipeline.sgd_source import iter_sgd_utterances
 
@@ -271,7 +298,7 @@ def test_sgd_rejects_non_string_json_fields(
         [{"service_name": "Flights_1", "description": "Flights"}],
     )
 
-    with pytest.raises(ValueError, match="必须是非空字符串"):
+    with pytest.raises(ValueError, match=expected_message):
         list(iter_sgd_utterances(archive_path))
 
 
