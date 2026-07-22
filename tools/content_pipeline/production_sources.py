@@ -177,6 +177,11 @@ def import_all_sources(
                 continue
             items = _iter_source(kind, cache_path, source)
             source_count = _import_items(database, items, source.get("max_items"))
+            if source_count == 0:
+                raise ValueError(
+                    f"来源 {source['key']} 未导入任何记录，"
+                    f"保留 pending identity: {identity}"
+                )
             imported[kind] += source_count
             identity_imported += source_count
         if identity_imported == 0:

@@ -68,6 +68,24 @@ def _write_gutenberg_source(
     }
 
 
+def _write_empty_gutenberg_source(
+    tmp_path: Path, key: str, ebook_id: int
+) -> dict[str, object]:
+    text = tmp_path / f"empty-pg{ebook_id}.txt"
+    text.write_text(
+        f"Author: Sample Author {ebook_id}\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK SAMPLE ***\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK SAMPLE ***\n",
+        encoding="utf-8",
+    )
+    return {
+        "key": key,
+        "kind": "gutenberg",
+        "ebook_id": ebook_id,
+        "url": text.as_uri(),
+    }
+
+
 def _write_manifest(path: Path, sources: list[dict[str, object]]) -> None:
     path.write_text(json.dumps(sources), encoding="utf-8")
 
@@ -422,3 +440,27 @@ def test_pending_identity_parser_zero_items_never_completes_lock(
     assert interrupted["pending_refresh_identities"] == ["Tatoeba"]
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 0
+
+
+def test_empty_added_sibling_fails_even_when_shared_identity_has_valid_rows(
+    tmp_path: Path,
+) -> None:
+    database = _initialized_database(tmp_path / "work.db")
+    old_source = _write_gutenberg_source(tmp_path, "gutenberg-80", 80)
+    empty_source = _write_empty_gutenberg_source(tmp_path, "gutenberg-81", 81)
+    manifest = tmp_path / "manifest.json"
+    lock = tmp_path / "source-lock.json"
+    _write_manifest(manifest, [old_source])
+    import_all_sources(database, manifest, lock)
+    _write_manifest(manifest, [empty_source, old_source])
+
+    with pytest.raises(ValueError, match="gutenberg-81.*未导入任何记录"):
+        import_all_sources(database, manifest, lock, refresh_lock=True)
+
+    interrupted = json.loads(lock.read_text(encoding="utf-8"))
+    assert interrupted["complete"] is False
+    assert interrupted["pending_refresh_identities"] == ["Project Gutenberg"]
+    with database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM raw_items WHERE source_name = 'Project Gutenberg'"
+        ).fetchone()[0] == 0
