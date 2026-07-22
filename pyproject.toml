@@ -1,0 +1,52 @@
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10"]
+build-backend = "uv_build"
+
+[project]
+name = "listening-cloze"
+version = "0.1.0"
+description = "完全离线的 Windows 英语听写填空应用"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=2.0,<3",
+    "platformdirs>=4.3,<5",
+    "PySide6>=6.8,<7",
+    "supertonic==1.3.1",
+]
+
+[project.scripts]
+listening-cloze = "listening_cloze.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-cov>=6,<7",
+    "pytest-qt>=4.4,<5",
+    "pytest-xdist>=3.6,<4",
+    "ruff>=0.11,<1",
+]
+content = [
+    "beautifulsoup4>=4.13,<5",
+    "httpx>=0.28,<1",
+    "spacy>=3.8,<4",
+    "wordfreq>=3.1,<4",
+]
+packaging = [
+    "pyinstaller>=6.12,<7",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+    "qt_serial: 必须在 pytest 主进程串行执行的 Qt/QML 测试",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

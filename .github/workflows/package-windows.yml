@@ -1,0 +1,123 @@
+name: Package Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build offline installer
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      PYTHONUTF8: "1"
+      UV_CACHE_DIR: ${{ runner.temp }}\uv-cache
+
+    steps:
+      - name: 检出固定提交
+        uses: actions/checkout@v4
+
+      - name: 安装 Python 3.12 x64
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: 安装固定版本 uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.28"
+          enable-cache: true
+
+      - name: 按锁文件安装全部依赖组
+        run: uv sync --locked --all-groups
+
+      - name: 运行跨平台总测试
+        run: uv run python tools/run_tests.py
+
+      - name: 下载并校验固定版本 Supertonic 3
+        run: >-
+          uv run python tools/assets/fetch_supertonic3.py
+          --destination src/listening_cloze/data/supertonic-3
+
+      - name: 构建 onedir 应用
+        run: uv run pyinstaller --noconfirm --clean packaging/listening_cloze.spec
+
+      - name: 校验应用目录
+        shell: pwsh
+        run: |
+          $required = @(
+            "dist/ListeningCloze/ListeningCloze.exe",
+            "dist/ListeningCloze/_internal/listening_cloze/ui/qml/Main.qml",
+            "dist/ListeningCloze/_internal/listening_cloze/data/content.db",
+            "dist/ListeningCloze/_internal/listening_cloze/data/supertonic-3/onnx/vocoder.onnx",
+            "dist/ListeningCloze/_internal/listening_cloze/data/supertonic-3/voice_styles/F3.json"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "PyInstaller 产物缺少必需文件：$path"
+            }
+          }
+
+      - name: 运行离线打包产物冒烟检查
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          & "dist/ListeningCloze/ListeningCloze.exe" --smoke-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "打包产物离线冒烟检查失败：$LASTEXITCODE"
+          }
+
+      - name: 安装固定版本 Inno Setup
+        run: choco install innosetup --version=6.4.3 --yes --no-progress
+
+      - name: 生成安装包
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+          } else {
+            $version = "0.1.0-build.${{ github.run_number }}"
+          }
+          $env:PACKAGE_VERSION = $version
+          "PACKAGE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "找不到 Inno Setup ISCC.exe" }
+          & $iscc "packaging/listening_cloze.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 构建失败：$LASTEXITCODE" }
+
+      - name: 生成 SHA-256 与构建清单
+        shell: pwsh
+        run: >-
+          uv run python tools/assets/build_release_manifest.py
+          --input packaging/output/ListeningClozeSetup.exe
+          --output-directory packaging/output
+          --version "$env:PACKAGE_VERSION"
+          --commit "${{ github.sha }}"
+          --source-ref "${{ github.ref }}"
+          --runner "windows-2025-X64"
+          --model-manifest tools/assets/supertonic3_assets.json
+
+      - name: 上传私有 Windows 构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: listening-cloze-windows
+          path: |
+            packaging/output/ListeningClozeSetup.exe
+            packaging/output/SHA256SUMS.txt
+            packaging/output/build-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

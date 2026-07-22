@@ -8,6 +8,7 @@ htmlcov/
 build/
 dist/
 *.spec
+!packaging/listening_cloze.spec
+src/listening_cloze/data/supertonic-3/
 .superpowers/
 *.log
-

@@ -1,0 +1,29 @@
+{
+  "gate_status": "passed",
+  "sentence_count": 300,
+  "variant_count": 900,
+  "category_distribution": {
+    "daily": 75,
+    "exam": 75,
+    "movies": 75,
+    "news_podcasts": 75
+  },
+  "difficulty_distribution": {
+    "easy": 300,
+    "medium": 300,
+    "hard": 300
+  },
+  "answer_word_count_distribution": {
+    "1": 344,
+    "2": 189,
+    "3": 182,
+    "4": 185
+  },
+  "duplicate_rate": 0.0,
+  "rejected_count": 0,
+  "rejection_reasons": {},
+  "source_distribution": {
+    "English Wikinews": 75,
+    "Tatoeba": 225
+  }
+}

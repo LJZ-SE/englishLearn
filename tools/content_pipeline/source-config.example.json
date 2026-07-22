@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Tatoeba",
+    "url": "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences_detailed.tsv.bz2",
+    "format": "tsv",
+    "text_field": "text",
+    "item_url_template": "https://tatoeba.org/en/sentences/show/{id}",
+    "license_name": "CC BY 2.0 FR",
+    "license_url": "https://creativecommons.org/licenses/by/2.0/fr/",
+    "field_names": ["id", "language", "text", "author", "created_at", "updated_at"],
+    "author_field": "author",
+    "compression": "bz2"
+  }
+]
