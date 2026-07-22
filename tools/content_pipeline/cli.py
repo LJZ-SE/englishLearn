@@ -51,6 +51,7 @@ def main() -> None:
     import_all_parser.add_argument("work_db", type=Path)
     import_all_parser.add_argument("--manifest", type=Path, required=True)
     import_all_parser.add_argument("--lock", type=Path, required=True)
+    import_all_parser.add_argument("--refresh-lock", action="store_true")
     import_legacy_parser = subparsers.add_parser("import-legacy")
     import_legacy_parser.add_argument("legacy_db", type=Path)
     import_legacy_parser.add_argument("work_db", type=Path)
@@ -96,6 +97,7 @@ def main() -> None:
             database,
             arguments.manifest,
             arguments.lock,
+            refresh_lock=arguments.refresh_lock,
         )
         print(
             json.dumps(

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["uv_build>=0.9.28,<0.10"]
-build-backend = "uv_build"
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "listening-cloze"
@@ -48,6 +48,14 @@ testpaths = ["tests"]
 markers = [
     "qt_serial: 必须在 pytest 主进程串行执行的 Qt/QML 测试",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["listening_cloze*", "tools*"]
+
+[tool.setuptools.package-data]
+listening_cloze = ["ui/qml/*", "data/*", "data/**/*"]
+"tools.content_pipeline" = ["*.json"]
 
 [tool.ruff]
 target-version = "py312"

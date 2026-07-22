@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -27,42 +30,84 @@ _WIKINEWS_QUERY = {
     "generator": "categorymembers",
     "gcmtitle": "Category:Published",
     "gcmtype": "page",
-    "gcmlimit": "500",
+    "gcmlimit": "20",
     "prop": "extracts|info",
     "explaintext": "1",
+    "exintro": "1",
+    "exlimit": "20",
     "inprop": "url",
     "format": "json",
     "formatversion": "2",
 }
+_SAFE_KEY = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_LOCK_VERSION = 2
 
 
 def import_all_sources(
     database: WorkDatabase,
     manifest_path: Path,
     lock_path: Path,
+    *,
+    refresh_lock: bool = False,
 ) -> dict[str, int]:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_bytes = manifest_path.read_bytes()
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    manifest = json.loads(manifest_bytes)
     if not isinstance(manifest, list):
         raise ValueError("来源 manifest 必须是数组")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     cache_root = lock_path.parent / "downloads"
     cache_root.mkdir(parents=True, exist_ok=True)
-    existing = _read_lock(lock_path)
+    expanded = list(_expanded_sources(manifest))
+    _validate_expanded_sources(expanded, cache_root)
+    lock_payload = _read_lock_payload(lock_path)
+    existing = {str(entry["key"]): entry for entry in lock_payload.get("sources", [])}
+    if existing and not refresh_lock:
+        locked_manifest = lock_payload.get("manifest_sha256")
+        if locked_manifest != manifest_sha256:
+            raise ValueError("来源 manifest 已漂移；如需更新必须显式使用 --refresh-lock")
+    if refresh_lock and existing and set(existing) != {str(row["key"]) for row in expanded}:
+        raise ValueError("refresh-lock 不允许增删来源 key，避免遗留 stale raw")
     locked: list[dict[str, Any]] = []
     imported: Counter[str] = Counter()
 
-    for source in _expanded_sources(manifest):
+    for source in expanded:
         key = _required_string(source, "key")
         kind = _required_string(source, "kind")
         url = _source_url(source)
         cache_path = cache_root / _cache_filename(key, url)
-        entry = _download_locked(key, kind, url, cache_path, existing.get(key))
+        fingerprint = _config_fingerprint(source, url)
+        previous = existing.get(key)
+        changed = previous is not None and previous.get("config_fingerprint") != fingerprint
+        compatible_migration = bool(
+            previous and _legacy_lock_compatible(previous, kind, url, source)
+        )
+        if changed and not refresh_lock:
+            raise ValueError(f"冻结来源配置已漂移: {key}")
+        requires_refresh = bool(changed and refresh_lock and not compatible_migration)
+        entry = _download_locked(
+            key,
+            kind,
+            url,
+            cache_path,
+            previous,
+            source=source,
+            refresh=requires_refresh,
+        )
+        entry["config_fingerprint"] = fingerprint
+        entry["config"] = _source_config(source, url)
+        if requires_refresh:
+            database.delete_raw_source(_raw_source_name(source))
         locked.append(entry)
-        _checkpoint_source_lock(lock_path, manifest_path, locked, existing)
+        _checkpoint_source_lock(
+            lock_path, manifest_path, manifest_sha256, locked, existing, complete=False
+        )
         items = _iter_source(kind, cache_path, source)
         imported[kind] += _import_items(database, items, source.get("max_items"))
 
-    _checkpoint_source_lock(lock_path, manifest_path, locked, {})
+    _checkpoint_source_lock(
+        lock_path, manifest_path, manifest_sha256, locked, {}, complete=True
+    )
     return dict(imported)
 
 
@@ -175,8 +220,13 @@ def report_sources(database: WorkDatabase, output_path: Path) -> dict[str, Any]:
 
 def verify_source_lock(lock_path: Path) -> None:
     payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    if payload.get("version") != _LOCK_VERSION or not payload.get("manifest_sha256"):
+        raise ValueError("source lock 版本过旧或缺少 manifest SHA-256")
     for entry in payload.get("sources", []):
-        cache_path = lock_path.parent / str(entry["cache_path"])
+        cache_path = (lock_path.parent / str(entry["cache_path"])).resolve()
+        downloads = (lock_path.parent / "downloads").resolve()
+        if not cache_path.is_relative_to(downloads):
+            raise ValueError(f"冻结来源缓存越界: {cache_path}")
         if not cache_path.is_file():
             raise ValueError(f"冻结来源缓存不存在: {cache_path}")
         size, digest = _file_fingerprint(cache_path)
@@ -222,19 +272,28 @@ def _download_locked(
     url: str,
     cache_path: Path,
     existing: dict[str, Any] | None,
+    *,
+    source: dict[str, Any],
+    refresh: bool,
 ) -> dict[str, Any]:
     if existing and cache_path.is_file():
         size, digest = _file_fingerprint(cache_path)
-        if size == existing.get("size_bytes") and digest == existing.get("sha256"):
+        if not refresh and size == existing.get("size_bytes") and digest == existing.get("sha256"):
             return dict(existing)
-    request = urllib.request.Request(url, headers={"User-Agent": "listening-cloze/0.1"})
     temporary = cache_path.with_suffix(cache_path.suffix + ".part")
-    with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as target:
-        while chunk := response.read(1024 * 1024):
-            target.write(chunk)
-        final_url = response.geturl()
+    if kind != "wikinews":
+        temporary.unlink(missing_ok=True)
+    if kind == "wikinews" and url.startswith(("http://", "https://")):
+        final_url = _download_wikinews_snapshot(url, temporary, source)
+    else:
+        final_url = _download_url(url, temporary)
+    size, digest = _file_fingerprint(temporary)
+    if existing and not refresh and (
+        size != existing.get("size_bytes") or digest != existing.get("sha256")
+    ):
+        temporary.unlink(missing_ok=True)
+        raise ValueError(f"上游来源字节已变化，拒绝覆盖冻结缓存: {key}")
     temporary.replace(cache_path)
-    size, digest = _file_fingerprint(cache_path)
     return {
         "key": key,
         "kind": kind,
@@ -245,6 +304,86 @@ def _download_locked(
         "sha256": digest,
         "downloaded_at": datetime.now(UTC).isoformat(),
     }
+
+
+def _download_url(url: str, target_path: Path) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "listening-cloze/0.1"})
+    with urllib.request.urlopen(request, timeout=120) as response, target_path.open("wb") as target:
+        while chunk := response.read(1024 * 1024):
+            target.write(chunk)
+        return response.geturl()
+
+
+def _download_wikinews_snapshot(url: str, target_path: Path, source: dict[str, Any]) -> str:
+    base_url = url.split("?", 1)[0]
+    article_limit = int(source.get("article_limit", 2000))
+    batch_size = int(source.get("batch_size", 20))
+    pages: dict[int, dict[str, Any]] = {}
+    scanned_page_ids: set[int] = set()
+    continuation: dict[str, str] = {}
+    if target_path.is_file():
+        checkpoint = json.loads(target_path.read_text(encoding="utf-8"))
+        if checkpoint.get("checkpoint_version") == 1:
+            pages = {int(page["pageid"]): page for page in checkpoint.get("pages", [])}
+            scanned_page_ids = {int(value) for value in checkpoint.get("scanned_page_ids", [])}
+            continuation = {
+                str(key): str(value) for key, value in checkpoint.get("continuation", {}).items()
+            }
+    while len(scanned_page_ids) < article_limit:
+        query = _WIKINEWS_QUERY | {
+            "gcmlimit": str(batch_size),
+            "exlimit": str(batch_size),
+        } | continuation
+        request_url = f"{base_url}?{urllib.parse.urlencode(query)}"
+        request = urllib.request.Request(
+            request_url, headers={"User-Agent": "listening-cloze/0.1"}
+        )
+        payload = _read_json_with_retries(request)
+        for page in payload.get("query", {}).get("pages", []):
+            page_id = page.get("pageid")
+            if isinstance(page_id, int):
+                scanned_page_ids.add(page_id)
+                if page.get("extract"):
+                    pages[page_id] = page
+        next_values = payload.get("continue")
+        if not isinstance(next_values, dict):
+            break
+        continuation = {str(key): str(value) for key, value in next_values.items()}
+        _atomic_write_json(
+            target_path,
+            {
+                "checkpoint_version": 1,
+                "pages": [pages[key] for key in sorted(pages)],
+                "scanned_page_ids": sorted(scanned_page_ids),
+                "continuation": continuation,
+            },
+        )
+        time.sleep(0.25)
+    stable_pages = [pages[key] for key in sorted(pages)[:article_limit]]
+    target_path.write_text(
+        json.dumps({"query": {"pages": stable_pages}}, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    return base_url
+
+
+def _read_json_with_retries(request: urllib.request.Request) -> dict[str, Any]:
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = json.load(response)
+            if not isinstance(payload, dict):
+                raise ValueError("Wikinews API 响应不是对象")
+            return payload
+        except (urllib.error.HTTPError, urllib.error.URLError) as error:
+            if isinstance(error, urllib.error.HTTPError) and error.code != 429:
+                raise
+            if attempt == 5:
+                raise
+            retry_after = error.headers.get("Retry-After") if hasattr(error, "headers") else None
+            delay = float(retry_after) if retry_after else float(2 ** (attempt + 1))
+            time.sleep(min(delay, 60.0))
+    raise RuntimeError("Wikinews 重试循环意外结束")
 
 
 def _iter_source(
@@ -368,18 +507,20 @@ def _file_fingerprint(path: Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
-def _read_lock(path: Path) -> dict[str, dict[str, Any]]:
+def _read_lock_payload(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return {str(entry["key"]): entry for entry in payload.get("sources", [])}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _checkpoint_source_lock(
     lock_path: Path,
     manifest_path: Path,
+    manifest_sha256: str,
     locked: list[dict[str, Any]],
     existing: dict[str, dict[str, Any]],
+    *,
+    complete: bool,
 ) -> None:
     completed_keys = {str(entry["key"]) for entry in locked}
     sources = [
@@ -389,11 +530,75 @@ def _checkpoint_source_lock(
     _atomic_write_json(
         lock_path,
         {
-            "version": 1,
+            "version": _LOCK_VERSION,
             "manifest": str(manifest_path),
+            "manifest_sha256": manifest_sha256,
+            "complete": complete,
             "sources": sources,
         },
     )
+
+
+def _validate_expanded_sources(sources: list[dict[str, Any]], cache_root: Path) -> None:
+    keys: set[str] = set()
+    paths: set[Path] = set()
+    root = cache_root.resolve()
+    for source in sources:
+        key = _required_string(source, "key")
+        if not _SAFE_KEY.fullmatch(key):
+            raise ValueError(f"来源 key 不是安全 slug: {key}")
+        if key in keys:
+            raise ValueError(f"来源 manifest 包含重复 expanded key: {key}")
+        keys.add(key)
+        url = _source_url(source)
+        path = (cache_root / _cache_filename(key, url)).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError(f"来源缓存路径越界: {path}")
+        if path in paths:
+            raise ValueError(f"来源 manifest 包含重复缓存路径: {path.name}")
+        paths.add(path)
+
+
+def _source_config(source: dict[str, Any], url: str) -> dict[str, Any]:
+    return {
+        "config_version": 2,
+        "key": source["key"],
+        "kind": source["kind"],
+        "requested_url": url,
+        "max_items": source.get("max_items"),
+        "license_name": source.get("license_name"),
+        "license_url": source.get("license_url"),
+        "ebook_id": source.get("ebook_id"),
+        "article_limit": source.get("article_limit"),
+        "batch_size": source.get("batch_size"),
+        "snapshot_version": source.get("snapshot_version"),
+    }
+
+
+def _config_fingerprint(source: dict[str, Any], url: str) -> str:
+    encoded = json.dumps(_source_config(source, url), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _legacy_lock_compatible(
+    entry: dict[str, Any], kind: str, url: str, source: dict[str, Any]
+) -> bool:
+    if entry.get("kind") != kind:
+        return False
+    if kind == "wikinews":
+        return False
+    return entry.get("requested_url") == url
+
+
+def _raw_source_name(source: dict[str, Any]) -> str:
+    kind = str(source["kind"])
+    if kind == "tatoeba":
+        return "Tatoeba"
+    if kind == "wikinews":
+        return "English Wikinews"
+    if kind == "gutenberg":
+        return "Project Gutenberg"
+    return str(source["key"])
 
 
 def _required_string(source: dict[str, Any], field: str) -> str:

@@ -25,6 +25,9 @@
     "key": "english-wikinews",
     "kind": "wikinews",
     "url": "https://en.wikinews.org/w/api.php",
+    "article_limit": 500,
+    "batch_size": 20,
+    "snapshot_version": 2,
     "license_name": "per-item license",
     "license_url": "https://en.wikinews.org/wiki/Wikinews:Copyright"
   },

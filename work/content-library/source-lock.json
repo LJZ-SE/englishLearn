@@ -1,6 +1,8 @@
 {
-  "version": 1,
+  "version": 2,
   "manifest": "tools/content_pipeline/source_manifest.json",
+  "manifest_sha256": "df738c4e4ac70e01a461dcee0e351a7d9ca97be4302d8ed2118b342c30389b80",
+  "complete": true,
   "sources": [
     {
       "key": "tatoeba-eng",
@@ -10,7 +12,21 @@
       "cache_path": "downloads/tatoeba-eng.tsv.bz2",
       "size_bytes": 34771166,
       "sha256": "cfed73b192687e58394630d769cc787e28c7640c68aa2d3d3abc108555d90eb7",
-      "downloaded_at": "2026-07-22T15:18:48.985146+00:00"
+      "downloaded_at": "2026-07-22T15:18:48.985146+00:00",
+      "config_fingerprint": "48a74b4297a7056a920bd31b4d57323077e00ac3f227c1d63971fdc74bf35f80",
+      "config": {
+        "config_version": 2,
+        "key": "tatoeba-eng",
+        "kind": "tatoeba",
+        "requested_url": "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences_detailed.tsv.bz2",
+        "max_items": 150000,
+        "license_name": "CC BY 2.0 FR",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/fr/",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "cornell-movie-dialogs",
@@ -20,7 +36,21 @@
       "cache_path": "downloads/cornell-movie-dialogs.zip",
       "size_bytes": 40854701,
       "sha256": "c3581e79d31e55cc8242591e66f829e84c8bd98a2a9c017bd851382dcdc17ac2",
-      "downloaded_at": "2026-07-22T15:20:00.277187+00:00"
+      "downloaded_at": "2026-07-22T15:20:00.277187+00:00",
+      "config_fingerprint": "ef01595dcc5b3d5072943db3f0b3c4522bf950678557b27eef257be17e8f5728",
+      "config": {
+        "config_version": 2,
+        "key": "cornell-movie-dialogs",
+        "kind": "convokit",
+        "requested_url": "https://zissou.infosci.cornell.edu/convokit/datasets/movie-corpus/movie-corpus.zip",
+        "max_items": null,
+        "license_name": "source terms",
+        "license_url": "https://convokit.cornell.edu/documentation/movie.html",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "switchboard",
@@ -30,17 +60,45 @@
       "cache_path": "downloads/switchboard.zip",
       "size_bytes": 5810437,
       "sha256": "c903ef6542a9838d23fe5cf00c4cfc4727ca54cadb55c61916f090498141c817",
-      "downloaded_at": "2026-07-22T15:23:24.869560+00:00"
+      "downloaded_at": "2026-07-22T15:23:24.869560+00:00",
+      "config_fingerprint": "9f62749b527f0443f6441f0392a20980ca923a542ec3419c6a38e361b97152a8",
+      "config": {
+        "config_version": 2,
+        "key": "switchboard",
+        "kind": "convokit",
+        "requested_url": "https://zissou.infosci.cornell.edu/convokit/datasets/switchboard-corpus/switchboard-corpus.zip",
+        "max_items": null,
+        "license_name": "source terms",
+        "license_url": "https://convokit.cornell.edu/documentation/switchboard.html",
+        "ebook_id": null,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "english-wikinews",
       "kind": "wikinews",
-      "requested_url": "https://en.wikinews.org/w/api.php?action=query&generator=categorymembers&gcmtitle=Category%3APublished&gcmtype=page&gcmlimit=500&prop=extracts%7Cinfo&explaintext=1&inprop=url&format=json&formatversion=2",
-      "final_url": "https://en.wikinews.org/w/api.php?action=query&generator=categorymembers&gcmtitle=Category%3APublished&gcmtype=page&gcmlimit=500&prop=extracts%7Cinfo&explaintext=1&inprop=url&format=json&formatversion=2",
+      "requested_url": "https://en.wikinews.org/w/api.php?action=query&generator=categorymembers&gcmtitle=Category%3APublished&gcmtype=page&gcmlimit=20&prop=extracts%7Cinfo&explaintext=1&exintro=1&exlimit=20&inprop=url&format=json&formatversion=2",
+      "final_url": "https://en.wikinews.org/w/api.php",
       "cache_path": "downloads/english-wikinews.php",
-      "size_bytes": 294658,
-      "sha256": "8fefb9d225da17b0751fd3164c90e5a6e6ce8b0885f87bc7ec2515990f8f35f3",
-      "downloaded_at": "2026-07-22T15:24:51.015244+00:00"
+      "size_bytes": 1146143,
+      "sha256": "f038da78e75d9eaff6646721ca79c7cd3078f383df0ad33c2ec57583fc8626b2",
+      "downloaded_at": "2026-07-22T16:15:14.204265+00:00",
+      "config_fingerprint": "bd1b612f279d05a178003976d777d375852e5d9b474008f2b23f2b110552a093",
+      "config": {
+        "config_version": 2,
+        "key": "english-wikinews",
+        "kind": "wikinews",
+        "requested_url": "https://en.wikinews.org/w/api.php?action=query&generator=categorymembers&gcmtitle=Category%3APublished&gcmtype=page&gcmlimit=20&prop=extracts%7Cinfo&explaintext=1&exintro=1&exlimit=20&inprop=url&format=json&formatversion=2",
+        "max_items": null,
+        "license_name": "per-item license",
+        "license_url": "https://en.wikinews.org/wiki/Wikinews:Copyright",
+        "ebook_id": null,
+        "article_limit": 500,
+        "batch_size": 20,
+        "snapshot_version": 2
+      }
     },
     {
       "key": "gutenberg-11",
@@ -50,7 +108,21 @@
       "cache_path": "downloads/gutenberg-11.txt",
       "size_bytes": 174311,
       "sha256": "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e",
-      "downloaded_at": "2026-07-22T15:24:53.292382+00:00"
+      "downloaded_at": "2026-07-22T15:24:53.292382+00:00",
+      "config_fingerprint": "fb975a852d14cecbb69d8d04b7ea2acceaf6eb79dccdb36f555c724182a3a5fc",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-11",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 11,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-74",
@@ -60,7 +132,21 @@
       "cache_path": "downloads/gutenberg-74.txt",
       "size_bytes": 434357,
       "sha256": "74d77384b123a6360db9ab58463cff8b38df8525fbdc6000c81ee388e1f3cf10",
-      "downloaded_at": "2026-07-22T15:24:55.824305+00:00"
+      "downloaded_at": "2026-07-22T15:24:55.824305+00:00",
+      "config_fingerprint": "139a36e3b366b02a5b29f92e252a286746ce597dfb110398543acba96a6c6236",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-74",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/74/pg74.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 74,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-76",
@@ -70,7 +156,21 @@
       "cache_path": "downloads/gutenberg-76.txt",
       "size_bytes": 622460,
       "sha256": "d617a37aa7ae1e1a93dcde2634db2bccb86824e31e29a55230bdbf77d6872d59",
-      "downloaded_at": "2026-07-22T15:25:00.933935+00:00"
+      "downloaded_at": "2026-07-22T15:25:00.933935+00:00",
+      "config_fingerprint": "e5fb8972394f11004eed62f2cae696bcb6a8c6cda434090b4140d352268a431b",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-76",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/76/pg76.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 76,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-84",
@@ -80,7 +180,21 @@
       "cache_path": "downloads/gutenberg-84.txt",
       "size_bytes": 448885,
       "sha256": "7810cd483cffcf2cc8a1d8f0d5807931e69d4f48cd14149b8c76f88af82fead3",
-      "downloaded_at": "2026-07-22T15:25:05.302410+00:00"
+      "downloaded_at": "2026-07-22T15:25:05.302410+00:00",
+      "config_fingerprint": "5a6a19042b84bf87b9513a8c856ee4b44982502bd5ff1622a1aa6b3fabec8cbd",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-84",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 84,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-98",
@@ -90,7 +204,21 @@
       "cache_path": "downloads/gutenberg-98.txt",
       "size_bytes": 807197,
       "sha256": "d54c2b80d40a40b982cd88852c6180bb944d95acdb028af3d0e01a1750681784",
-      "downloaded_at": "2026-07-22T15:25:09.263932+00:00"
+      "downloaded_at": "2026-07-22T15:25:09.263932+00:00",
+      "config_fingerprint": "0fdab34294792bba18af83877262c128d380e14d8884751f9c68d2576428c9c9",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-98",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/98/pg98.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 98,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-1342",
@@ -100,7 +228,21 @@
       "cache_path": "downloads/gutenberg-1342.txt",
       "size_bytes": 772386,
       "sha256": "74f2665d6e6925fc2c17dec644bec9e87df478a0f1836822125e8acbb3777806",
-      "downloaded_at": "2026-07-22T15:25:15.340065+00:00"
+      "downloaded_at": "2026-07-22T15:25:15.340065+00:00",
+      "config_fingerprint": "c179eb7068b41bfc0bdb08983f8d375cf0da2c8c79c1911fca8efec46d78c7e7",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-1342",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 1342,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-1661",
@@ -110,7 +252,21 @@
       "cache_path": "downloads/gutenberg-1661.txt",
       "size_bytes": 607606,
       "sha256": "922e2a12ccb43a4c9544c260b2166c6ad2097aeb5957faeee113f173bb857cd0",
-      "downloaded_at": "2026-07-22T15:25:23.133542+00:00"
+      "downloaded_at": "2026-07-22T15:25:23.133542+00:00",
+      "config_fingerprint": "6faee96a6308996d938a6ba0ae5cf3951b79e0f18e338256cae5c8f126d9ca53",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-1661",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 1661,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-2701",
@@ -120,7 +276,21 @@
       "cache_path": "downloads/gutenberg-2701.txt",
       "size_bytes": 1276263,
       "sha256": "9a6844ac0703853720010787c7b6c70b0020f1ab1862dcd74452fa46474d1215",
-      "downloaded_at": "2026-07-22T15:25:27.832162+00:00"
+      "downloaded_at": "2026-07-22T15:25:27.832162+00:00",
+      "config_fingerprint": "f2808a2e09cf2a4578d7d6a49b14d3d1ffb90aba6f3bc8b1b79cecc469fd7cac",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-2701",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 2701,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-345",
@@ -130,7 +300,21 @@
       "cache_path": "downloads/gutenberg-345.txt",
       "size_bytes": 890348,
       "sha256": "96cd16eacdbfebae8fdda5591f66e0cc8ee76be18e0cd1aca02bc00615782d28",
-      "downloaded_at": "2026-07-22T15:25:33.501237+00:00"
+      "downloaded_at": "2026-07-22T15:25:33.501237+00:00",
+      "config_fingerprint": "fbdedddd4c05f042f20ab6198e648ca3262d481c48e107abd5fd656b3b7bcb38",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-345",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/345/pg345.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 345,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     },
     {
       "key": "gutenberg-174",
@@ -140,7 +324,21 @@
       "cache_path": "downloads/gutenberg-174.txt",
       "size_bytes": 465814,
       "sha256": "38f36b510417177aa87a6a24c968e3ec63a447b7df36a9c1a7c5a3f2d9e51547",
-      "downloaded_at": "2026-07-22T15:25:39.065457+00:00"
+      "downloaded_at": "2026-07-22T15:25:39.065457+00:00",
+      "config_fingerprint": "a03e2b4051f1ac2e8738415ce61baa97d3c206b07d2f73177974d1189c627581",
+      "config": {
+        "config_version": 2,
+        "key": "gutenberg-174",
+        "kind": "gutenberg",
+        "requested_url": "https://www.gutenberg.org/cache/epub/174/pg174.txt",
+        "max_items": null,
+        "license_name": "per-item terms",
+        "license_url": "https://www.gutenberg.org/policy/license.html",
+        "ebook_id": 174,
+        "article_limit": null,
+        "batch_size": null,
+        "snapshot_version": null
+      }
     }
   ]
 }

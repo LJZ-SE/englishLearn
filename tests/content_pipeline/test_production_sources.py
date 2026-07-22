@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -134,6 +135,67 @@ def test_import_all_checkpoints_download_lock_before_source_import(
     assert cached.is_file()
 
 
+def test_import_all_rejects_manifest_drift_without_refresh(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    manifest = _write_source_fixtures(tmp_path)
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload[0]["max_items"] = 99
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="manifest 已漂移"):
+        import_all_sources(database, manifest, lock)
+
+
+@pytest.mark.parametrize("unsafe_key", ["../escape", "Uppercase", "two--dashes"])
+def test_import_all_rejects_unsafe_manifest_keys(tmp_path: Path, unsafe_key: str) -> None:
+    manifest = _write_source_fixtures(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload[0]["key"] = unsafe_key
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+
+    with pytest.raises(ValueError, match="安全 slug"):
+        import_all_sources(database, manifest, tmp_path / "source-lock.json")
+
+
+def test_import_all_rejects_duplicate_expanded_keys(tmp_path: Path) -> None:
+    manifest = _write_source_fixtures(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload.append(payload[0])
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+
+    with pytest.raises(ValueError, match="重复 expanded key"):
+        import_all_sources(database, manifest, tmp_path / "source-lock.json")
+
+
+def test_locked_source_rejects_changed_upstream_bytes_without_overwriting_lock(
+    tmp_path: Path,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    manifest = _write_source_fixtures(tmp_path)
+    lock = tmp_path / "source-lock.json"
+    import_all_sources(database, manifest, lock)
+    before = lock.read_bytes()
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    upstream = Path(urllib.parse.urlparse(payload[0]["url"]).path)
+    with bz2.open(upstream, "wt", encoding="utf-8") as stream:
+        stream.write("2\teng\tChanged upstream bytes.\tbob\n")
+    cached = lock.parent / json.loads(before)["sources"][0]["cache_path"]
+    cached.write_bytes(b"corrupt")
+
+    with pytest.raises(ValueError, match="上游来源字节已变化"):
+        import_all_sources(database, manifest, lock)
+
+    assert lock.read_bytes() == before
+
+
 def _write_legacy_database(path: Path) -> None:
     with sqlite3.connect(path) as connection:
         connection.executescript(
@@ -261,6 +323,7 @@ def test_installed_content_entrypoint_loads_repository_tools(
     from listening_cloze.content_cli import main
 
     database = tmp_path / "work.db"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["listening-cloze-content", "init", str(database)])
     main()
 

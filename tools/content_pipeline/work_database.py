@@ -214,6 +214,28 @@ class WorkDatabase:
             for row in rows
         ]
 
+    def delete_raw_source(self, source_name: str) -> int:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            item_ids = [
+                int(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM raw_items WHERE source_name = ?", (source_name,)
+                )
+            ]
+            if not item_ids:
+                return 0
+            placeholders = ",".join("?" for _ in item_ids)
+            for table in ("stage_results", "rejections", "translation_repairs"):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE item_id IN ({placeholders})", item_ids
+                )
+            connection.execute(
+                f"DELETE FROM raw_items WHERE id IN ({placeholders})", item_ids
+            )
+            _invalidate_selection_snapshot(connection)
+        return len(item_ids)
+
     def stage_inputs(
         self,
         stage: str,
