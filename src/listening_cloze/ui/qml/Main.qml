@@ -6,7 +6,7 @@ ApplicationWindow {
     id: appWindow
     width: 1440
     height: 900
-    minimumWidth: 1080
+    minimumWidth: 960
     minimumHeight: 700
     visible: true
     title: "听写填空"
@@ -89,8 +89,9 @@ ApplicationWindow {
                 selected: true
             }
             ChoiceChip {
+                objectName: "headerSceneLabel"
                 visible: appWindow.pageName === "practice"
-                text: appWindow.backend ? appWindow.backend.categoryLabel : "日常口语"
+                text: appWindow.backend ? appWindow.backend.sceneLabel : "日常生活"
                 selected: true
                 accent: "#20A46B"
             }
