@@ -13,6 +13,9 @@ class CollectedSentence:
     category_hint: str | None = None
     source_author: str = ""
     translation_zh: str = ""
+    source_item_id: str = ""
+    top_scene: str | None = None
+    sub_scene: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
