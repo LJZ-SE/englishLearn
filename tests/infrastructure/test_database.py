@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -79,7 +80,7 @@ def create_content_database(path: Path) -> None:
 
 
 def create_legacy_user_database(path: Path, marker: str = "original") -> None:
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("CREATE TABLE legacy_marker(value TEXT NOT NULL)")
         connection.execute("INSERT INTO legacy_marker VALUES (?)", (marker,))
         connection.execute("PRAGMA user_version = 0")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import Counter, defaultdict
+from contextlib import closing
 from pathlib import Path
 
 from tools.content_pipeline.candidates import generate_variants
@@ -121,7 +122,7 @@ def build_database(
 
     phrase_lengths: Counter[int] = Counter()
     source_counts: Counter[tuple[str, str, str, str, str]] = Counter()
-    with sqlite3.connect(temporary) as connection:
+    with closing(sqlite3.connect(temporary)) as connection, connection:
         connection.executescript(_SCHEMA)
         sentence_number = 0
         for category in CATEGORIES:
