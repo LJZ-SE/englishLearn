@@ -316,8 +316,19 @@ class WorkDatabase:
         model_version: str = "",
     ) -> None:
         previous_stage = _previous_stage(stage)
+        payload_json = _dump_payload(payload)
         with self.connect() as connection:
-            connection.execute("BEGIN")
+            connection.execute("BEGIN IMMEDIATE" if stage == "classify" else "BEGIN")
+            existing_generation = None
+            if stage == "classify":
+                existing_generation = connection.execute(
+                    """
+                    SELECT payload_json, model_version
+                    FROM stage_results
+                    WHERE item_id = ? AND stage = ?
+                    """,
+                    (item_id, stage),
+                ).fetchone()
             rejection = connection.execute(
                 "SELECT 1 FROM rejections WHERE item_id = ?", (item_id,)
             ).fetchone()
@@ -330,6 +341,10 @@ class WorkDatabase:
                 ).fetchone()
                 if predecessor is None:
                     raise ValueError(f"阶段 {stage} 缺少成功前置阶段: {previous_stage}")
+            if existing_generation == (payload_json, model_version):
+                return
+            if stage == "classify":
+                _invalidate_selection_snapshot(connection)
             connection.execute(
                 """
                 INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
@@ -339,7 +354,7 @@ class WorkDatabase:
                     model_version = excluded.model_version,
                     updated_at = excluded.updated_at
                 """,
-                (item_id, stage, _dump_payload(payload), model_version, _now()),
+                (item_id, stage, payload_json, model_version, _now()),
             )
 
     def record_rejection(self, item_id: int, stage: str, reason: str) -> None:

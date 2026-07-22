@@ -513,3 +513,113 @@ def test_identical_rejection_keeps_rebuilt_selection_snapshot(
     assert counts["select"] == 25
     assert counts["translate"] == 25
     assert counts["variants"] == 25
+
+
+def test_new_candidate_invalidates_snapshot_only_when_classify_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, _ = _database_with_selected_snapshot(
+        tmp_path / "work.db", monkeypatch, candidate_count=25
+    )
+    new_id = database.upsert_raw(
+        source_name="aaa-new-source",
+        source_item_id="new-26",
+        source_url="https://example.test/new-26",
+        source_author="new-author",
+        license_name="CC BY 4.0",
+        license_url="https://creativecommons.org/licenses/by/4.0/",
+        text="A newly classified hotel reservation request for tomorrow night.",
+        top_scene="travel",
+        sub_scene="travel_hotel",
+    )
+    database.mark_stage(new_id, "clean", payload={})
+    database.mark_stage(new_id, "dedupe", payload={})
+    before_classify = database.stage_counts()
+    assert before_classify["select"] == 25
+    assert before_classify["translate"] == 25
+    assert before_classify["variants"] == 25
+
+    database.mark_stage(
+        new_id,
+        "classify",
+        payload={"top_scene": "travel", "sub_scene": "travel_hotel"},
+    )
+
+    after_classify = database.stage_counts()
+    assert after_classify.get("select", 0) == 0
+    assert after_classify.get("translate", 0) == 0
+    assert after_classify.get("variants", 0) == 0
+    _select_items(database)
+    with database.connect() as connection:
+        selected_ids = {
+            int(row[0])
+            for row in connection.execute(
+                "SELECT item_id FROM stage_results WHERE stage = ?", ("select",)
+            )
+        }
+    assert len(selected_ids) == 25
+    assert new_id in selected_ids
+
+
+def test_identical_classify_write_keeps_timestamp_and_selection_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, raw_by_id = _database_with_selected_snapshot(
+        tmp_path / "work.db", monkeypatch, candidate_count=25
+    )
+    target_id = min(raw_by_id)
+    with database.connect() as connection:
+        payload_json, model_version, updated_at = connection.execute(
+            """
+            SELECT payload_json, model_version, updated_at
+            FROM stage_results
+            WHERE item_id = ? AND stage = ?
+            """,
+            (target_id, "classify"),
+        ).fetchone()
+
+    database.mark_stage(
+        target_id,
+        "classify",
+        payload=json.loads(payload_json),
+        model_version=model_version,
+    )
+
+    with database.connect() as connection:
+        after_timestamp = connection.execute(
+            "SELECT updated_at FROM stage_results WHERE item_id = ? AND stage = ?",
+            (target_id, "classify"),
+        ).fetchone()[0]
+    counts = database.stage_counts()
+    assert after_timestamp == updated_at
+    assert counts["select"] == 25
+    assert counts["translate"] == 25
+    assert counts["variants"] == 25
+
+
+@pytest.mark.parametrize("change", ("payload", "model_version"))
+def test_changed_classify_generation_invalidates_selection_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    database, raw_by_id = _database_with_selected_snapshot(
+        tmp_path / "work.db", monkeypatch, candidate_count=25
+    )
+    target_id = min(raw_by_id)
+    payload = {"top_scene": "travel", "sub_scene": "travel_hotel"}
+    model_version = ""
+    if change == "payload":
+        payload["confidence"] = 1.0
+    else:
+        model_version = "classifier-v2"
+
+    database.mark_stage(
+        target_id,
+        "classify",
+        payload=payload,
+        model_version=model_version,
+    )
+
+    counts = database.stage_counts()
+    assert counts.get("select", 0) == 0
+    assert counts.get("translate", 0) == 0
+    assert counts.get("variants", 0) == 0
