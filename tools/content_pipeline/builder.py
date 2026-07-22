@@ -21,6 +21,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE sentences (
     id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
+    translation_zh TEXT NOT NULL,
     category TEXT NOT NULL CHECK(category IN ('daily', 'exam', 'movies', 'news_podcasts')),
     source_url TEXT NOT NULL,
     source_name TEXT NOT NULL,
@@ -128,10 +129,11 @@ def build_database(
                 sentence_number += 1
                 sentence_id = f"s{sentence_number:04d}"
                 connection.execute(
-                    "INSERT INTO sentences VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO sentences VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         sentence_id,
                         text,
+                        item.translation_zh,
                         category,
                         item.source_url,
                         item.source_name,

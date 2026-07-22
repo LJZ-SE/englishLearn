@@ -32,6 +32,7 @@ class Question:
     difficulty: Difficulty
     canonical_answer: str
     equivalent_answers: tuple[str, ...] = ()
+    translation_zh: str = ""
 
     def __post_init__(self) -> None:
         if not self.canonical_answer.strip():

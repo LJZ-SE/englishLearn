@@ -4,6 +4,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from listening_cloze.infrastructure.supertonic_backend import SupertonicBackend
 
@@ -11,6 +12,7 @@ from listening_cloze.infrastructure.supertonic_backend import SupertonicBackend
 class FakeTts:
     constructor: dict[str, object] = {}
     synthesize_options: dict[str, object] = {}
+    saved_waveform = None
 
     def __init__(self, **options) -> None:
         type(self).constructor = options
@@ -21,9 +23,11 @@ class FakeTts:
 
     def synthesize(self, **options):
         type(self).synthesize_options = options
-        return np.zeros((1, 32), dtype=np.float32), np.array([0.01])
+        waveform = np.array([[0.01, -0.05] * 16], dtype=np.float32)
+        return waveform, np.array([0.01])
 
-    def save_audio(self, _waveform, target: str) -> None:
+    def save_audio(self, waveform, target: str) -> None:
+        type(self).saved_waveform = waveform.copy()
         with wave.open(target, "wb") as output:
             output.setnchannels(1)
             output.setsampwidth(2)
@@ -67,3 +71,31 @@ def test_backend_loads_bundled_model_without_download_and_synthesizes_english(
     }
     assert duration == 0.01
     assert target.is_file()
+    output_rms = float(np.sqrt(np.mean(FakeTts.saved_waveform**2)))
+    output_rms_dbfs = 20 * np.log10(output_rms)
+    assert output_rms_dbfs == pytest.approx(-11.0, abs=0.05)
+    assert np.max(np.abs(FakeTts.saved_waveform)) <= 10 ** (-1 / 20)
+
+
+def test_backend_keeps_silent_waveform_silent(tmp_path: Path) -> None:
+    backend = SupertonicBackend(tmp_path)
+    silent = np.zeros((1, 32), dtype=np.float32)
+
+    normalized = backend._normalize_loudness(silent)
+
+    np.testing.assert_array_equal(normalized, silent)
+
+
+def test_backend_accepts_per_request_synthesis_speed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "supertonic-3"
+    (model_dir / "onnx").mkdir(parents=True)
+    (model_dir / "voice_styles").mkdir()
+    monkeypatch.setitem(sys.modules, "supertonic", types.SimpleNamespace(TTS=FakeTts))
+    backend = SupertonicBackend(model_dir, synthesis_speed=1.0)
+
+    backend.synthesize_to_file("Play this slowly.", tmp_path / "slow.wav", speed=0.8)
+
+    assert FakeTts.synthesize_options["speed"] == 0.8

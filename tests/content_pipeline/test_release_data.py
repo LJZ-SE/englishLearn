@@ -34,6 +34,7 @@ def test_first_release_database_passes_all_structural_and_content_gates() -> Non
         "news_podcasts": 75,
     }
     assert len({row["normalized_hash"] for row in sentences}) == 300
+    assert all(row["translation_zh"].strip() for row in sentences)
     assert all(row["source_url"].startswith("https://") for row in sentences)
     assert all(row["source_author"] and row["license_url"] for row in sentences)
     assert all(rejection_reason(row["text"]) is None for row in sentences)

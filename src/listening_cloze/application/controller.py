@@ -26,6 +26,7 @@ CATEGORY_LABELS = {
 
 class PracticeController(QObject):
     stateChanged = Signal()
+    questionChanged = Signal()
     answerRevealed = Signal(list)
     audioRequested = Signal(str, float)
     _ttsReady = Signal(object, str)
@@ -41,6 +42,7 @@ class PracticeController(QObject):
         super().__init__(parent)
         self._engine = engine
         self._current_page = "home"
+        self._settings_return_page = "home"
         self._feedback_state = "idle"
         self._feedback_text = "准备好后，播放句子开始练习。"
         self._feedback_animation = "idle"
@@ -49,11 +51,12 @@ class PracticeController(QObject):
         self._animations_enabled = bool(engine.get_setting("animations_enabled", True))
         self._audio_cache_dir = Path(audio_cache_dir) if audio_cache_dir is not None else None
         self._tts: TtsPrefetchService | None = None
-        self._ready_audio: dict[str, Path] = {}
+        self._ready_audio: dict[tuple[str, float], Path] = {}
         self._audio_status = "idle"
         self._audio_source = ""
         self._audio_error = ""
         self._waveform_levels: list[float] = []
+        self._audio_duration_ms = 0
         self._play_when_ready = False
         self._repair_issues: list[str] = []
         self._ttsReady.connect(self._apply_tts_ready)
@@ -70,6 +73,10 @@ class PracticeController(QObject):
     @Property(str, notify=stateChanged)
     def sentenceSuffix(self) -> str:
         return self._engine.current.suffix if self._engine.items else ""
+
+    @Property(str, notify=stateChanged)
+    def sentenceTranslation(self) -> str:
+        return self._engine.current.question.translation_zh if self._engine.items else ""
 
     @Property(int, notify=stateChanged)
     def blankCount(self) -> int:
@@ -237,6 +244,10 @@ class PracticeController(QObject):
     def waveformLevels(self) -> list[float]:
         return list(self._waveform_levels)
 
+    @Property(int, notify=stateChanged)
+    def audioDurationMs(self) -> int:
+        return self._audio_duration_ms
+
     @Property(list, notify=stateChanged)
     def repairIssues(self) -> list[str]:
         return list(self._repair_issues)
@@ -275,6 +286,14 @@ class PracticeController(QObject):
 
     @Slot()
     def resumeLatest(self) -> None:
+        if (
+            self._current_page == "home"
+            and self._engine.items
+            and self._engine.has_unfinished_session
+        ):
+            self._current_page = "practice"
+            self.stateChanged.emit()
+            return
         if self._engine.resume_latest():
             self._begin_practice_page()
 
@@ -302,7 +321,8 @@ class PracticeController(QObject):
 
     @Slot()
     def nextQuestion(self) -> None:
-        if self._engine.next_question():
+        question_changed = self._engine.next_question()
+        if question_changed:
             self._feedback_state = "idle"
             self._feedback_text = "仔细听完整句子，再补全空位。"
             self._feedback_animation = "idle"
@@ -311,11 +331,15 @@ class PracticeController(QObject):
         else:
             self._current_page = "summary"
         self.stateChanged.emit()
+        if question_changed:
+            self.questionChanged.emit()
+            self._request_automatic_playback()
 
     @Slot()
     def play(self) -> None:
         question_id = self._engine.current.question.id
-        if self._tts is None or question_id in self._ready_audio:
+        audio_key = (question_id, self._playback_rate)
+        if self._tts is None or audio_key in self._ready_audio:
             self._set_current_audio_source()
             self.audioRequested.emit(question_id, self._playback_rate)
             return
@@ -335,6 +359,9 @@ class PracticeController(QObject):
             raise ValueError("播放语速只能是 0.8、1.0 或 1.2")
         self._playback_rate = rate
         self._engine.set_setting("playback_rate", rate)
+        if self._current_page == "practice" and self._engine.items:
+            self._reset_audio_state()
+            self._schedule_audio()
         self.stateChanged.emit()
 
     @Slot(float)
@@ -356,7 +383,14 @@ class PracticeController(QObject):
 
     @Slot()
     def openSettings(self) -> None:
+        if self._current_page != "settings":
+            self._settings_return_page = self._current_page
         self._current_page = "settings"
+        self.stateChanged.emit()
+
+    @Slot()
+    def closeSettings(self) -> None:
+        self._current_page = self._settings_return_page
         self.stateChanged.emit()
 
     @Slot()
@@ -384,6 +418,8 @@ class PracticeController(QObject):
         self._reset_audio_state()
         self._schedule_audio()
         self.stateChanged.emit()
+        self.questionChanged.emit()
+        self._request_automatic_playback()
 
     @Slot(bool)
     def resetLearningRecords(self, confirmed: bool) -> None:
@@ -406,24 +442,42 @@ class PracticeController(QObject):
         self._reset_audio_state()
         self._schedule_audio()
         self.stateChanged.emit()
+        self.questionChanged.emit()
+        self._request_automatic_playback()
+
+    def _request_automatic_playback(self) -> None:
+        if not self._engine.items:
+            return
+        question_id = self._engine.current.question.id
+        audio_key = (question_id, self._playback_rate)
+        if self._tts is None or audio_key in self._ready_audio:
+            self._set_current_audio_source()
+            self.audioRequested.emit(question_id, self._playback_rate)
+            return
+        self._play_when_ready = True
 
     def _schedule_audio(self) -> None:
         if self._tts is None or not self._engine.items:
             return
         self._tts.schedule(
             [
-                PrefetchItem(item.question.id, item.question.sentence)
+                PrefetchItem(
+                    item.question.id,
+                    item.question.sentence,
+                    playback_rate=self._playback_rate,
+                )
                 for item in self._engine.prefetch_window
             ]
         )
         current_id = self._engine.current.question.id
-        if current_id not in self._ready_audio:
+        if (current_id, self._playback_rate) not in self._ready_audio:
             self._audio_status = "loading"
 
     def _reset_audio_state(self) -> None:
         self._audio_source = ""
         self._audio_error = ""
         self._waveform_levels = []
+        self._audio_duration_ms = 0
         self._audio_status = "idle" if self._tts is None else "loading"
         self._play_when_ready = False
         self._set_current_audio_source()
@@ -431,19 +485,24 @@ class PracticeController(QObject):
     def _set_current_audio_source(self) -> None:
         if not self._engine.items:
             return
-        path = self._ready_audio.get(self._engine.current.question.id)
+        path = self._ready_audio.get((self._engine.current.question.id, self._playback_rate))
         if path is not None:
             self._audio_source = path.as_uri()
             try:
                 self._waveform_levels = extract_waveform_levels(path)
+                with wave.open(str(path), "rb") as audio:
+                    self._audio_duration_ms = round(
+                        audio.getnframes() / audio.getframerate() * 1000
+                    )
             except (OSError, ValueError, wave.Error):
                 self._waveform_levels = []
+                self._audio_duration_ms = 0
             self._audio_status = "ready"
 
     @Slot(object, str)
     def _apply_tts_ready(self, item: PrefetchItem, path_text: str) -> None:
-        self._ready_audio[item.question_id] = Path(path_text)
-        if item.question_id == self.currentQuestionId:
+        self._ready_audio[(item.question_id, item.playback_rate)] = Path(path_text)
+        if item.question_id == self.currentQuestionId and item.playback_rate == self._playback_rate:
             self._set_current_audio_source()
             should_play = self._play_when_ready
             self._play_when_ready = False
@@ -453,7 +512,7 @@ class PracticeController(QObject):
 
     @Slot(object, str)
     def _apply_tts_error(self, item: PrefetchItem, error: str) -> None:
-        if item.question_id != self.currentQuestionId:
+        if item.question_id != self.currentQuestionId or item.playback_rate != self._playback_rate:
             return
         self._audio_status = "error"
         self._audio_error = error

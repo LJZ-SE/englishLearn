@@ -531,6 +531,7 @@ class PracticeEngine:
             difficulty=Difficulty(raw.difficulty),
             canonical_answer=raw.canonical_answer,
             equivalent_answers=raw.aliases,
+            translation_zh=raw.translation_zh,
         )
         return PracticeItem(
             question=question,
