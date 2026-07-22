@@ -69,6 +69,16 @@ class FakeContentRepository:
         return [by_id[question_id] for question_id in requested if question_id in by_id]
 
 
+class CountingUserRepository(UserRepository):
+    def __init__(self, database_path: Path) -> None:
+        super().__init__(database_path)
+        self.list_progress_calls = 0
+
+    def list_question_progress(self):
+        self.list_progress_calls += 1
+        return super().list_question_progress()
+
+
 def test_scene_selection_rejects_a_sub_scene_from_another_top_scene() -> None:
     with pytest.raises(ValueError, match="子场景"):
         practice_engine_module.SceneSelection("travel", "daily_home")
@@ -149,6 +159,21 @@ def test_quantitative_sampling_seed_is_reproducible(tmp_path: Path) -> None:
     ).start_quantitative(category="daily", difficulty=Difficulty.EASY, count=10)
 
     assert first_content.sample_calls[0]["seed"] == second_content.sample_calls[0]["seed"]
+
+
+def test_quantitative_selection_reads_progress_history_once(tmp_path: Path) -> None:
+    users = CountingUserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository(
+            [_question(f"q-{index}", "easy", "word") for index in range(40)]
+        ),
+        users,
+        rng=random.Random(47),
+    )
+
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=10)
+
+    assert users.list_progress_calls == 1
 
 
 def test_quantitative_mode_reports_candidate_shortage_without_full_scan(
@@ -434,6 +459,31 @@ def test_quantitative_progress_states_and_audio_skip_replacement_do_not_change_s
 
     engine.submit(["wrong"])
     assert engine.progress_states == ["wrong", "pending", "pending", "pending", "pending"]
+
+
+def test_audio_skip_without_an_outside_candidate_keeps_queue_and_session_unchanged(
+    tmp_path: Path,
+) -> None:
+    questions = [_question(f"q-{index}", "easy", "word") for index in range(3)]
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository(questions),
+        users,
+        rng=random.Random(48),
+    )
+    engine.start_endless(category="daily")
+    original_ids = [item.question.id for item in engine.items]
+    saved_before = users.load_unfinished_session()
+    assert saved_before is not None
+
+    with pytest.raises(RuntimeError, match="没有可替换"):
+        engine.skip_current_for_audio_error()
+
+    assert [item.question.id for item in engine.items] == original_ids
+    assert len(set(original_ids)) == 3
+    saved_after = users.load_unfinished_session()
+    assert saved_after is not None
+    assert saved_after.state == saved_before.state
 
 
 def test_persisted_question_history_is_used_by_selector(tmp_path: Path) -> None:

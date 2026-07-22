@@ -23,6 +23,13 @@ class Category(StrEnum):
     NEWS_PODCASTS = "news_podcasts"
 
 
+class SceneKey(str):
+    @property
+    def value(self) -> str:
+        """兼容旧枚举调用，同时保持新场景 key 的字符串语义。"""
+        return str(self)
+
+
 @dataclass(frozen=True, slots=True)
 class SceneSelection:
     top_scene: str | None
@@ -92,12 +99,12 @@ class Question:
             raise ValueError("规范答案不能为空")
 
     @property
-    def category(self) -> Category | str:
+    def category(self) -> Category | SceneKey:
         """为旧调用保留只读分类视图，新代码使用 top_scene。"""
         try:
             return Category(self.top_scene)
         except ValueError:
-            return self.top_scene
+            return SceneKey(self.top_scene)
 
     @property
     def blank_count(self) -> int:

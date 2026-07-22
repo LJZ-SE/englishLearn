@@ -102,6 +102,26 @@ def test_controller_exposes_multi_blank_question_and_preserves_first_result(
     assert controller.currentPage == "summary"
 
 
+def test_controller_category_label_accepts_a_new_scene_key(tmp_path: Path) -> None:
+    question = _question(
+        "travel-question",
+        "check in",
+        top_scene="travel",
+        sub_scene="travel_hotel",
+    )
+    controller = PracticeController(
+        PracticeEngine(
+            FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+            rng=random.Random(27),
+        )
+    )
+
+    controller.startQuantitative("travel", "easy", 1)
+
+    assert controller.categoryLabel == "travel"
+
+
 def test_controller_reveals_answer_and_full_sentence_translation(tmp_path: Path) -> None:
     engine = PracticeEngine(
         FakeContentRepository([_question("q1", "do not", ("don't",), "我不会伤害你。")]),
@@ -402,6 +422,9 @@ def _question(
     answer: str,
     aliases: tuple[str, ...] = (),
     translation_zh: str = "",
+    *,
+    top_scene: str = "daily",
+    sub_scene: str = "daily_home",
 ) -> ContentQuestion:
     sentence = f"You should {answer} today."
     start = sentence.index(answer)
@@ -410,7 +433,9 @@ def _question(
         sentence_id=f"sentence-{question_id}",
         sentence_text=sentence,
         translation_zh=translation_zh,
-        category="daily",
+        category=top_scene,
+        top_scene=top_scene,
+        sub_scene=sub_scene,
         source_url="https://example.test",
         normalized_hash=f"hash-{question_id}",
         difficulty="easy",

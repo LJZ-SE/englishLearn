@@ -375,13 +375,6 @@ class PracticeEngine:
         )
         available = list(candidates)
         if not available:
-            available = self._sample_questions(
-                scene=self._scene,
-                difficulty=current.question.difficulty.value,
-                limit=30,
-                exclude_ids=frozenset({current.question.id}),
-            )
-        if not available:
             raise RuntimeError("没有可替换的同场景、同难度题目")
         replacement = self._select_unique(available, 1)[0]
         self.items[self.position] = replacement
@@ -459,9 +452,10 @@ class PracticeEngine:
     ) -> list[PracticeItem]:
         remaining = list(candidates)
         selected: list[PracticeItem] = []
+        selection_history = self._selection_history()
         for _index in range(count):
             domain_candidates = [self._to_domain(item).question for item in remaining]
-            chosen = self._selector.select(domain_candidates, self._selection_history())
+            chosen = self._selector.select(domain_candidates, selection_history)
             raw_index = next(index for index, item in enumerate(remaining) if item.id == chosen.id)
             selected.append(self._to_domain(remaining.pop(raw_index)))
         return selected
