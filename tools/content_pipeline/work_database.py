@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from tools.content_pipeline.clean import normalized_hash
+from tools.content_pipeline.dedupe import jaccard_similarity, simhash64
 
 STAGE_PREDECESSORS = {
     "clean": None,
@@ -156,6 +160,9 @@ class WorkDatabase:
                     connection.execute("DELETE FROM stage_results WHERE item_id = ?", (item_id,))
                     connection.execute("DELETE FROM rejections WHERE item_id = ?", (item_id,))
                     connection.execute(
+                        "DELETE FROM dedupe_fingerprints WHERE item_id = ?", (item_id,)
+                    )
+                    connection.execute(
                         "DELETE FROM translation_repairs WHERE item_id = ?", (item_id,)
                     )
                     _invalidate_selection_snapshot(connection)
@@ -224,7 +231,12 @@ class WorkDatabase:
             )
             if not count:
                 return 0
-            for table in ("stage_results", "rejections", "translation_repairs"):
+            for table in (
+                "stage_results",
+                "rejections",
+                "translation_repairs",
+                "dedupe_fingerprints",
+            ):
                 connection.execute(
                     f"""
                     DELETE FROM {table}
@@ -298,6 +310,492 @@ class WorkDatabase:
             )
             for row in rows
         ]
+
+    def claim_stage_batch(
+        self,
+        stage: str,
+        limit: int,
+        *,
+        stale_model_version: str | None = None,
+    ) -> list[StageInput]:
+        """领取带前置阶段载荷的有界批次，避免把完整工作库载入内存。"""
+        if limit < 1:
+            return []
+        previous_stage = _previous_stage(stage)
+        with self.connect() as connection:
+            if previous_stage is None:
+                rows = connection.execute(
+                    """
+                    SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
+                           r.license_name, r.license_url, r.text, r.protected,
+                           r.top_scene, r.sub_scene, '{}', NULL
+                    FROM raw_items AS r
+                    LEFT JOIN stage_results AS s ON s.item_id = r.id AND s.stage = :stage
+                    LEFT JOIN rejections AS x ON x.item_id = r.id
+                    WHERE (
+                            s.item_id IS NULL
+                            OR (:model_version IS NOT NULL
+                                AND s.model_version NOT IN (:model_version, 'llm-repair'))
+                          )
+                      AND x.item_id IS NULL
+                    ORDER BY r.id LIMIT :limit
+                    """,
+                    {
+                        "stage": stage,
+                        "limit": limit,
+                        "model_version": stale_model_version,
+                    },
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
+                           r.license_name, r.license_url, r.text, r.protected,
+                           r.top_scene, r.sub_scene, p.payload_json, NULL
+                    FROM raw_items AS r
+                    JOIN stage_results AS p
+                      ON p.item_id = r.id AND p.stage = :previous_stage
+                    LEFT JOIN stage_results AS s ON s.item_id = r.id AND s.stage = :stage
+                    LEFT JOIN rejections AS x ON x.item_id = r.id
+                    WHERE (
+                            s.item_id IS NULL
+                            OR (:model_version IS NOT NULL
+                                AND s.model_version NOT IN (:model_version, 'llm-repair'))
+                          )
+                      AND x.item_id IS NULL
+                    ORDER BY r.id LIMIT :limit
+                    """,
+                    {
+                        "stage": stage,
+                        "previous_stage": previous_stage,
+                        "limit": limit,
+                        "model_version": stale_model_version,
+                    },
+                ).fetchall()
+        return [
+            StageInput(
+                item=_work_item(row),
+                predecessor_payload=json.loads(row[11]),
+                stage_payload=None,
+            )
+            for row in rows
+        ]
+
+    def checkpoint_stage_batch(
+        self,
+        stage: str,
+        results: list[tuple[int, dict[str, Any]]],
+        rejections: list[tuple[int, str]] | None = None,
+        *,
+        model_version: str = "",
+    ) -> None:
+        """在单个事务内保存普通阶段批次及拒绝结果。"""
+        if stage == "select":
+            raise ValueError("select 阶段必须使用 replace_stage 写入完整原子快照")
+        previous_stage = _previous_stage(stage)
+        rejected_rows = rejections or []
+        item_ids = [item_id for item_id, _ in results] + [item_id for item_id, _ in rejected_rows]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError(f"阶段 {stage} 批次包含重复条目")
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if previous_stage is None:
+                eligible = {
+                    int(row[0])
+                    for row in connection.execute(
+                        f"SELECT id FROM raw_items WHERE id IN ({_placeholders(item_ids)})",
+                        item_ids,
+                    )
+                } if item_ids else set()
+            else:
+                eligible = {
+                    int(row[0])
+                    for row in connection.execute(
+                        f"""
+                        SELECT item_id FROM stage_results
+                        WHERE stage = ? AND item_id IN ({_placeholders(item_ids)})
+                        """,
+                        [previous_stage, *item_ids],
+                    )
+                } if item_ids else set()
+            if eligible != set(item_ids):
+                raise ValueError(f"阶段 {stage} 批次包含不可写条目")
+            updated_at = _now()
+            connection.executemany(
+                """
+                INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(item_id, stage) DO UPDATE SET
+                    payload_json=excluded.payload_json,
+                    model_version=excluded.model_version,
+                    updated_at=excluded.updated_at
+                """,
+                [
+                    (item_id, stage, _dump_payload(payload), model_version, updated_at)
+                    for item_id, payload in results
+                ],
+            )
+            connection.executemany(
+                """
+                INSERT INTO rejections(item_id, stage, reason, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(item_id) DO UPDATE SET
+                    stage=excluded.stage, reason=excluded.reason, updated_at=excluded.updated_at
+                """,
+                [(item_id, stage, reason, updated_at) for item_id, reason in rejected_rows],
+            )
+            if stage in {"clean", "dedupe", "classify"} and item_ids:
+                _invalidate_selection_snapshot(connection)
+
+    def checkpoint_dedupe_batch(self, inputs: list[StageInput]) -> dict[str, int]:
+        """使用 SQLite 持久化分桶完成有界近似去重，并与阶段结果原子提交。"""
+        summary = {"processed": 0, "accepted": 0, "exact_duplicate": 0, "near_duplicate": 0}
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            updated_at = _now()
+            for stage_input in inputs:
+                item = stage_input.item
+                text = str(stage_input.predecessor_payload.get("clean_text") or item.text)
+                digest = normalized_hash(text)
+                fingerprint = simhash64(text)
+                bands = tuple((fingerprint >> (band * 16)) & 0xFFFF for band in range(4))
+                exact = connection.execute(
+                    """
+                    SELECT normalized_hash FROM dedupe_fingerprints
+                    WHERE normalized_hash = ? ORDER BY item_id LIMIT 1
+                    """,
+                    (digest,),
+                ).fetchone()
+                duplicate_hash = str(exact[0]) if exact is not None else None
+                duplicate_kind = "exact_duplicate" if exact is not None else ""
+                if exact is None:
+                    candidate_hashes: dict[int, str] = {}
+                    for band_index, band_value in enumerate(bands):
+                        # 四条等值查询能稳定命中单列索引，避免 SQLite 从大表连接侧起扫。
+                        for candidate_id, candidate_hash in connection.execute(
+                            f"""
+                            SELECT item_id, normalized_hash
+                            FROM dedupe_fingerprints
+                            WHERE band{band_index} = ?
+                            """,
+                            (band_value,),
+                        ):
+                            candidate_hashes[int(candidate_id)] = str(candidate_hash)
+                    candidate_texts: dict[int, str] = {}
+                    candidate_ids = sorted(candidate_hashes)
+                    for offset in range(0, len(candidate_ids), 500):
+                        chunk = candidate_ids[offset : offset + 500]
+                        for candidate_id, clean_payload, raw_text in connection.execute(
+                            f"""
+                            SELECT r.id, clean.payload_json, r.text
+                            FROM raw_items AS r
+                            JOIN stage_results AS clean
+                              ON clean.item_id=r.id AND clean.stage='clean'
+                            WHERE r.id IN ({_placeholders(chunk)})
+                            """,
+                            chunk,
+                        ):
+                            candidate_texts[int(candidate_id)] = str(
+                                json.loads(clean_payload).get("clean_text") or raw_text
+                            )
+                    for candidate_id in candidate_ids:
+                        candidate_hash = candidate_hashes[candidate_id]
+                        candidate_text = candidate_texts[candidate_id]
+                        if jaccard_similarity(text, candidate_text) >= 0.76:
+                            duplicate_hash = str(candidate_hash)
+                            duplicate_kind = "near_duplicate"
+                            break
+                summary["processed"] += 1
+                if duplicate_hash is not None and not item.protected:
+                    summary[duplicate_kind] += 1
+                    connection.execute(
+                        """
+                        INSERT INTO rejections(item_id, stage, reason, updated_at)
+                        VALUES (?, 'dedupe', ?, ?)
+                        ON CONFLICT(item_id) DO UPDATE SET
+                            stage='dedupe', reason=excluded.reason, updated_at=excluded.updated_at
+                        """,
+                        (item.id, f"{duplicate_kind}:{duplicate_hash}", updated_at),
+                    )
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO dedupe_fingerprints(
+                        item_id, normalized_hash, simhash64, band0, band1, band2, band3
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(item_id) DO UPDATE SET
+                        normalized_hash=excluded.normalized_hash,
+                        simhash64=excluded.simhash64,
+                        band0=excluded.band0, band1=excluded.band1,
+                        band2=excluded.band2, band3=excluded.band3
+                    """,
+                    (item.id, digest, f"{fingerprint:016x}", *bands),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO stage_results(
+                        item_id, stage, payload_json, model_version, updated_at
+                    )
+                    VALUES (?, 'dedupe', ?, '', ?)
+                    ON CONFLICT(item_id, stage) DO UPDATE SET
+                        payload_json=excluded.payload_json, updated_at=excluded.updated_at
+                    """,
+                    (item.id, _dump_payload({"simhash64": f"{fingerprint:016x}"}), updated_at),
+                )
+                summary["accepted"] += 1
+            if inputs:
+                _invalidate_selection_snapshot(connection)
+        return summary
+
+    def pending_classification_repairs(self) -> int:
+        with self.connect() as connection:
+            return int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM stage_results
+                    WHERE stage='classify'
+                      AND json_extract(payload_json, '$.method')='llm_required'
+                    """
+                ).fetchone()[0]
+            )
+
+    def classification_method_counts(self) -> dict[str, int]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT json_extract(payload_json, '$.method'), COUNT(*)
+                FROM stage_results
+                WHERE stage='classify'
+                GROUP BY 1 ORDER BY 1
+                """
+            ).fetchall()
+        return {str(method): int(count) for method, count in rows}
+
+    def rejection_reason_counts(self, stage: str) -> dict[str, int]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT CASE
+                           WHEN instr(reason, ':') > 0
+                           THEN substr(reason, 1, instr(reason, ':') - 1)
+                           ELSE reason
+                       END AS reason_kind,
+                       COUNT(*)
+                FROM rejections
+                WHERE stage=?
+                GROUP BY reason_kind ORDER BY reason_kind
+                """,
+                (stage,),
+            ).fetchall()
+        return {str(reason): int(count) for reason, count in rows}
+
+    def classification_repair_rows(self) -> list[tuple[WorkItem, dict[str, Any]]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.source_name, r.source_item_id, r.source_url, r.source_author,
+                       r.license_name, r.license_url, r.text, r.protected,
+                       r.top_scene, r.sub_scene, classified.payload_json
+                FROM stage_results AS classified
+                JOIN raw_items AS r ON r.id=classified.item_id
+                WHERE classified.stage='classify'
+                  AND json_extract(classified.payload_json, '$.method')='llm_required'
+                ORDER BY r.id
+                """
+            ).fetchall()
+        return [(_work_item(row), json.loads(row[11])) for row in rows]
+
+    def apply_classification_repairs(
+        self, results: list[tuple[int, str, str, str]]
+    ) -> int:
+        item_ids = [row[0] for row in results]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("分类修正结果包含重复 item_id")
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            pending = {
+                int(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT item_id FROM stage_results
+                    WHERE stage='classify'
+                      AND json_extract(payload_json, '$.method')='llm_required'
+                    """
+                )
+            }
+            supplied = set(item_ids)
+            if supplied != pending:
+                missing = sorted(pending - supplied)
+                unknown = sorted(supplied - pending)
+                raise ValueError(
+                    f"分类修正集合不完整: "
+                    f"missing={missing[:20]}, unknown={unknown[:20]}"
+                )
+            updated_at = _now()
+            connection.executemany(
+                """
+                UPDATE stage_results
+                SET payload_json=?, model_version='llm-repair', updated_at=?
+                WHERE item_id=? AND stage='classify'
+                """,
+                [
+                    (
+                        _dump_payload(
+                            {
+                                "top_scene": top_scene,
+                                "sub_scene": sub_scene,
+                                "confidence": 1.0,
+                                "method": "llm_repair",
+                                "reason": reason,
+                            }
+                        ),
+                        updated_at,
+                        item_id,
+                    )
+                    for item_id, top_scene, sub_scene, reason in results
+                ],
+            )
+            if results:
+                _invalidate_selection_snapshot(connection)
+        return len(results)
+
+    def bounded_selection_candidates(
+        self,
+        sub_scene: str,
+        *,
+        quota: int,
+        multiplier: int = 16,
+    ) -> list[StageInput]:
+        """按来源和作者预分层，返回单场景固定上限的候选集合。"""
+        source_limit = max(1, math.floor(quota * 0.45))
+        author_limit = max(1, math.floor(quota * 0.08))
+        with self.connect() as connection:
+            protected_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM stage_results AS classified
+                    JOIN raw_items AS r ON r.id=classified.item_id
+                    LEFT JOIN rejections AS rejected ON rejected.item_id=r.id
+                    WHERE classified.stage='classify'
+                      AND json_extract(classified.payload_json, '$.sub_scene')=?
+                      AND r.protected=1 AND rejected.item_id IS NULL
+                    """,
+                    (sub_scene,),
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                """
+                WITH candidates AS (
+                    SELECT r.id, r.source_name, r.source_item_id, r.source_url,
+                           r.source_author, r.license_name, r.license_url, r.text,
+                           r.protected, r.top_scene, r.sub_scene, classified.payload_json,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY r.source_name
+                               ORDER BY json_extract(
+                                   classified.payload_json, '$.confidence'
+                               ) DESC, r.id
+                           ) AS source_rank,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY CASE
+                                   WHEN trim(r.source_author)='' THEN 'empty:' || r.id
+                                   ELSE r.source_author
+                               END
+                               ORDER BY json_extract(
+                                   classified.payload_json, '$.confidence'
+                               ) DESC, r.id
+                           ) AS author_rank
+                    FROM stage_results AS classified
+                    JOIN raw_items AS r ON r.id=classified.item_id
+                    LEFT JOIN rejections AS rejected ON rejected.item_id=r.id
+                    WHERE classified.stage='classify'
+                      AND json_extract(classified.payload_json, '$.sub_scene')=:sub_scene
+                      AND rejected.item_id IS NULL
+                )
+                SELECT id, source_name, source_item_id, source_url, source_author,
+                       license_name, license_url, text, protected, top_scene, sub_scene,
+                       payload_json, NULL
+                FROM candidates
+                WHERE protected=1
+                   OR (source_rank <= :source_cap AND author_rank <= :author_cap)
+                ORDER BY protected DESC,
+                         json_extract(payload_json, '$.confidence') DESC,
+                         id
+                LIMIT :candidate_limit
+                """,
+                {
+                    "sub_scene": sub_scene,
+                    "source_cap": source_limit * 2,
+                    "author_cap": author_limit * 2,
+                    "candidate_limit": protected_count + quota * multiplier,
+                },
+            ).fetchall()
+        return [
+            StageInput(
+                item=_work_item(row),
+                predecessor_payload=json.loads(row[11]),
+                stage_payload=None,
+            )
+            for row in rows
+        ]
+
+    def selection_concentration(self) -> dict[str, dict[str, float | int | str]]:
+        report: dict[str, dict[str, float | int | str]] = {}
+        with self.connect() as connection:
+            scenes = [
+                str(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT json_extract(payload_json, '$.sub_scene')
+                    FROM stage_results WHERE stage='select' ORDER BY 1
+                    """
+                )
+            ]
+            for scene in scenes:
+                total = int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*) FROM stage_results
+                        WHERE stage='select'
+                          AND json_extract(payload_json, '$.sub_scene')=?
+                        """,
+                        (scene,),
+                    ).fetchone()[0]
+                )
+                source_name, source_count = connection.execute(
+                    """
+                    SELECT r.source_name, COUNT(*) AS count
+                    FROM stage_results AS selected
+                    JOIN raw_items AS r ON r.id=selected.item_id
+                    WHERE selected.stage='select'
+                      AND json_extract(selected.payload_json, '$.sub_scene')=?
+                    GROUP BY r.source_name ORDER BY count DESC, r.source_name LIMIT 1
+                    """,
+                    (scene,),
+                ).fetchone()
+                author_row = connection.execute(
+                    """
+                    SELECT r.source_author, COUNT(*) AS count
+                    FROM stage_results AS selected
+                    JOIN raw_items AS r ON r.id=selected.item_id
+                    WHERE selected.stage='select'
+                      AND json_extract(selected.payload_json, '$.sub_scene')=?
+                      AND trim(r.source_author)<>''
+                    GROUP BY r.source_author ORDER BY count DESC, r.source_author LIMIT 1
+                    """,
+                    (scene,),
+                ).fetchone()
+                author_name, author_count = author_row or ("", 0)
+                report[scene] = {
+                    "total": total,
+                    "max_source": str(source_name),
+                    "max_source_count": int(source_count),
+                    "max_source_share": round(int(source_count) / total, 6),
+                    "max_author": str(author_name),
+                    "max_author_count": int(author_count),
+                    "max_author_share": round(int(author_count) / total, 6),
+                }
+        return report
 
     def replace_stage(
         self,
@@ -766,13 +1264,38 @@ def _schema_statements() -> tuple[str, ...]:
             detail_json TEXT NOT NULL DEFAULT '{}'
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS dedupe_fingerprints(
+            item_id INTEGER PRIMARY KEY REFERENCES raw_items(id),
+            normalized_hash TEXT NOT NULL,
+            simhash64 TEXT NOT NULL,
+            band0 INTEGER NOT NULL,
+            band1 INTEGER NOT NULL,
+            band2 INTEGER NOT NULL,
+            band3 INTEGER NOT NULL
+        )
+        """,
         "CREATE INDEX IF NOT EXISTS idx_stage_results_stage ON stage_results(stage, item_id)",
+        """
+        CREATE INDEX IF NOT EXISTS idx_classify_sub_scene
+        ON stage_results(json_extract(payload_json, '$.sub_scene'), item_id)
+        WHERE stage='classify'
+        """,
         "CREATE INDEX IF NOT EXISTS idx_rejections_stage ON rejections(stage, item_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dedupe_hash ON dedupe_fingerprints(normalized_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_dedupe_band0 ON dedupe_fingerprints(band0)",
+        "CREATE INDEX IF NOT EXISTS idx_dedupe_band1 ON dedupe_fingerprints(band1)",
+        "CREATE INDEX IF NOT EXISTS idx_dedupe_band2 ON dedupe_fingerprints(band2)",
+        "CREATE INDEX IF NOT EXISTS idx_dedupe_band3 ON dedupe_fingerprints(band3)",
     )
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _placeholders(values: list[int]) -> str:
+    return ",".join("?" for _ in values) or "NULL"
 
 
 def _work_item(row: tuple[Any, ...]) -> WorkItem:

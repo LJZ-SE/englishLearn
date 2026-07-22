@@ -7,9 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.content_pipeline.categorize import SceneClassifier
+from tools.content_pipeline.classification import (
+    ClassificationImportError,
+    export_classification_repairs,
+    import_classification_repairs,
+)
 from tools.content_pipeline.clean import clean_sentence, rejection_reason
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
-from tools.content_pipeline.dedupe import NearDuplicateIndex, simhash64
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.models import CollectedSentence
 from tools.content_pipeline.production_sources import (
@@ -17,7 +21,8 @@ from tools.content_pipeline.production_sources import (
     import_legacy_database,
     report_sources,
 )
-from tools.content_pipeline.selection import select_scene_quotas
+from tools.content_pipeline.scenes import SCENES
+from tools.content_pipeline.selection import select_scene_quota, select_scene_quotas
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.translation import (
     OpusMtTranslator,
@@ -38,6 +43,7 @@ class _SelectionRow:
     source_author: str
     top_scene: str
     sub_scene: str
+    confidence: float
     protected: bool
 
 
@@ -67,13 +73,21 @@ def main() -> None:
     gutenberg_parser.add_argument("ebook_id", type=int)
     clean_parser = subparsers.add_parser("clean")
     clean_parser.add_argument("work_db", type=Path)
-    clean_parser.add_argument("--limit", type=int, default=1000)
+    clean_parser.add_argument("--limit", type=int)
+    clean_parser.add_argument("--batch-size", type=int)
     for command in ("dedupe", "classify"):
         stage_parser = subparsers.add_parser(command)
         stage_parser.add_argument("work_db", type=Path)
-        stage_parser.add_argument("--limit", type=int, default=1000)
+        stage_parser.add_argument("--limit", type=int)
+        stage_parser.add_argument("--batch-size", type=int)
+        if command == "classify":
+            stage_parser.add_argument("--export-llm", type=Path)
+    classification_import = subparsers.add_parser("import-classifications")
+    classification_import.add_argument("work_db", type=Path)
+    classification_import.add_argument("paths", nargs="+", type=Path)
     select_parser = subparsers.add_parser("select")
     select_parser.add_argument("work_db", type=Path)
+    select_parser.add_argument("--exact-quotas", action="store_true")
     translate_parser = subparsers.add_parser("translate")
     translate_parser.add_argument("work_db", type=Path)
     translate_parser.add_argument("--batch-size", type=int, default=32)
@@ -127,13 +141,50 @@ def main() -> None:
     elif arguments.command == "import-gutenberg":
         _import_items(database, iter_gutenberg_text(arguments.path, arguments.ebook_id))
     elif arguments.command == "clean":
-        _clean_items(database, arguments.limit)
+        summary = _clean_items(database, *_stage_options(arguments))
+        print(
+            json.dumps(
+                {**summary, "rejection_reasons": database.rejection_reason_counts("clean")},
+                ensure_ascii=False,
+            )
+        )
     elif arguments.command == "dedupe":
-        _dedupe_items(database, arguments.limit)
+        summary = _dedupe_items(database, *_stage_options(arguments))
+        totals = database.rejection_reason_counts("dedupe")
+        print(
+            json.dumps(
+                {
+                    **summary,
+                    "total_exact_duplicate": totals.get("exact_duplicate", 0),
+                    "total_near_duplicate": totals.get("near_duplicate", 0),
+                },
+                ensure_ascii=False,
+            )
+        )
     elif arguments.command == "classify":
-        _classify_items(database, arguments.limit)
+        summary = _classify_items(database, *_stage_options(arguments))
+        if arguments.export_llm is not None:
+            summary["exported_llm"] = export_classification_repairs(
+                database, arguments.export_llm
+            )
+        summary["method_counts"] = database.classification_method_counts()
+        summary["pending"] = database.pending_classification_repairs()
+        print(json.dumps(summary, ensure_ascii=False))
+    elif arguments.command == "import-classifications":
+        try:
+            imported = import_classification_repairs(database, arguments.paths)
+        except ClassificationImportError as error:
+            parser.error(str(error))
+        print(
+            json.dumps(
+                {"imported": imported, "pending": database.pending_classification_repairs()},
+                ensure_ascii=False,
+            )
+        )
     elif arguments.command == "select":
-        _select_items(database)
+        summary = _select_items(database, bounded=arguments.exact_quotas)
+        if summary is not None:
+            print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     elif arguments.command == "translate":
         translator = OpusMtTranslator(
             batch_size=arguments.batch_size,
@@ -147,6 +198,13 @@ def main() -> None:
             import_llm_repairs(database, arguments.path)
         except TranslationImportError as error:
             parser.error(str(error))
+
+
+def _stage_options(arguments: argparse.Namespace) -> tuple[int, bool]:
+    batch_size = arguments.batch_size or arguments.limit or 1000
+    if batch_size < 1:
+        raise ValueError("批次大小必须大于 0")
+    return batch_size, arguments.batch_size is not None
 
 
 def _add_import_parser(
@@ -187,62 +245,98 @@ def _import_items(database: WorkDatabase, items: Iterable[CollectedSentence]) ->
         )
 
 
-def _clean_items(database: WorkDatabase, limit: int) -> None:
-    for item in database.claim_batch("clean", limit=limit):
-        reason = rejection_reason(item.text)
-        if reason:
-            database.record_rejection(item.id, "clean", reason)
-            continue
-        database.mark_stage(item.id, "clean", payload={"clean_text": clean_sentence(item.text)})
+def _clean_items(
+    database: WorkDatabase, limit: int, run_to_completion: bool = False
+) -> dict[str, int]:
+    summary = {"processed": 0, "accepted": 0, "rejected": 0}
+    while batch := database.claim_stage_batch("clean", limit=limit):
+        results: list[tuple[int, dict[str, str]]] = []
+        rejections: list[tuple[int, str]] = []
+        for stage_input in batch:
+            item = stage_input.item
+            reason = None if item.protected else rejection_reason(item.text)
+            if reason:
+                rejections.append((item.id, reason))
+            else:
+                results.append((item.id, {"clean_text": clean_sentence(item.text)}))
+        database.checkpoint_stage_batch("clean", results, rejections)
+        summary["processed"] += len(batch)
+        summary["accepted"] += len(results)
+        summary["rejected"] += len(rejections)
+        if not run_to_completion:
+            break
+    return summary
 
 
-def _dedupe_items(database: WorkDatabase, limit: int) -> None:
-    index = NearDuplicateIndex()
-    completed = database.stage_inputs("dedupe", include_completed=True, include_rejected=True)
-    for stage_input in completed:
-        if stage_input.stage_payload is None:
-            continue
-        text = str(stage_input.predecessor_payload.get("clean_text") or stage_input.item.text)
-        index.add(text, force=stage_input.item.protected)
-
-    for item in database.claim_batch("dedupe", limit=limit):
-        text = _clean_text(database, item)
-        unique = index.add(text, force=item.protected)
-        if unique or item.protected:
-            database.mark_stage(
-                item.id,
-                "dedupe",
-                payload={"simhash64": f"{simhash64(text):016x}"},
-            )
-            continue
-        database.record_rejection(
-            item.id,
-            "dedupe",
-            f"near_duplicate:{index.duplicate_hash}",
-        )
+def _dedupe_items(
+    database: WorkDatabase, limit: int, run_to_completion: bool = False
+) -> dict[str, int]:
+    summary = {"processed": 0, "accepted": 0, "exact_duplicate": 0, "near_duplicate": 0}
+    while batch := database.claim_stage_batch("dedupe", limit=limit):
+        current = database.checkpoint_dedupe_batch(batch)
+        for key in summary:
+            summary[key] += current[key]
+        if not run_to_completion:
+            break
+    return summary
 
 
-def _classify_items(database: WorkDatabase, limit: int) -> None:
+def _classify_items(
+    database: WorkDatabase, limit: int, run_to_completion: bool = False
+) -> dict[str, int]:
     classifier = SceneClassifier()
-    for item in database.claim_batch("classify", limit=limit):
-        result = classifier.classify(
-            _clean_text(database, item),
-            top_scene=item.top_scene,
-            sub_scene=item.sub_scene,
+    summary = {
+        "processed": 0,
+        "classified": 0,
+        "llm_required": 0,
+        "out_of_candidate_pool": 0,
+    }
+    model_version = "scene-candidate-v8"
+    while batch := database.claim_stage_batch(
+        "classify", limit=limit, stale_model_version=model_version
+    ):
+        results: list[tuple[int, dict[str, object]]] = []
+        for stage_input in batch:
+            item = stage_input.item
+            text = str(stage_input.predecessor_payload.get("clean_text") or item.text)
+            result = classifier.classify_candidate(
+                text,
+                top_scene=item.top_scene,
+                sub_scene=item.sub_scene,
+                protected=item.protected,
+                source_name=item.source_name,
+            )
+            results.append(
+                (
+                    item.id,
+                    {
+                        "top_scene": result.top_scene,
+                        "sub_scene": result.sub_scene,
+                        "confidence": result.confidence,
+                        "method": result.method,
+                    },
+                )
+            )
+            summary["processed"] += 1
+            if result.method == "llm_required":
+                summary["llm_required"] += 1
+            elif result.method == "out_of_candidate_pool":
+                summary["out_of_candidate_pool"] += 1
+            else:
+                summary["classified"] += 1
+        database.checkpoint_stage_batch(
+            "classify", results, model_version=model_version
         )
-        database.mark_stage(
-            item.id,
-            "classify",
-            payload={
-                "top_scene": result.top_scene,
-                "sub_scene": result.sub_scene,
-                "confidence": result.confidence,
-                "method": result.method,
-            },
-        )
+        if not run_to_completion:
+            break
+    return summary
 
 
-def _select_items(database: WorkDatabase) -> None:
+def _select_items(
+    database: WorkDatabase, *, bounded: bool = False
+) -> dict[str, object] | None:
+    if bounded:
+        return _select_items_bounded(database)
     candidates: list[_SelectionRow] = []
     for stage_input in database.stage_inputs("select", include_completed=True):
         item = stage_input.item
@@ -259,6 +353,7 @@ def _select_items(database: WorkDatabase) -> None:
                 source_author=item.source_author,
                 top_scene=top_scene,
                 sub_scene=sub_scene,
+                confidence=float(payload.get("confidence") or 0.0),
                 protected=item.protected,
             )
         )
@@ -272,6 +367,44 @@ def _select_items(database: WorkDatabase) -> None:
             for row in scene_rows
         ],
     )
+    return None
+
+
+def _select_items_bounded(database: WorkDatabase) -> dict[str, object]:
+    selected_rows: list[tuple[_SelectionRow, str]] = []
+    scene_counts: dict[str, int] = {}
+    for scene in SCENES:
+        candidates = [
+            _SelectionRow(
+                id=stage_input.item.id,
+                text=stage_input.item.text,
+                source_name=stage_input.item.source_name,
+                source_author=stage_input.item.source_author,
+                top_scene=str(stage_input.predecessor_payload.get("top_scene") or ""),
+                sub_scene=str(stage_input.predecessor_payload.get("sub_scene") or ""),
+                confidence=float(stage_input.predecessor_payload.get("confidence") or 0.0),
+                protected=stage_input.item.protected,
+            )
+            for stage_input in database.bounded_selection_candidates(
+                scene.key, quota=scene.quota
+            )
+        ]
+        scene_selected = select_scene_quota(scene, candidates)
+        scene_counts[scene.key] = len(scene_selected)
+        selected_rows.extend((row, scene.key) for row in scene_selected)
+    database.replace_stage(
+        "select",
+        [
+            (row.id, {"top_scene": row.top_scene, "sub_scene": sub_scene})
+            for row, sub_scene in selected_rows
+        ],
+    )
+    return {
+        "selected": len(selected_rows),
+        "protected": sum(row.protected for row, _ in selected_rows),
+        "scene_counts": scene_counts,
+        "concentration": database.selection_concentration(),
+    }
 
 
 def _clean_text(database: WorkDatabase, item: WorkItem) -> str:

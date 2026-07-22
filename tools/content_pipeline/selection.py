@@ -11,7 +11,7 @@ from tools.content_pipeline.categorize import CATEGORIES, CategoryClassifier
 from tools.content_pipeline.clean import clean_sentence, normalized_hash, rejection_reason
 from tools.content_pipeline.dedupe import jaccard_similarity
 from tools.content_pipeline.models import CollectedSentence
-from tools.content_pipeline.scenes import SCENES
+from tools.content_pipeline.scenes import SCENES, SceneDefinition
 
 
 class SceneQuotaError(ValueError):
@@ -41,47 +41,9 @@ def select_scene_quotas[RowT](rows: Iterable[RowT]) -> dict[str, list[RowT]]:
     selected: dict[str, list[RowT]] = {scene.key: [] for scene in SCENES}
     conflicts: list[str] = []
     for scene in SCENES:
-        conflict_count = len(conflicts)
-        scene_rows = candidates[scene.key]
-        protected = [row for row in scene_rows if bool(getattr(row, "protected", False))]
-        protected.sort(key=_selection_key)
-        source_limit = max(1, math.floor(scene.quota * 0.45))
-        author_limit = max(1, math.floor(scene.quota * 0.08))
-        source_counts = Counter(str(getattr(row, "source_name", "")) for row in protected)
-        author_counts = Counter(
-            author
-            for row in protected
-            if (author := str(getattr(row, "source_author", "")).strip())
-        )
-        if len(protected) > scene.quota:
-            conflicts.append(
-                f"protected quota conflict in {scene.key}: {len(protected)} > {scene.quota}"
-            )
-        for source, count in sorted(source_counts.items()):
-            if count > source_limit:
-                conflicts.append(
-                    f"protected source conflict in {scene.key}: {source!r} {count} > {source_limit}"
-                )
-        for author, count in sorted(author_counts.items()):
-            if count > author_limit:
-                conflicts.append(
-                    f"protected author conflict in {scene.key}: {author!r} {count} > {author_limit}"
-                )
-        selected[scene.key].extend(protected[: scene.quota])
-        if len(conflicts) > conflict_count:
-            continue
-
-        regular = [row for row in scene_rows if not bool(getattr(row, "protected", False))]
-        selected[scene.key].extend(
-            _select_regular_rows(
-                regular,
-                needed=scene.quota - len(protected),
-                source_limit=source_limit,
-                author_limit=author_limit,
-                source_counts=source_counts,
-                author_counts=author_counts,
-            )
-        )
+        scene_selected, scene_conflicts = _select_scene(scene, candidates[scene.key])
+        selected[scene.key].extend(scene_selected)
+        conflicts.extend(scene_conflicts)
 
     shortages = {scene.key: max(scene.quota - len(selected[scene.key]), 0) for scene in SCENES}
     if conflicts or any(shortages.values()):
@@ -89,8 +51,72 @@ def select_scene_quotas[RowT](rows: Iterable[RowT]) -> dict[str, list[RowT]]:
     return selected
 
 
-def _selection_key(row: object) -> tuple[str, str]:
-    return normalized_hash(str(getattr(row, "text", ""))), str(getattr(row, "id", ""))
+def select_scene_quota[RowT](scene: SceneDefinition, rows: Iterable[RowT]) -> list[RowT]:
+    """选择单个场景，供生产流水线逐场景限制内存峰值。"""
+    candidates = [
+        row
+        for row in rows
+        if getattr(row, "sub_scene", None) == scene.key
+        and getattr(row, "top_scene", None) == scene.top_key
+    ]
+    selected, conflicts = _select_scene(scene, candidates)
+    shortage = max(scene.quota - len(selected), 0)
+    if conflicts or shortage:
+        raise SceneQuotaError({scene.key: shortage}, conflicts)
+    return selected
+
+
+def _select_scene[RowT](
+    scene: SceneDefinition, scene_rows: list[RowT]
+) -> tuple[list[RowT], list[str]]:
+    conflicts: list[str] = []
+    protected = [row for row in scene_rows if bool(getattr(row, "protected", False))]
+    protected.sort(key=_selection_key)
+    source_limit = max(1, math.floor(scene.quota * 0.45))
+    author_limit = max(1, math.floor(scene.quota * 0.08))
+    source_counts = Counter(str(getattr(row, "source_name", "")) for row in protected)
+    author_counts = Counter(
+        author
+        for row in protected
+        if (author := str(getattr(row, "source_author", "")).strip())
+    )
+    if len(protected) > scene.quota:
+        conflicts.append(
+            f"protected quota conflict in {scene.key}: {len(protected)} > {scene.quota}"
+        )
+    for source, count in sorted(source_counts.items()):
+        if count > source_limit:
+            conflicts.append(
+                f"protected source conflict in {scene.key}: {source!r} {count} > {source_limit}"
+            )
+    for author, count in sorted(author_counts.items()):
+        if count > author_limit:
+            conflicts.append(
+                f"protected author conflict in {scene.key}: {author!r} {count} > {author_limit}"
+            )
+    selected = protected[: scene.quota]
+    if conflicts:
+        return selected, conflicts
+    regular = [row for row in scene_rows if not bool(getattr(row, "protected", False))]
+    selected.extend(
+        _select_regular_rows(
+            regular,
+            needed=scene.quota - len(protected),
+            source_limit=source_limit,
+            author_limit=author_limit,
+            source_counts=source_counts,
+            author_counts=author_counts,
+        )
+    )
+    return selected, conflicts
+
+
+def _selection_key(row: object) -> tuple[float, str, str]:
+    return (
+        -float(getattr(row, "confidence", 0.0)),
+        normalized_hash(str(getattr(row, "text", ""))),
+        str(getattr(row, "id", "")),
+    )
 
 
 class _FlowEdge:
