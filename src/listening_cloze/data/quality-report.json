@@ -1,7 +1,7 @@
 {
   "gate_status": "passed",
-  "sentence_count": 30000,
-  "variant_count": 90000,
+  "sentence_count": 36000,
+  "variant_count": 108000,
   "scene_distribution": {
     "daily_home": 1500,
     "daily_social": 1800,
@@ -34,23 +34,43 @@
     "news_current": 600,
     "news_business": 500,
     "news_public": 400,
-    "news_environment": 500
+    "news_environment": 500,
+    "cet_cet4": 3000,
+    "cet_cet6": 3000
   },
   "difficulty_distribution": {
-    "easy": 30000,
-    "medium": 30000,
-    "hard": 30000
+    "easy": 36000,
+    "medium": 36000,
+    "hard": 36000
   },
   "answer_word_count_distribution": {
-    "1": 33632,
-    "2": 18916,
-    "3": 17638,
-    "4": 19814
+    "1": 40169,
+    "2": 22705,
+    "3": 21376,
+    "4": 23750
   },
   "duplicate_rate": 0.0,
   "rejected_count": 0,
   "rejection_reasons": {},
   "source_distribution": {
+    "CET-4 模拟·项目生成": 150,
+    "CET-4 真题·2015-12": 580,
+    "CET-4 真题·2016-06": 185,
+    "CET-4 真题·2016-12": 130,
+    "CET-4 真题·2017-06": 461,
+    "CET-4 真题·2017-12": 473,
+    "CET-4 真题·2023-03": 179,
+    "CET-4 真题·2023-06": 416,
+    "CET-4 真题·2023-12": 426,
+    "CET-6 模拟·项目生成": 150,
+    "CET-6 真题·2015-12": 366,
+    "CET-6 真题·2016-06": 413,
+    "CET-6 真题·2016-12": 394,
+    "CET-6 真题·2017-06": 373,
+    "CET-6 真题·2017-12": 405,
+    "CET-6 真题·2023-03": 152,
+    "CET-6 真题·2023-06": 358,
+    "CET-6 真题·2023-12": 389,
     "English Wikinews": 235,
     "Project Gutenberg": 865,
     "SciQ": 315,

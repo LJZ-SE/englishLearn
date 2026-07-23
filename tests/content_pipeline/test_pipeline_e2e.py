@@ -89,6 +89,7 @@ def test_cli_pipeline_processes_all_micro_quota_sentences_without_network(
     scene_definitions = tuple(
         SceneDefinition(scene.top_key, scene.top_label, scene.key, scene.label, 3)
         for scene in SCENES
+        if scene.top_key != "cet"
     )
     monkeypatch.setattr(selection, "SCENES", scene_definitions)
     monkeypatch.setattr(cli, "OpusMtTranslator", FakeTranslator)

@@ -51,8 +51,8 @@ def test_first_release_database_passes_all_structural_and_content_gates() -> Non
             "news_podcasts": 75,
         }
     else:
-        assert top_scene_count == 8
-        assert sub_scene_count == 32
+        assert top_scene_count == 9
+        assert sub_scene_count == 34
         assert all(row["sub_scene_key"] and row["source_item_id"] for row in sentences)
         assert all(0 <= row["random_key"] <= (1 << 63) - 1 for row in sentences)
     assert len({row["normalized_hash"] for row in sentences}) == len(sentences)
@@ -112,15 +112,41 @@ def test_first_release_reports_and_source_manifest_match_database() -> None:
     assert sum(item["sentence_count"] for item in sources) == report["sentence_count"]
     assert all(item["license_name"] and item["license_url"] for item in sources)
     if CONTENT_DATABASE == DATA_DIR / "content.db":
-        assert report["sentence_count"] == TOTAL_SENTENCE_QUOTA == 30_000
-        assert report["variant_count"] == 90_000
+        assert report["sentence_count"] == TOTAL_SENTENCE_QUOTA == 36_000
+        assert report["variant_count"] == 108_000
         assert report["scene_distribution"] == {
             scene.key: scene.quota for scene in SCENES
         }
         assert report["difficulty_distribution"] == {
-            "easy": 30_000,
-            "medium": 30_000,
-            "hard": 30_000,
+            "easy": 36_000,
+            "medium": 36_000,
+            "hard": 36_000,
         }
         assert report["source_distribution"]["legacy-content"] == 300
         assert len(report["source_distribution"]) >= 20
+
+
+def test_cet_release_contains_both_levels_and_both_source_types() -> None:
+    with sqlite3.connect(CONTENT_DATABASE) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                sub_scene_key,
+                CASE
+                    WHEN source_item_id LIKE 'simulated:%' THEN 'simulated'
+                    ELSE 'authentic'
+                END AS origin,
+                COUNT(*)
+            FROM sentences
+            WHERE sub_scene_key IN ('cet_cet4', 'cet_cet6')
+            GROUP BY sub_scene_key, origin
+            ORDER BY sub_scene_key, origin
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("cet_cet4", "authentic", 2_850),
+        ("cet_cet4", "simulated", 150),
+        ("cet_cet6", "authentic", 2_850),
+        ("cet_cet6", "simulated", 150),
+    ]

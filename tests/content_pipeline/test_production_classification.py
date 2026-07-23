@@ -96,7 +96,7 @@ def test_classification_exchange_is_complete_strict_and_atomic(tmp_path: Path) -
     assert export_classification_repairs(database, export_path) == 2
     exported = [json.loads(line) for line in export_path.read_text().splitlines()]
     assert all(row["method"] == "llm_required" for row in exported)
-    assert all(len(row["candidate_labels"]) == 32 for row in exported)
+    assert all(len(row["candidate_labels"]) == 34 for row in exported)
     assert exported[0]["text"]
 
     invalid_path = tmp_path / "invalid.jsonl"
@@ -351,8 +351,8 @@ def test_dedupe_uses_persistent_index_without_loading_all_stage_inputs(
         assert connection.execute("SELECT COUNT(*) FROM dedupe_fingerprints").fetchone()[0] == 2
 
 
-def test_scene_catalog_still_has_exactly_32_labels() -> None:
-    assert len(SCENES) == 32
+def test_scene_catalog_still_has_exactly_34_labels() -> None:
+    assert len(SCENES) == 34
 
 
 def test_candidate_pool_keeps_unmatched_rows_auditable_and_protected_rows_pending() -> None:

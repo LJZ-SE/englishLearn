@@ -11,13 +11,15 @@ from tools.content_pipeline.scenes import (
 
 
 def test_scene_catalog_contains_exact_confirmed_hierarchy_and_quota() -> None:
-    assert len({scene.top_key for scene in SCENES}) == 8
-    assert len(SCENES) == 32
-    assert TOTAL_SENTENCE_QUOTA == 30_000
-    assert sum(scene.quota for scene in SCENES) == 30_000
+    assert len({scene.top_key for scene in SCENES}) == 9
+    assert len(SCENES) == 34
+    assert TOTAL_SENTENCE_QUOTA == 36_000
+    assert sum(scene.quota for scene in SCENES) == 36_000
     assert scene_by_key("daily_social").quota == 1_800
     assert scene_by_key("travel_hotel").top_key == "travel"
     assert scene_by_key("news_environment").label == "环境社会"
+    assert scene_by_key("cet_cet4").quota == 3_000
+    assert scene_by_key("cet_cet6").top_key == "cet"
 
 
 def test_scene_catalog_derives_indexes_from_the_single_scene_directory() -> None:
@@ -30,6 +32,7 @@ def test_scene_catalog_derives_indexes_from_the_single_scene_directory() -> None
         ("technology", "科技科学"),
         ("culture", "文化娱乐"),
         ("news", "新闻社会"),
+        ("cet", "四六级考试"),
     )
     assert tuple(SUB_SCENES.values()) == SCENES
 

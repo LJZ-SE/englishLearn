@@ -11,14 +11,14 @@ import pytest
 
 from listening_cloze.infrastructure.database import ContentRepository
 
-SENTENCE_COUNT = 30_000
-VARIANT_COUNT = 90_000
+SENTENCE_COUNT = 36_000
+VARIANT_COUNT = 108_000
 QUERY_ITERATIONS = 20
 MEDIAN_LIMIT_SECONDS = 0.2
 SINGLE_QUERY_LIMIT_SECONDS = 1.0
 DIFFICULTIES = ("easy", "medium", "hard")
 CONTENT_SCHEMA_VERSION = 2
-TOP_SCENE_KEYS = tuple(f"top-{index}" for index in range(8))
+TOP_SCENE_KEYS = tuple(f"top-{index}" for index in range(9))
 SCENE_KEYS = tuple(
     (top_key, f"{top_key}-sub-{sub_index}")
     for top_key in TOP_SCENE_KEYS
@@ -155,8 +155,8 @@ def _build_large_content_database(path: Path) -> LargeContentDatabase:
             connection.execute(f"PRAGMA user_version = {CONTENT_SCHEMA_VERSION}")
 
         assert connection.execute("PRAGMA user_version").fetchone()[0] == CONTENT_SCHEMA_VERSION
-        assert connection.execute("SELECT COUNT(*) FROM top_scenes").fetchone()[0] == 8
-        assert connection.execute("SELECT COUNT(*) FROM sub_scenes").fetchone()[0] == 32
+        assert connection.execute("SELECT COUNT(*) FROM top_scenes").fetchone()[0] == 9
+        assert connection.execute("SELECT COUNT(*) FROM sub_scenes").fetchone()[0] == 36
         assert connection.execute("SELECT COUNT(*) FROM sentences").fetchone()[0] == SENTENCE_COUNT
         variant_count = connection.execute("SELECT COUNT(*) FROM question_variants").fetchone()[0]
         assert variant_count == VARIANT_COUNT
@@ -249,7 +249,7 @@ def _expected_sample_ids(
     return selected_ids
 
 
-def test_sample_questions_stays_fast_at_ninety_thousand_questions(
+def test_sample_questions_stays_fast_at_one_hundred_eight_thousand_questions(
     large_content_database: LargeContentDatabase,
 ) -> None:
     repository = ContentRepository(large_content_database.path)

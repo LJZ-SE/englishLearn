@@ -45,6 +45,8 @@ SCENES = (
     SceneDefinition("news", "新闻社会", "news_business", "财经商业", 500),
     SceneDefinition("news", "新闻社会", "news_public", "法律公共事务", 400),
     SceneDefinition("news", "新闻社会", "news_environment", "环境社会", 500),
+    SceneDefinition("cet", "四六级考试", "cet_cet4", "四级 CET-4", 3000),
+    SceneDefinition("cet", "四六级考试", "cet_cet6", "六级 CET-6", 3000),
 )
 
 TOP_SCENES = tuple(dict.fromkeys((scene.top_key, scene.top_label) for scene in SCENES))

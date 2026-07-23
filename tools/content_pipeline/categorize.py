@@ -243,6 +243,8 @@ _SCENE_KEYWORDS = {
         "environment climate weather pollution wildlife flood nature rain storm snow fire forest "
         "animal animals river sea water earthquake temperature"
     ),
+    "cet_cet4": frozenset(),
+    "cet_cet6": frozenset(),
 }
 
 # 单独出现即可提供可靠场景证据的领域词。未列入这里的普通多义词只能参与审计，
@@ -375,6 +377,8 @@ _SCENE_STRONG_KEYWORDS = {
         "environment climate weather pollution wildlife flood nature rain storm snow forest "
         "earthquake"
     ),
+    "cet_cet4": frozenset(),
+    "cet_cet6": frozenset(),
 }
 
 _CONTEXT_EXCLUDED_KEYWORDS = _scene_words(

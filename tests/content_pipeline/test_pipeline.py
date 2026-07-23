@@ -764,13 +764,13 @@ def test_scene_selection_preserves_full_pool_rank_gaps_after_kernel_reduction() 
 def test_builder_writes_scene_metadata_stable_ids_and_query_indexes(tmp_path: Path) -> None:
     result = build_fixture_database(tmp_path, per_scene=3)
 
-    assert result.sentence_count == 96
-    assert result.variant_count == 288
+    assert result.sentence_count == 102
+    assert result.variant_count == 306
     with sqlite3.connect(result.database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert connection.execute("SELECT COUNT(*) FROM top_scenes").fetchone()[0] == 8
-        assert connection.execute("SELECT COUNT(*) FROM sub_scenes").fetchone()[0] == 32
-        assert connection.execute("SELECT COUNT(*) FROM sentences").fetchone()[0] == 96
+        assert connection.execute("SELECT COUNT(*) FROM top_scenes").fetchone()[0] == 9
+        assert connection.execute("SELECT COUNT(*) FROM sub_scenes").fetchone()[0] == 34
+        assert connection.execute("SELECT COUNT(*) FROM sentences").fetchone()[0] == 102
         sentence_indexes = {
             row[1] for row in connection.execute("PRAGMA index_list(sentences)")
         }

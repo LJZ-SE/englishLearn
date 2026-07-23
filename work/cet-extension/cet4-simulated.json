@@ -1,0 +1,752 @@
+[
+  {
+    "text": "The campus library will remain open until midnight during the final examination week.",
+    "translation_zh": "期末考试周期间，校园图书馆将开放至午夜。",
+    "source_item_id": "simulated:cet4:0001"
+  },
+  {
+    "text": "Students must submit their research proposals before the department meeting on Friday.",
+    "translation_zh": "学生必须在周五的系部会议前提交研究计划书。",
+    "source_item_id": "simulated:cet4:0002"
+  },
+  {
+    "text": "Professor Lee canceled the morning lecture because his flight was unexpectedly delayed.",
+    "translation_zh": "李教授取消了上午的讲座，因为他的航班意外延误了。",
+    "source_item_id": "simulated:cet4:0003"
+  },
+  {
+    "text": "Our study group meets in the science building every Wednesday after lunch.",
+    "translation_zh": "我们的学习小组每周三午饭后在科学楼见面。",
+    "source_item_id": "simulated:cet4:0004"
+  },
+  {
+    "text": "The university offers free language courses to all international exchange students.",
+    "translation_zh": "这所大学为所有国际交换生提供免费的语言课程。",
+    "source_item_id": "simulated:cet4:0005"
+  },
+  {
+    "text": "Mia borrowed a laptop from the media center for her class presentation.",
+    "translation_zh": "米娅从媒体中心借了一台笔记本电脑，用于课堂展示。",
+    "source_item_id": "simulated:cet4:0006"
+  },
+  {
+    "text": "The new student club plans to organize a charity concert next month.",
+    "translation_zh": "新成立的学生社团计划下个月组织一场慈善音乐会。",
+    "source_item_id": "simulated:cet4:0007"
+  },
+  {
+    "text": "Please return the laboratory equipment to its proper place after each experiment.",
+    "translation_zh": "每次实验后，请将实验室设备放回正确的位置。",
+    "source_item_id": "simulated:cet4:0008"
+  },
+  {
+    "text": "Several classmates volunteered to guide visitors around the campus on open day.",
+    "translation_zh": "几名同学自愿在校园开放日带领访客参观校园。",
+    "source_item_id": "simulated:cet4:0009"
+  },
+  {
+    "text": "Daniel missed the registration deadline and had to choose another course.",
+    "translation_zh": "丹尼尔错过了选课截止日期，只好选择另一门课程。",
+    "source_item_id": "simulated:cet4:0010"
+  },
+  {
+    "text": "The history assignment requires interviews with two residents from the local community.",
+    "translation_zh": "历史作业要求采访当地社区的两位居民。",
+    "source_item_id": "simulated:cet4:0011"
+  },
+  {
+    "text": "A quiet room is available downstairs for students preparing for job interviews.",
+    "translation_zh": "楼下有一间安静的房间，供准备求职面试的学生使用。",
+    "source_item_id": "simulated:cet4:0012"
+  },
+  {
+    "text": "The cafeteria introduced more vegetarian dishes after receiving feedback from students.",
+    "translation_zh": "学生提出意见后，食堂增加了更多素食菜品。",
+    "source_item_id": "simulated:cet4:0013"
+  },
+  {
+    "text": "We compared three articles before selecting a topic for our group report.",
+    "translation_zh": "我们比较了三篇文章，然后才为小组报告选定主题。",
+    "source_item_id": "simulated:cet4:0014"
+  },
+  {
+    "text": "The scholarship committee will announce its final decision early next semester.",
+    "translation_zh": "奖学金委员会将在下学期初公布最终决定。",
+    "source_item_id": "simulated:cet4:0015"
+  },
+  {
+    "text": "Nora takes detailed notes whenever the instructor explains a difficult concept.",
+    "translation_zh": "每当老师讲解一个困难概念时，诺拉都会做详细笔记。",
+    "source_item_id": "simulated:cet4:0016"
+  },
+  {
+    "text": "Freshmen attended a safety workshop before moving into the university dormitories.",
+    "translation_zh": "大一新生在搬进大学宿舍前参加了安全讲座。",
+    "source_item_id": "simulated:cet4:0017"
+  },
+  {
+    "text": "The basketball team practices outdoors unless the weather becomes too cold.",
+    "translation_zh": "除非天气变得太冷，否则篮球队都在户外训练。",
+    "source_item_id": "simulated:cet4:0018"
+  },
+  {
+    "text": "My academic adviser suggested taking fewer classes while working part time.",
+    "translation_zh": "我的学业导师建议我在兼职期间少选几门课。",
+    "source_item_id": "simulated:cet4:0019"
+  },
+  {
+    "text": "Anyone interested in the debate competition should sign up at the student office.",
+    "translation_zh": "有意参加辩论赛的人应到学生办公室报名。",
+    "source_item_id": "simulated:cet4:0020"
+  },
+  {
+    "text": "The chemistry professor used a simple example to explain the complex reaction.",
+    "translation_zh": "化学教授用一个简单的例子解释了复杂的反应。",
+    "source_item_id": "simulated:cet4:0021"
+  },
+  {
+    "text": "Because the printer was broken, Alice emailed her essay directly to the teacher.",
+    "translation_zh": "由于打印机坏了，爱丽丝把论文直接通过电子邮件发给了老师。",
+    "source_item_id": "simulated:cet4:0022"
+  },
+  {
+    "text": "An experienced graduate shared practical advice about managing stress and deadlines.",
+    "translation_zh": "一位经验丰富的毕业生分享了管理压力和截止日期的实用建议。",
+    "source_item_id": "simulated:cet4:0023"
+  },
+  {
+    "text": "The art exhibition features paintings created by students from different majors.",
+    "translation_zh": "这次艺术展展出了不同专业学生创作的画作。",
+    "source_item_id": "simulated:cet4:0024"
+  },
+  {
+    "text": "Our teacher encouraged us to question information instead of accepting it immediately.",
+    "translation_zh": "老师鼓励我们质疑信息，而不是立刻接受它。",
+    "source_item_id": "simulated:cet4:0025"
+  },
+  {
+    "text": "I usually prepare breakfast at home because the nearby cafe is expensive.",
+    "translation_zh": "我通常在家准备早餐，因为附近的咖啡馆很贵。",
+    "source_item_id": "simulated:cet4:0026"
+  },
+  {
+    "text": "The last bus leaves the town center at ten thirty every evening.",
+    "translation_zh": "末班公交车每晚十点半从市中心发车。",
+    "source_item_id": "simulated:cet4:0027"
+  },
+  {
+    "text": "Could you pick up some fresh fruit on your way home?",
+    "translation_zh": "你回家的路上能买些新鲜水果吗？",
+    "source_item_id": "simulated:cet4:0028"
+  },
+  {
+    "text": "Our neighbors offered to feed the cat while we were away.",
+    "translation_zh": "我们外出期间，邻居主动提出帮忙喂猫。",
+    "source_item_id": "simulated:cet4:0029"
+  },
+  {
+    "text": "Ben saved money for several months before buying his new bicycle.",
+    "translation_zh": "本攒了几个月的钱才买下新自行车。",
+    "source_item_id": "simulated:cet4:0030"
+  },
+  {
+    "text": "The repair shop promised to fix my washing machine by Tuesday afternoon.",
+    "translation_zh": "维修店承诺在周二下午前修好我的洗衣机。",
+    "source_item_id": "simulated:cet4:0031"
+  },
+  {
+    "text": "We changed our picnic plans after dark clouds appeared over the park.",
+    "translation_zh": "公园上空出现乌云后，我们改变了野餐计划。",
+    "source_item_id": "simulated:cet4:0032"
+  },
+  {
+    "text": "Lucy keeps a shopping list on her phone to avoid unnecessary purchases.",
+    "translation_zh": "露西把购物清单存在手机里，以免购买不必要的东西。",
+    "source_item_id": "simulated:cet4:0033"
+  },
+  {
+    "text": "This restaurant becomes extremely busy when nearby offices close for lunch.",
+    "translation_zh": "附近办公室午休时，这家餐厅会变得非常忙碌。",
+    "source_item_id": "simulated:cet4:0034"
+  },
+  {
+    "text": "My sister learned to bake bread by watching free online videos.",
+    "translation_zh": "我姐姐通过观看免费的在线视频学会了烤面包。",
+    "source_item_id": "simulated:cet4:0035"
+  },
+  {
+    "text": "The landlord replaced the old windows to keep the apartment warmer.",
+    "translation_zh": "房东更换了旧窗户，以便让公寓更暖和。",
+    "source_item_id": "simulated:cet4:0036"
+  },
+  {
+    "text": "A street market near the station sells vegetables from local farms.",
+    "translation_zh": "车站附近的街市出售本地农场种植的蔬菜。",
+    "source_item_id": "simulated:cet4:0037"
+  },
+  {
+    "text": "We arrived early enough to find seats beside the train window.",
+    "translation_zh": "我们到得够早，找到了火车窗边的座位。",
+    "source_item_id": "simulated:cet4:0038"
+  },
+  {
+    "text": "Emma lent me an umbrella when heavy rain started without warning.",
+    "translation_zh": "大雨毫无预兆地开始时，艾玛借给我一把伞。",
+    "source_item_id": "simulated:cet4:0039"
+  },
+  {
+    "text": "The community center provides dance classes for children and older adults.",
+    "translation_zh": "社区中心为儿童和老年人开设舞蹈课程。",
+    "source_item_id": "simulated:cet4:0040"
+  },
+  {
+    "text": "Please check the train schedule before leaving for the station tomorrow.",
+    "translation_zh": "明天去车站之前，请先查看列车时刻表。",
+    "source_item_id": "simulated:cet4:0041"
+  },
+  {
+    "text": "My parents prefer quiet seaside towns to crowded tourist cities.",
+    "translation_zh": "比起拥挤的旅游城市，我父母更喜欢安静的海滨小镇。",
+    "source_item_id": "simulated:cet4:0042"
+  },
+  {
+    "text": "The delivery driver called because he could not find our building.",
+    "translation_zh": "快递司机因为找不到我们的大楼而打来了电话。",
+    "source_item_id": "simulated:cet4:0043"
+  },
+  {
+    "text": "Keeping the receipt makes returning an unsuitable product much easier.",
+    "translation_zh": "保留收据会让退掉不合适的商品容易得多。",
+    "source_item_id": "simulated:cet4:0044"
+  },
+  {
+    "text": "George invited several friends over to watch the football match together.",
+    "translation_zh": "乔治邀请了几位朋友到家里一起看足球比赛。",
+    "source_item_id": "simulated:cet4:0045"
+  },
+  {
+    "text": "The morning traffic was lighter than usual because schools were closed.",
+    "translation_zh": "因为学校停课，早晨的交通比平时畅通。",
+    "source_item_id": "simulated:cet4:0046"
+  },
+  {
+    "text": "I found a useful bookshelf at a secondhand furniture store downtown.",
+    "translation_zh": "我在市中心一家二手家具店找到了一只有用的书架。",
+    "source_item_id": "simulated:cet4:0047"
+  },
+  {
+    "text": "After dinner, we walked along the river and discussed our holiday plans.",
+    "translation_zh": "晚饭后，我们沿河散步并讨论了假期计划。",
+    "source_item_id": "simulated:cet4:0048"
+  },
+  {
+    "text": "The hotel receptionist recommended a small museum within walking distance.",
+    "translation_zh": "酒店前台推荐了一家步行即可到达的小博物馆。",
+    "source_item_id": "simulated:cet4:0049"
+  },
+  {
+    "text": "Regular cleaning prevents dust from collecting behind large household appliances.",
+    "translation_zh": "定期清洁可以防止灰尘积聚在大型家电后面。",
+    "source_item_id": "simulated:cet4:0050"
+  },
+  {
+    "text": "Local officials announced a new recycling program for apartment buildings yesterday.",
+    "translation_zh": "当地官员昨天宣布了一项面向公寓楼的新回收计划。",
+    "source_item_id": "simulated:cet4:0051"
+  },
+  {
+    "text": "Heavy snow forced the regional airport to cancel twelve morning flights.",
+    "translation_zh": "大雪迫使该地区机场取消了十二个早班航班。",
+    "source_item_id": "simulated:cet4:0052"
+  },
+  {
+    "text": "The city council approved funding for two additional public libraries.",
+    "translation_zh": "市议会批准了建设两座新公共图书馆的资金。",
+    "source_item_id": "simulated:cet4:0053"
+  },
+  {
+    "text": "A recent survey shows that fewer young people watch traditional television.",
+    "translation_zh": "最近的一项调查显示，观看传统电视的年轻人减少了。",
+    "source_item_id": "simulated:cet4:0054"
+  },
+  {
+    "text": "Farmers welcomed the weekend rain after several weeks of dry weather.",
+    "translation_zh": "经历数周干旱天气后，农民们很欢迎周末的降雨。",
+    "source_item_id": "simulated:cet4:0055"
+  },
+  {
+    "text": "The railway company plans to add more trains during the national holiday.",
+    "translation_zh": "铁路公司计划在国庆假期增开列车。",
+    "source_item_id": "simulated:cet4:0056"
+  },
+  {
+    "text": "Scientists discovered that the coastal bird population increased again this spring.",
+    "translation_zh": "科学家发现，沿海鸟类的数量今年春天再次增加。",
+    "source_item_id": "simulated:cet4:0057"
+  },
+  {
+    "text": "A popular music festival attracted thousands of visitors to the small town.",
+    "translation_zh": "一场受欢迎的音乐节吸引了数千名游客来到这座小镇。",
+    "source_item_id": "simulated:cet4:0058"
+  },
+  {
+    "text": "The mayor opened a public garden designed for families and wheelchair users.",
+    "translation_zh": "市长为一座面向家庭和轮椅使用者设计的公共花园揭幕。",
+    "source_item_id": "simulated:cet4:0059"
+  },
+  {
+    "text": "Food prices remained stable despite higher transportation costs last month.",
+    "translation_zh": "尽管运输成本上升，上个月食品价格仍保持稳定。",
+    "source_item_id": "simulated:cet4:0060"
+  },
+  {
+    "text": "The local newspaper launched a weekly section written entirely by teenagers.",
+    "translation_zh": "当地报纸推出了一个完全由青少年撰写的每周专栏。",
+    "source_item_id": "simulated:cet4:0061"
+  },
+  {
+    "text": "An international film event will bring thirty directors to the capital.",
+    "translation_zh": "一项国际电影活动将吸引三十位导演来到首都。",
+    "source_item_id": "simulated:cet4:0062"
+  },
+  {
+    "text": "Bus passengers can now pay their fares with mobile phones.",
+    "translation_zh": "公交乘客现在可以用手机支付车费。",
+    "source_item_id": "simulated:cet4:0063"
+  },
+  {
+    "text": "Researchers reported cleaner river water following stricter rules for nearby factories.",
+    "translation_zh": "研究人员报告称，对附近工厂实施更严格规定后，河水变得更清洁了。",
+    "source_item_id": "simulated:cet4:0064"
+  },
+  {
+    "text": "The museum received a valuable collection from a retired history teacher.",
+    "translation_zh": "博物馆收到了一位退休历史教师捐赠的珍贵藏品。",
+    "source_item_id": "simulated:cet4:0065"
+  },
+  {
+    "text": "Strong winds damaged several trees but caused no serious travel problems.",
+    "translation_zh": "强风损坏了几棵树，但没有造成严重的出行问题。",
+    "source_item_id": "simulated:cet4:0066"
+  },
+  {
+    "text": "A new report recommends safer bicycle routes around busy shopping areas.",
+    "translation_zh": "一份新报告建议在繁忙购物区周围设置更安全的自行车路线。",
+    "source_item_id": "simulated:cet4:0067"
+  },
+  {
+    "text": "Tourism created hundreds of seasonal jobs in the mountain region.",
+    "translation_zh": "旅游业在山区创造了数百个季节性工作岗位。",
+    "source_item_id": "simulated:cet4:0068"
+  },
+  {
+    "text": "The national weather service expects temperatures to rise by Thursday.",
+    "translation_zh": "国家气象部门预计气温将在周四前回升。",
+    "source_item_id": "simulated:cet4:0069"
+  },
+  {
+    "text": "Residents planted five hundred trees as part of an environmental campaign.",
+    "translation_zh": "居民们栽种了五百棵树，作为一项环保活动的一部分。",
+    "source_item_id": "simulated:cet4:0070"
+  },
+  {
+    "text": "The government opened an online service for renewing travel documents.",
+    "translation_zh": "政府开通了在线服务，供人们更新旅行证件。",
+    "source_item_id": "simulated:cet4:0071"
+  },
+  {
+    "text": "Local shops reported stronger sales during this year's winter holiday.",
+    "translation_zh": "当地商店报告称，今年寒假期间销售额有所增长。",
+    "source_item_id": "simulated:cet4:0072"
+  },
+  {
+    "text": "A rare flower has returned to the valley after a long absence.",
+    "translation_zh": "一种罕见的花在消失很久后重新出现在山谷中。",
+    "source_item_id": "simulated:cet4:0073"
+  },
+  {
+    "text": "Organizers postponed the outdoor ceremony because of possible thunderstorms.",
+    "translation_zh": "由于可能出现雷暴，组织者推迟了户外仪式。",
+    "source_item_id": "simulated:cet4:0074"
+  },
+  {
+    "text": "The town's oldest theater reopened after a year of careful repairs.",
+    "translation_zh": "经过一年的精心修缮，这座镇上最古老的剧院重新开放了。",
+    "source_item_id": "simulated:cet4:0075"
+  },
+  {
+    "text": "Our manager asked everyone to share ideas for improving customer service.",
+    "translation_zh": "经理请大家分享改善客户服务的想法。",
+    "source_item_id": "simulated:cet4:0076"
+  },
+  {
+    "text": "The company provides flexible hours for employees with young children.",
+    "translation_zh": "公司为有年幼子女的员工提供弹性工作时间。",
+    "source_item_id": "simulated:cet4:0077"
+  },
+  {
+    "text": "Rachel prepared a short report before meeting the new business partner.",
+    "translation_zh": "瑞秋在会见新的商业伙伴前准备了一份简短报告。",
+    "source_item_id": "simulated:cet4:0078"
+  },
+  {
+    "text": "A clear subject line helps busy colleagues understand an email quickly.",
+    "translation_zh": "清晰的邮件主题能帮助忙碌的同事迅速了解邮件内容。",
+    "source_item_id": "simulated:cet4:0079"
+  },
+  {
+    "text": "The sales team exceeded its monthly target for the first time.",
+    "translation_zh": "销售团队首次超过了月度目标。",
+    "source_item_id": "simulated:cet4:0080"
+  },
+  {
+    "text": "Employees discussed the office move during a brief online meeting.",
+    "translation_zh": "员工们在一次简短的线上会议中讨论了办公室搬迁。",
+    "source_item_id": "simulated:cet4:0081"
+  },
+  {
+    "text": "Mark accepted an internship to gain practical experience in marketing.",
+    "translation_zh": "马克接受了一份实习工作，以获得市场营销方面的实践经验。",
+    "source_item_id": "simulated:cet4:0082"
+  },
+  {
+    "text": "The receptionist arranged a taxi for the visitors after the conference.",
+    "translation_zh": "会议结束后，接待员为来访者安排了一辆出租车。",
+    "source_item_id": "simulated:cet4:0083"
+  },
+  {
+    "text": "We need accurate figures before making a decision about the project.",
+    "translation_zh": "在对项目作出决定之前，我们需要准确的数据。",
+    "source_item_id": "simulated:cet4:0084"
+  },
+  {
+    "text": "The factory reduced packaging waste by changing the shape of its boxes.",
+    "translation_zh": "这家工厂通过改变包装盒的形状减少了包装废弃物。",
+    "source_item_id": "simulated:cet4:0085"
+  },
+  {
+    "text": "My supervisor praised the presentation but suggested a clearer conclusion.",
+    "translation_zh": "我的主管表扬了这次展示，但建议采用更清晰的结论。",
+    "source_item_id": "simulated:cet4:0086"
+  },
+  {
+    "text": "Several applicants arrived early to complete forms before their interviews.",
+    "translation_zh": "几位应聘者提前到达，以便在面试前填写表格。",
+    "source_item_id": "simulated:cet4:0087"
+  },
+  {
+    "text": "The restaurant hired two extra cooks for the busy summer season.",
+    "translation_zh": "这家餐厅为繁忙的夏季增聘了两名厨师。",
+    "source_item_id": "simulated:cet4:0088"
+  },
+  {
+    "text": "Good communication can prevent small workplace problems from becoming serious.",
+    "translation_zh": "良好的沟通可以防止小的职场问题变得严重。",
+    "source_item_id": "simulated:cet4:0089"
+  },
+  {
+    "text": "Our department shares one meeting room with the design team.",
+    "translation_zh": "我们部门与设计团队共用一间会议室。",
+    "source_item_id": "simulated:cet4:0090"
+  },
+  {
+    "text": "The training course teaches staff how to handle difficult customer questions.",
+    "translation_zh": "这门培训课程教员工如何处理棘手的客户问题。",
+    "source_item_id": "simulated:cet4:0091"
+  },
+  {
+    "text": "Julia works remotely twice a week to shorten her daily travel time.",
+    "translation_zh": "朱莉娅每周远程办公两次，以缩短日常通勤时间。",
+    "source_item_id": "simulated:cet4:0092"
+  },
+  {
+    "text": "The finance officer checked every receipt before approving the expense claim.",
+    "translation_zh": "财务人员在批准报销申请前核对了每张收据。",
+    "source_item_id": "simulated:cet4:0093"
+  },
+  {
+    "text": "A local engineer developed a cheaper method for storing solar energy.",
+    "translation_zh": "一位当地工程师研发了一种成本更低的太阳能储存方法。",
+    "source_item_id": "simulated:cet4:0094"
+  },
+  {
+    "text": "The team divided the assignment according to each member's strongest skills.",
+    "translation_zh": "团队根据每位成员最擅长的技能分配了任务。",
+    "source_item_id": "simulated:cet4:0095"
+  },
+  {
+    "text": "Please update the shared calendar whenever a client changes an appointment.",
+    "translation_zh": "客户更改预约时，请及时更新共享日历。",
+    "source_item_id": "simulated:cet4:0096"
+  },
+  {
+    "text": "The bookstore owner uses social media to promote weekend events.",
+    "translation_zh": "书店老板利用社交媒体宣传周末活动。",
+    "source_item_id": "simulated:cet4:0097"
+  },
+  {
+    "text": "Annual reviews give workers an opportunity to discuss future career goals.",
+    "translation_zh": "年度考核让员工有机会讨论未来的职业目标。",
+    "source_item_id": "simulated:cet4:0098"
+  },
+  {
+    "text": "We postponed the product launch until the final quality checks were complete.",
+    "translation_zh": "我们把产品发布推迟到最终质量检查完成之后。",
+    "source_item_id": "simulated:cet4:0099"
+  },
+  {
+    "text": "The hotel rewards staff members who receive excellent comments from guests.",
+    "translation_zh": "酒店会奖励获得客人好评的员工。",
+    "source_item_id": "simulated:cet4:0100"
+  },
+  {
+    "text": "This mobile application helps users track their daily water consumption.",
+    "translation_zh": "这款手机应用帮助用户记录每日饮水量。",
+    "source_item_id": "simulated:cet4:0101"
+  },
+  {
+    "text": "The software automatically saves a copy whenever you edit the document.",
+    "translation_zh": "每当你编辑文档时，这款软件都会自动保存一个副本。",
+    "source_item_id": "simulated:cet4:0102"
+  },
+  {
+    "text": "Online maps have made exploring unfamiliar cities much more convenient.",
+    "translation_zh": "在线地图让探索陌生城市方便了许多。",
+    "source_item_id": "simulated:cet4:0103"
+  },
+  {
+    "text": "Remember to create a strong password for your new email account.",
+    "translation_zh": "记得为你的新电子邮件账户设置一个强密码。",
+    "source_item_id": "simulated:cet4:0104"
+  },
+  {
+    "text": "The smart speaker misunderstood my request because the room was noisy.",
+    "translation_zh": "由于房间里很吵，智能音箱误解了我的请求。",
+    "source_item_id": "simulated:cet4:0105"
+  },
+  {
+    "text": "Engineers are testing a battery that charges fully within ten minutes.",
+    "translation_zh": "工程师们正在测试一种能在十分钟内充满电的电池。",
+    "source_item_id": "simulated:cet4:0106"
+  },
+  {
+    "text": "Video calls allow distant family members to celebrate important moments together.",
+    "translation_zh": "视频通话让相隔遥远的家人能够共同庆祝重要时刻。",
+    "source_item_id": "simulated:cet4:0107"
+  },
+  {
+    "text": "The website displays public transport information in four different languages.",
+    "translation_zh": "该网站以四种不同的语言显示公共交通信息。",
+    "source_item_id": "simulated:cet4:0108"
+  },
+  {
+    "text": "Some farmers use small drones to examine crops across large fields.",
+    "translation_zh": "一些农民使用小型无人机检查大片田地里的农作物。",
+    "source_item_id": "simulated:cet4:0109"
+  },
+  {
+    "text": "Turning off unused devices can reduce both energy costs and waste.",
+    "translation_zh": "关闭不用的设备可以减少能源成本和浪费。",
+    "source_item_id": "simulated:cet4:0110"
+  },
+  {
+    "text": "The latest update improves photo quality on older mobile phones.",
+    "translation_zh": "最新的更新提升了旧款手机的照片质量。",
+    "source_item_id": "simulated:cet4:0111"
+  },
+  {
+    "text": "Children learned basic computer skills by designing their own simple games.",
+    "translation_zh": "孩子们通过设计自己的简单游戏学习了基础电脑技能。",
+    "source_item_id": "simulated:cet4:0112"
+  },
+  {
+    "text": "Digital tickets reduce waiting time at the entrance to popular attractions.",
+    "translation_zh": "电子票可以减少在热门景点入口处的等候时间。",
+    "source_item_id": "simulated:cet4:0113"
+  },
+  {
+    "text": "The online store recommends products based on a customer's browsing history.",
+    "translation_zh": "这家网店会根据顾客的浏览记录推荐商品。",
+    "source_item_id": "simulated:cet4:0114"
+  },
+  {
+    "text": "A portable solar panel can charge phones during long camping trips.",
+    "translation_zh": "便携式太阳能板可以在长途露营期间给手机充电。",
+    "source_item_id": "simulated:cet4:0115"
+  },
+  {
+    "text": "The robot carries heavy supplies between different parts of the hospital.",
+    "translation_zh": "这台机器人在医院的不同区域之间运送沉重物资。",
+    "source_item_id": "simulated:cet4:0116"
+  },
+  {
+    "text": "Users can adjust the screen brightness to protect their eyes at night.",
+    "translation_zh": "用户可以调节屏幕亮度，以保护夜间用眼。",
+    "source_item_id": "simulated:cet4:0117"
+  },
+  {
+    "text": "Modern weather tools give farmers earlier warnings about sudden storms.",
+    "translation_zh": "现代气象工具能让农民更早收到突发暴风雨的预警。",
+    "source_item_id": "simulated:cet4:0118"
+  },
+  {
+    "text": "The university stores old photographs in a searchable digital collection.",
+    "translation_zh": "这所大学把老照片保存在一个可检索的数字馆藏中。",
+    "source_item_id": "simulated:cet4:0119"
+  },
+  {
+    "text": "Public charging stations are becoming common in airports and shopping centers.",
+    "translation_zh": "公共充电站在机场和购物中心正变得越来越常见。",
+    "source_item_id": "simulated:cet4:0120"
+  },
+  {
+    "text": "Voice technology makes smartphones easier to use for some older people.",
+    "translation_zh": "语音技术让一些老年人更容易使用智能手机。",
+    "source_item_id": "simulated:cet4:0121"
+  },
+  {
+    "text": "Our teacher explained how false information spreads quickly through social networks.",
+    "translation_zh": "老师解释了虚假信息如何通过社交网络迅速传播。",
+    "source_item_id": "simulated:cet4:0122"
+  },
+  {
+    "text": "The device measures room temperature and controls the heating system automatically.",
+    "translation_zh": "该设备测量室温并自动控制供暖系统。",
+    "source_item_id": "simulated:cet4:0123"
+  },
+  {
+    "text": "A damaged cable was responsible for the slow internet connection.",
+    "translation_zh": "一根损坏的线缆导致了网速缓慢。",
+    "source_item_id": "simulated:cet4:0124"
+  },
+  {
+    "text": "Many museums now offer virtual tours for people unable to travel.",
+    "translation_zh": "许多博物馆现在为无法出行的人提供虚拟参观。",
+    "source_item_id": "simulated:cet4:0125"
+  },
+  {
+    "text": "A short walk after dinner can improve sleep and reduce stress.",
+    "translation_zh": "晚饭后短暂散步可以改善睡眠并减轻压力。",
+    "source_item_id": "simulated:cet4:0126"
+  },
+  {
+    "text": "Doctors advise office workers to stretch regularly during long periods of sitting.",
+    "translation_zh": "医生建议办公室职员久坐期间定期伸展身体。",
+    "source_item_id": "simulated:cet4:0127"
+  },
+  {
+    "text": "Eating a balanced breakfast helps children concentrate better at school.",
+    "translation_zh": "吃营养均衡的早餐有助于孩子在学校更好地集中注意力。",
+    "source_item_id": "simulated:cet4:0128"
+  },
+  {
+    "text": "The health center offers free eye tests every Tuesday morning.",
+    "translation_zh": "健康中心每周二上午提供免费视力检查。",
+    "source_item_id": "simulated:cet4:0129"
+  },
+  {
+    "text": "Sarah carries a water bottle to remember to drink throughout the day.",
+    "translation_zh": "萨拉随身带着水瓶，提醒自己全天都要喝水。",
+    "source_item_id": "simulated:cet4:0130"
+  },
+  {
+    "text": "Too much screen time before bed may disturb a person's sleep.",
+    "translation_zh": "睡前使用屏幕时间过长可能会影响人的睡眠。",
+    "source_item_id": "simulated:cet4:0131"
+  },
+  {
+    "text": "Regular exercise can raise energy levels even during a busy week.",
+    "translation_zh": "即使在忙碌的一周里，规律锻炼也能提高精力水平。",
+    "source_item_id": "simulated:cet4:0132"
+  },
+  {
+    "text": "The nurse showed patients how to use the medicine safely.",
+    "translation_zh": "护士向病人示范了如何安全用药。",
+    "source_item_id": "simulated:cet4:0133"
+  },
+  {
+    "text": "Fresh vegetables provide important nutrients that the human body needs.",
+    "translation_zh": "新鲜蔬菜能提供人体所需的重要营养物质。",
+    "source_item_id": "simulated:cet4:0134"
+  },
+  {
+    "text": "Deep breathing helped Kevin stay calm before his public speech.",
+    "translation_zh": "深呼吸帮助凯文在公开演讲前保持冷静。",
+    "source_item_id": "simulated:cet4:0135"
+  },
+  {
+    "text": "The swimming pool has special morning sessions for older adults.",
+    "translation_zh": "游泳池为老年人设置了专门的晨间时段。",
+    "source_item_id": "simulated:cet4:0136"
+  },
+  {
+    "text": "People often make healthier choices when nutritious food is easily available.",
+    "translation_zh": "当营养食品很容易获得时，人们通常会作出更健康的选择。",
+    "source_item_id": "simulated:cet4:0137"
+  },
+  {
+    "text": "A comfortable chair can prevent back pain during long study sessions.",
+    "translation_zh": "舒适的椅子可以防止长时间学习时出现背痛。",
+    "source_item_id": "simulated:cet4:0138"
+  },
+  {
+    "text": "The doctor recommended resting at home and drinking plenty of warm water.",
+    "translation_zh": "医生建议在家休息并多喝温水。",
+    "source_item_id": "simulated:cet4:0139"
+  },
+  {
+    "text": "Joining a sports club helped Anna make friends and remain active.",
+    "translation_zh": "参加体育俱乐部帮助安娜结交朋友并保持活力。",
+    "source_item_id": "simulated:cet4:0140"
+  },
+  {
+    "text": "Reading food labels allows shoppers to compare sugar and salt levels.",
+    "translation_zh": "阅读食品标签能让购物者比较糖和盐的含量。",
+    "source_item_id": "simulated:cet4:0141"
+  },
+  {
+    "text": "The local clinic recently added evening appointments for working parents.",
+    "translation_zh": "当地诊所最近为在职父母增设了晚间预约。",
+    "source_item_id": "simulated:cet4:0142"
+  },
+  {
+    "text": "Spending time outdoors can improve both physical and mental well-being.",
+    "translation_zh": "花时间进行户外活动可以改善身心健康。",
+    "source_item_id": "simulated:cet4:0143"
+  },
+  {
+    "text": "My grandfather follows a simple exercise program designed by his doctor.",
+    "translation_zh": "我祖父遵循一套由医生设计的简单锻炼计划。",
+    "source_item_id": "simulated:cet4:0144"
+  },
+  {
+    "text": "Washing hands carefully reduces the spread of common seasonal illnesses.",
+    "translation_zh": "认真洗手可以减少常见季节性疾病的传播。",
+    "source_item_id": "simulated:cet4:0145"
+  },
+  {
+    "text": "The coach reminded runners to warm up before starting the race.",
+    "translation_zh": "教练提醒跑步者在比赛开始前进行热身。",
+    "source_item_id": "simulated:cet4:0146"
+  },
+  {
+    "text": "Healthy sleep habits are easier to maintain with a regular schedule.",
+    "translation_zh": "有规律的作息更有助于保持健康的睡眠习惯。",
+    "source_item_id": "simulated:cet4:0147"
+  },
+  {
+    "text": "Several employees chose stairs instead of elevators during a fitness challenge.",
+    "translation_zh": "在一次健身挑战中，几名员工选择走楼梯而不是乘电梯。",
+    "source_item_id": "simulated:cet4:0148"
+  },
+  {
+    "text": "The community garden gives residents access to affordable fresh produce.",
+    "translation_zh": "社区菜园让居民能够获得价格实惠的新鲜农产品。",
+    "source_item_id": "simulated:cet4:0149"
+  },
+  {
+    "text": "Taking brief breaks improves attention when a task requires hours of concentration.",
+    "translation_zh": "当一项任务需要长时间集中注意力时，短暂休息可以提高专注度。",
+    "source_item_id": "simulated:cet4:0150"
+  }
+]
