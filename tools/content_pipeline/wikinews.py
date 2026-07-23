@@ -60,8 +60,11 @@ def iter_wikinews_extracts(
         if not isinstance(source_url, str) or not isinstance(extract, str):
             continue
         license_name, license_url = _license_for_extract(extract)
+        source_key = page.get("pageid") or page.get("title") or source_url
+        if not isinstance(source_key, (str, int)):
+            continue
         emitted = 0
-        for text in _split_sentences(extract):
+        for sentence_index, text in enumerate(_split_sentences(extract), start=1):
             if rejection_reason(text):
                 continue
             yield CollectedSentence(
@@ -72,6 +75,7 @@ def iter_wikinews_extracts(
                 license_url=license_url,
                 category_hint="news_podcasts",
                 source_author="Wikinews",
+                source_item_id=f"{source_key}:{sentence_index}",
             )
             emitted += 1
             if emitted == max_per_article:

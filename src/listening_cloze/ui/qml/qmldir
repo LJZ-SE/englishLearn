@@ -1,0 +1,11 @@
+module ListeningCloze
+ChoiceChip 1.0 ChoiceChip.qml
+HomePage 1.0 HomePage.qml
+PracticePage 1.0 PracticePage.qml
+PrimaryButton 1.0 PrimaryButton.qml
+RepairPage 1.0 RepairPage.qml
+SceneSelector 1.0 SceneSelector.qml
+SettingsPage 1.0 SettingsPage.qml
+SummaryPage 1.0 SummaryPage.qml
+WaveMascot 1.0 WaveMascot.qml
+Waveform 1.0 Waveform.qml

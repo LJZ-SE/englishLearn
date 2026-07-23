@@ -3,7 +3,11 @@ import json
 import sqlite3
 from pathlib import Path
 
-from listening_cloze.application.asset_health import check_bundled_assets
+from listening_cloze.application.asset_health import (
+    EXPECTED_QUESTION_COUNT,
+    EXPECTED_SENTENCE_COUNT,
+    check_bundled_assets,
+)
 
 
 def test_missing_database_and_model_are_reported(tmp_path: Path) -> None:
@@ -20,11 +24,11 @@ def test_complete_database_and_required_model_files_pass_health_check(tmp_path: 
         connection.execute("CREATE TABLE question_variants(id TEXT PRIMARY KEY)")
         connection.executemany(
             "INSERT INTO sentences VALUES (?)",
-            [(f"s-{index}",) for index in range(300)],
+            ((f"s-{index}",) for index in range(EXPECTED_SENTENCE_COUNT)),
         )
         connection.executemany(
             "INSERT INTO question_variants VALUES (?)",
-            [(f"q-{index}",) for index in range(900)],
+            ((f"q-{index}",) for index in range(EXPECTED_QUESTION_COUNT)),
         )
     model_dir = tmp_path / "supertonic-3"
     required = [

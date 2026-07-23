@@ -10,12 +10,19 @@ Copyright (c) 2025 Supertone Inc. Licensed under the MIT License. The SDK source
 
 The bundled Supertonic 3 model and voice styles are distributed under the BigScience Open RAIL-M License. The complete license is installed with the model at `listening_cloze/data/supertonic-3/LICENSE`.
 
-## Tatoeba sentences
+## Bundled language corpora
 
-The first-release corpus contains attributed English sentences from Tatoeba under CC BY 2.0 FR. Per-sentence source URLs and contributor names are preserved in `listening_cloze/data/sources.json` and in the bundled content database. License: <https://creativecommons.org/licenses/by/2.0/fr/>.
+The offline content library contains attributed or source-linked material from Tatoeba,
+English Wikinews, Project Gutenberg, SciQ, AMI Meeting Corpus, CLINC150,
+Cornell Movie Dialogs, DailyDialog, MASSIVE, MedQuAD, MTS-Dialog, MultiWOZ,
+Schema-Guided Dialogue, Switchboard, Taskmaster, and selected Stack Exchange sites.
 
-## English Wikinews sentences
+Applicable licenses include public domain terms, MIT, CC BY, CC BY-NC, CC BY-NC-SA,
+and CC BY-SA variants. Some corpora are distributed under their source-specific terms.
+The internally generated scenario pack is used only in this private offline application.
 
-The first-release corpus contains attributed excerpts from English Wikinews. Each article is marked as Public Domain, CC BY 2.5, or CC BY 4.0 according to its publication date. Per-article URLs and applicable licenses are preserved in `listening_cloze/data/sources.json` and in the bundled content database.
+Per-source license names and URLs, sentence counts, source URLs, item identifiers, and
+available author attribution are preserved in `listening_cloze/data/sources.json` and in
+the bundled content database.
 
 This application does not claim ownership of the attributed third-party sentences or model assets.

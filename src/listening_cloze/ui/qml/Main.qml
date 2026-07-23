@@ -6,13 +6,14 @@ ApplicationWindow {
     id: appWindow
     width: 1440
     height: 900
-    minimumWidth: 1080
+    minimumWidth: 960
     minimumHeight: 700
     visible: true
     title: "听写填空"
     color: "#EEF5FC"
     property var backend: null
     readonly property string pageName: backend ? backend.currentPage : "home"
+    readonly property bool compactPracticeHeader: pageName === "practice" && width < 1180
 
     background: Rectangle {
         gradient: Gradient {
@@ -31,12 +32,13 @@ ApplicationWindow {
         RowLayout {
             objectName: "headerRow"
             anchors.fill: parent
-            anchors.leftMargin: 34
-            anchors.rightMargin: 34
-            spacing: 18
+            anchors.leftMargin: appWindow.compactPracticeHeader ? 12 : 34
+            anchors.rightMargin: appWindow.compactPracticeHeader ? 12 : 34
+            spacing: appWindow.compactPracticeHeader ? 8 : 18
 
             Rectangle {
                 objectName: "headerLogo"
+                visible: !appWindow.compactPracticeHeader
                 width: 46; height: 46; radius: 13
                 gradient: Gradient {
                     GradientStop { position: 0; color: "#1687FF" }
@@ -53,6 +55,7 @@ ApplicationWindow {
             }
             Text {
                 objectName: "headerTitle"
+                visible: !appWindow.compactPracticeHeader
                 text: "听写填空"
                 color: "#172033"
                 font.family: "Segoe UI"
@@ -63,7 +66,7 @@ ApplicationWindow {
                 id: backHomeButton
                 objectName: "backHomeButton"
                 visible: appWindow.pageName === "practice"
-                Layout.preferredWidth: 92
+                Layout.preferredWidth: appWindow.compactPracticeHeader ? 80 : 92
                 Layout.preferredHeight: 40
                 hoverEnabled: true
                 scale: down ? 0.96 : 1.0
@@ -84,28 +87,38 @@ ApplicationWindow {
                 onClicked: if (appWindow.backend) appWindow.backend.goHome()
             }
             ChoiceChip {
+                objectName: "headerDifficulty"
                 visible: appWindow.pageName === "practice"
+                Layout.preferredWidth: appWindow.compactPracticeHeader ? 64 : implicitWidth
                 text: appWindow.backend ? appWindow.backend.difficultyLabel : "中等"
                 selected: true
             }
             ChoiceChip {
+                objectName: "headerSceneLabel"
                 visible: appWindow.pageName === "practice"
-                text: appWindow.backend ? appWindow.backend.categoryLabel : "日常口语"
+                Layout.preferredWidth: appWindow.compactPracticeHeader ? 170 : implicitWidth
+                text: appWindow.backend ? appWindow.backend.sceneLabel : ""
                 selected: true
                 accent: "#20A46B"
             }
             ChoiceChip {
+                objectName: "headerProgress"
                 visible: appWindow.pageName === "practice"
+                Layout.preferredWidth: appWindow.compactPracticeHeader ? 132 : implicitWidth
                 text: appWindow.backend ? appWindow.backend.progressText : "第 4 / 10 题"
             }
             Item { Layout.fillWidth: true }
             Button {
+                objectName: "endSessionButton"
                 visible: appWindow.pageName === "practice"
-                text: "结束本轮"
+                Layout.preferredWidth: appWindow.compactPracticeHeader ? 56 : implicitWidth
+                text: appWindow.compactPracticeHeader ? "结束" : "结束本轮"
                 flat: true
                 onClicked: if (appWindow.backend) appWindow.backend.endSession()
             }
             Button {
+                objectName: "settingsButton"
+                Layout.preferredWidth: 42
                 text: "⚙"
                 flat: true
                 font.pixelSize: 20
@@ -113,6 +126,7 @@ ApplicationWindow {
             }
             Rectangle {
                 objectName: "offlineBadge"
+                visible: !appWindow.compactPracticeHeader
                 Layout.preferredWidth: 132
                 Layout.preferredHeight: 42
                 radius: 11

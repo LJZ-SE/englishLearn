@@ -1,0 +1,367 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from tools.content_pipeline import work_database
+from tools.content_pipeline.work_database import WorkDatabase
+
+
+def add_raw_item(database: WorkDatabase, *, source_item_id: str = "42") -> int:
+    return database.upsert_raw(
+        source_name="Tatoeba",
+        source_item_id=source_item_id,
+        source_url=f"https://tatoeba.org/en/sentences/show/{source_item_id}",
+        source_author="alice",
+        license_name="CC BY 2.0 FR",
+        license_url="https://creativecommons.org/licenses/by/2.0/fr/",
+        text="The train arrives at nine o'clock.",
+    )
+
+
+def test_work_database_is_idempotent_and_resumes_pending_rows(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    first_id = add_raw_item(database)
+    second_id = add_raw_item(database)
+
+    assert first_id == second_id
+    assert database.claim_batch("dedupe", limit=10) == []
+    batch = database.claim_batch("clean", limit=10)
+    assert [row.id for row in batch] == [first_id]
+    database.mark_stage(first_id, "clean", payload={"clean_text": "The train arrives."})
+    assert database.claim_batch("clean", limit=10) == []
+    assert [row.id for row in database.claim_batch("dedupe", limit=10)] == [first_id]
+
+
+@pytest.mark.parametrize(
+    "model_version",
+    ("llm-repair", "historical-review-replay-v1", "recall-review-v1"),
+)
+def test_claim_stage_batch_preserves_authoritative_classifications(
+    tmp_path: Path,
+    model_version: str,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.mark_stage(item_id, "clean", payload={"clean_text": "A research result."})
+    database.mark_stage(item_id, "dedupe", payload={"simhash64": "0" * 16})
+    database.mark_stage(
+        item_id,
+        "classify",
+        payload={
+            "top_scene": "study",
+            "sub_scene": "study_academic",
+            "confidence": 1.0,
+            "method": "reviewed",
+        },
+        model_version=model_version,
+    )
+
+    assert (
+        database.claim_stage_batch(
+            "classify", limit=10, stale_model_version="scene-candidate-v13"
+        )
+        == []
+    )
+
+
+def test_upsert_raw_does_not_write_when_source_fields_are_unchanged(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    with database.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TRIGGER reject_unchanged_raw_update
+            BEFORE UPDATE ON raw_items
+            BEGIN
+                SELECT RAISE(ABORT, 'unchanged row should not be updated');
+            END;
+            """
+        )
+
+    assert add_raw_item(database) == item_id
+
+
+def test_delete_raw_source_handles_more_than_sqlite_variable_limit(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    with database.connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO raw_items(
+                source_name, source_item_id, source_url, source_author, license_name,
+                license_url, text, protected, created_at
+            ) VALUES ('bulk', ?, 'https://example.test', 'a', 'license',
+                      'https://example.test/license', 'text', 0, 'now')
+            """,
+            [(str(index),) for index in range(35000)],
+        )
+        connection.execute(
+            """
+            INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
+            SELECT id, 'clean', '{}', '', 'now' FROM raw_items WHERE source_name='bulk'
+            """
+        )
+
+    assert database.delete_raw_source("bulk") == 35000
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM stage_results").fetchone()[0] == 0
+
+
+def test_delete_raw_source_rolls_back_related_deletes_on_failure(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.mark_stage(item_id, "clean", payload={})
+    with database.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TRIGGER fail_raw_delete BEFORE DELETE ON raw_items
+            BEGIN SELECT RAISE(ABORT, 'simulated delete failure'); END;
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="simulated delete failure"):
+        database.delete_raw_source("Tatoeba")
+
+    assert database.stage_counts() == {"raw": 1, "clean": 1, "rejected": 0}
+
+
+def test_work_database_preserves_provenance_and_excludes_rejected_rows(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = database.upsert_raw(
+        source_name="Wikinews",
+        source_item_id="story-7",
+        source_url="https://example.test/story-7",
+        source_author="reporter",
+        license_name="CC BY 2.5",
+        license_url="https://creativecommons.org/licenses/by/2.5/",
+        text="The library opened its doors today.",
+        protected=True,
+        top_scene="travel",
+        sub_scene="travel_hotel",
+    )
+
+    [item] = database.claim_batch("clean", limit=1)
+    assert item.id == item_id
+    assert item.source_author == "reporter"
+    assert item.license_name == "CC BY 2.5"
+    assert item.protected is True
+    assert item.top_scene == "travel"
+    assert item.sub_scene == "travel_hotel"
+
+    database.record_rejection(item_id, "clean", "sensitive")
+
+    assert database.claim_batch("clean", limit=10) == []
+    assert database.stage_counts() == {"raw": 1, "rejected": 1}
+
+
+def test_work_database_upserts_stage_payload_and_reports_counts(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+
+    database.mark_stage(item_id, "clean", payload={"clean_text": "First result"})
+    database.mark_stage(
+        item_id,
+        "clean",
+        payload={"clean_text": "Replacement result"},
+        model_version="clean-v2",
+    )
+
+    assert database.stage_counts() == {"raw": 1, "clean": 1, "rejected": 0}
+    with database.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json, model_version FROM stage_results WHERE item_id = ? AND stage = ?",
+            (item_id, "clean"),
+        ).fetchone()
+    assert row == (json.dumps({"clean_text": "Replacement result"}, ensure_ascii=False), "clean-v2")
+
+
+def test_content_cli_initializes_and_reports_status(tmp_path: Path) -> None:
+    database_path = tmp_path / "work.db"
+    command = [sys.executable, "-m", "tools.content_pipeline.cli"]
+
+    initialized = subprocess.run(
+        [*command, "init", str(database_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    status = subprocess.run(
+        [*command, "status", str(database_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert initialized.stdout == ""
+    assert json.loads(status.stdout) == {"raw": 0, "rejected": 0}
+
+
+def test_mark_stage_requires_the_immediately_previous_successful_stage(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+
+    with pytest.raises(ValueError, match="不支持的处理阶段"):
+        database.mark_stage(item_id, "unknown", payload={})
+    with pytest.raises(ValueError, match="前置阶段"):
+        database.mark_stage(item_id, "variants", payload={})
+
+    database.mark_stage(item_id, "clean", payload={})
+    with pytest.raises(ValueError, match="前置阶段"):
+        database.mark_stage(item_id, "classify", payload={})
+
+    database.mark_stage(item_id, "dedupe", payload={})
+    database.mark_stage(item_id, "classify", payload={})
+
+
+@pytest.mark.parametrize(
+    "changed_fields",
+    [
+        {"text": "The train leaves at ten o'clock."},
+        {"source_url": "https://tatoeba.org/en/sentences/show/updated"},
+        {"source_author": "bob"},
+        {"license_name": "CC BY 4.0"},
+        {"license_url": "https://creativecommons.org/licenses/by/4.0/"},
+        {"protected": True},
+        {"top_scene": "travel", "sub_scene": "travel_hotel"},
+    ],
+)
+def test_upsert_raw_invalidates_derived_state_only_when_source_fields_change(
+    tmp_path: Path, changed_fields: dict[str, object]
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    raw = {
+        "source_name": "Tatoeba",
+        "source_item_id": "42",
+        "source_url": "https://tatoeba.org/en/sentences/show/42",
+        "source_author": "alice",
+        "license_name": "CC BY 2.0 FR",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/fr/",
+        "text": "The train arrives at nine o'clock.",
+        "protected": False,
+        "top_scene": None,
+        "sub_scene": None,
+    }
+    item_id = database.upsert_raw(**raw)
+    database.mark_stage(item_id, "clean", payload={"clean_text": raw["text"]})
+    database.record_rejection(item_id, "clean", "duplicate")
+
+    assert database.upsert_raw(**raw) == item_id
+    assert database.stage_counts() == {"raw": 1, "clean": 1, "rejected": 1}
+
+    assert database.upsert_raw(**(raw | changed_fields)) == item_id
+    assert database.stage_counts() == {"raw": 1, "rejected": 0}
+    assert [item.id for item in database.claim_batch("clean", limit=10)] == [item_id]
+
+
+def test_initialize_rolls_back_every_schema_change_when_ddl_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "work.db"
+    monkeypatch.setattr(
+        work_database,
+        "_schema_statements",
+        lambda: ("CREATE TABLE rollback_probe(id INTEGER PRIMARY KEY)", "INVALID SQL"),
+        raising=False,
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        WorkDatabase(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rollback_probe'"
+        ).fetchall()
+    assert tables == []
+
+
+def test_mark_stage_rejects_items_already_rejected_at_any_stage(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.record_rejection(item_id, "clean", "sensitive")
+
+    with pytest.raises(ValueError, match="已拒绝"):
+        database.mark_stage(item_id, "clean", payload={"clean_text": "Unexpected result"})
+
+    assert database.stage_counts() == {"raw": 1, "rejected": 1}
+
+
+def test_stage_inputs_can_include_completed_rows_and_predecessor_payload(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.mark_stage(item_id, "clean", payload={"clean_text": "Normalized text."})
+    database.mark_stage(item_id, "dedupe", payload={"simhash64": "abc"})
+
+    pending = database.stage_inputs("dedupe")
+    completed = database.stage_inputs("dedupe", include_completed=True)
+
+    assert pending == []
+    assert len(completed) == 1
+    assert completed[0].item.id == item_id
+    assert completed[0].predecessor_payload == {"clean_text": "Normalized text."}
+    assert completed[0].stage_payload == {"simhash64": "abc"}
+
+
+def test_replace_stage_is_noop_for_same_set_and_atomic_on_insert_failure(tmp_path: Path) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    first = add_raw_item(database, source_item_id="1")
+    second = add_raw_item(database, source_item_id="2")
+    for item_id in (first, second):
+        database.mark_stage(item_id, "clean", payload={})
+        database.mark_stage(item_id, "dedupe", payload={})
+        database.mark_stage(item_id, "classify", payload={})
+    original = [(first, {"sub_scene": "travel_hotel"})]
+    assert database.replace_stage("select", original) is True
+    with database.connect() as connection:
+        before = connection.execute(
+            "SELECT item_id, payload_json, updated_at FROM stage_results WHERE stage = ?",
+            ("select",),
+        ).fetchall()
+
+    assert database.replace_stage("select", original) is False
+    with database.connect() as connection:
+        unchanged = connection.execute(
+            "SELECT item_id, payload_json, updated_at FROM stage_results WHERE stage = ?",
+            ("select",),
+        ).fetchall()
+        connection.execute(
+            """
+            CREATE TRIGGER fail_select_insert
+            BEFORE INSERT ON stage_results
+            WHEN NEW.stage = 'select' AND NEW.item_id = 2
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated batch interruption');
+            END
+            """
+        )
+    assert unchanged == before
+
+    with pytest.raises(sqlite3.IntegrityError, match="simulated batch interruption"):
+        database.replace_stage(
+            "select",
+            [(first, {"sub_scene": "travel_hotel"}), (second, {"sub_scene": "travel_hotel"})],
+        )
+
+    with database.connect() as connection:
+        after = connection.execute(
+            "SELECT item_id, payload_json, updated_at FROM stage_results WHERE stage = ?",
+            ("select",),
+        ).fetchall()
+    assert after == before

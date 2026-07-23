@@ -16,6 +16,8 @@ REQUIRED_MODEL_FILES = (
     "LICENSE",
 )
 MODEL_REVISION = "724fb5abbf5502583fb520898d45929e62f02c0b"
+EXPECTED_SENTENCE_COUNT = 30_000
+EXPECTED_QUESTION_COUNT = 90_000
 
 
 def check_bundled_assets(
@@ -40,9 +42,13 @@ def check_bundled_assets(
                 ).fetchone()[0]
             if integrity != "ok":
                 issues.append("题库 content.db 完整性校验失败")
-            if sentence_count != 300 or question_count != 900:
+            if (
+                sentence_count != EXPECTED_SENTENCE_COUNT
+                or question_count != EXPECTED_QUESTION_COUNT
+            ):
                 issues.append(
-                    f"题库数量异常：应为 300 个原句 / 900 道题，实际为 "
+                    f"题库数量异常：应为 {EXPECTED_SENTENCE_COUNT} 个原句 / "
+                    f"{EXPECTED_QUESTION_COUNT} 道题，实际为 "
                     f"{sentence_count} / {question_count}"
                 )
         except sqlite3.Error as error:

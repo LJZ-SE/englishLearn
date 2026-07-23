@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "generated_at_utc": "2026-07-23T00:39:05.757285+00:00",
+  "purpose": "Second-pass narrow residual semantic recall input audit; this step only prepares inputs and does not execute recall.",
+  "database": {
+    "path": "work/content-library/content-work.db",
+    "candidate_pool_fingerprint": "0c4beecf28252ad135305aca777d4b5dbf4851c21d90f5947559605eea061b8f",
+    "eligible_count": 304663,
+    "max_raw_item_id": 2391715,
+    "max_eligible_item_id": 1931560,
+    "candidate_pool_scan_count": 1,
+    "fingerprint_row_encoding": "SHA-256 over compact UTF-8 JSON tuple plus LF, ordered by item_id"
+  },
+  "current_exact_quota_aware_classification_capacity": {
+    "capacity_basis": "quota-aware classification selection before the variant-ready gate",
+    "exact_for_this_basis": true,
+    "variant_gate_included": false,
+    "final_exact_select_verified": false,
+    "required_follow_up": "Run the final exact select and separately verify variant-ready capacity after pass2 review/apply.",
+    "total_quota": 30000,
+    "total_capacity": 29260,
+    "total_shortage": 740,
+    "shortage_scene_count": 10,
+    "by_shortage_scene": {
+      "daily_home": {
+        "quota": 1500,
+        "quota_aware_classification_capacity": 1472,
+        "shortage": 28
+      },
+      "travel_directions": {
+        "quota": 900,
+        "quota_aware_classification_capacity": 891,
+        "shortage": 9
+      },
+      "work_jobs": {
+        "quota": 1100,
+        "quota_aware_classification_capacity": 1092,
+        "shortage": 8
+      },
+      "study_academic": {
+        "quota": 1000,
+        "quota_aware_classification_capacity": 748,
+        "shortage": 252
+      },
+      "health_fitness": {
+        "quota": 800,
+        "quota_aware_classification_capacity": 646,
+        "shortage": 154
+      },
+      "technology_software": {
+        "quota": 800,
+        "quota_aware_classification_capacity": 765,
+        "shortage": 35
+      },
+      "technology_engineering": {
+        "quota": 700,
+        "quota_aware_classification_capacity": 630,
+        "shortage": 70
+      },
+      "technology_science": {
+        "quota": 700,
+        "quota_aware_classification_capacity": 680,
+        "shortage": 20
+      },
+      "culture_books": {
+        "quota": 700,
+        "quota_aware_classification_capacity": 699,
+        "shortage": 1
+      },
+      "news_current": {
+        "quota": 600,
+        "quota_aware_classification_capacity": 437,
+        "shortage": 163
+      }
+    },
+    "evidence": {
+      "source": "first-review post-apply clone audit matching the 1905-row idempotently applied review set",
+      "audit_path": "work/content-library/semantic-review-residual-20260723-audit.json",
+      "audit_sha256": "bd6f0714e5c9159af724509dabb22011a8e33ab70da49c6ca3f9ca973baf2aea"
+    }
+  },
+  "config": {
+    "path": "work/content-library/semantic-recall-residual-pass2-20260723-config.json",
+    "scene_count": 10,
+    "scene_set": [
+      "daily_home",
+      "travel_directions",
+      "work_jobs",
+      "study_academic",
+      "health_fitness",
+      "technology_software",
+      "technology_engineering",
+      "technology_science",
+      "culture_books",
+      "news_current"
+    ],
+    "top_k_total": 1840,
+    "sha256": "bb801bd1345fa2c362ba00a305030a7466078802b6d7ebf41beb217263e8abbf"
+  },
+  "scenes": {
+    "daily_home": {
+      "quota": 1500,
+      "quota_aware_classification_capacity": 1472,
+      "shortage": 28,
+      "top_k": 50,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 250,
+      "pass1_recall_unique_item_count": 250,
+      "pass1_recall_sha256": "515a939d71f9c3f9e8e0a3adf44fb28fe3b1b96978683308101204142d61b1ec",
+      "exclusion_count": 250,
+      "exclusion_item_ids_sha256": "89cd898e93a54c136db6d5fa4bff9f8838263198836b7eb33e4622b648252b24"
+    },
+    "travel_directions": {
+      "quota": 900,
+      "quota_aware_classification_capacity": 891,
+      "shortage": 9,
+      "top_k": 25,
+      "prototype_count": 5,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 160,
+      "pass1_recall_unique_item_count": 160,
+      "pass1_recall_sha256": "cadcec5c42315e09d99b46402de1c6adacab0ede075d289c47b28e781cf53aaf",
+      "exclusion_count": 160,
+      "exclusion_item_ids_sha256": "4c58230d7d0c493abc367f147b661f7233ce2613fe89efea62c2e029ae3cfed3"
+    },
+    "work_jobs": {
+      "quota": 1100,
+      "quota_aware_classification_capacity": 1092,
+      "shortage": 8,
+      "top_k": 25,
+      "prototype_count": 5,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 170,
+      "pass1_recall_unique_item_count": 170,
+      "pass1_recall_sha256": "0a0c50c3a262f4e3a6188d2dbcb274b457988e2b9c9f124444f307cfcf114f32",
+      "exclusion_count": 170,
+      "exclusion_item_ids_sha256": "462deb56576e0132165a7cc9358f821cdb33722ae9c673eec3a01bca28ff6503"
+    },
+    "study_academic": {
+      "quota": 1000,
+      "quota_aware_classification_capacity": 748,
+      "shortage": 252,
+      "top_k": 500,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 400,
+      "pass1_recall_unique_item_count": 400,
+      "pass1_recall_sha256": "7ea5c85ad8e0803d233df3a6c5c6ab09fafa2c0f233211441dabf64a63cb03cd",
+      "exclusion_count": 400,
+      "exclusion_item_ids_sha256": "aa7e3868987dcf2dee90a903a1b3a52ed0eea1232527f859c6c8898e01ad89a0"
+    },
+    "health_fitness": {
+      "quota": 800,
+      "quota_aware_classification_capacity": 646,
+      "shortage": 154,
+      "top_k": 400,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 390,
+      "pass1_recall_unique_item_count": 390,
+      "pass1_recall_sha256": "a18eedac9d992b7958ef8cae880f28714583ef0cfb5b9776e700c877b4e0af6d",
+      "exclusion_count": 390,
+      "exclusion_item_ids_sha256": "b11bdce734a38a3ba781633dd50851983bb60c406cb0506f9fb3679aa0064689"
+    },
+    "technology_software": {
+      "quota": 800,
+      "quota_aware_classification_capacity": 765,
+      "shortage": 35,
+      "top_k": 120,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 300,
+      "pass1_recall_row_count": 200,
+      "pass1_recall_unique_item_count": 200,
+      "pass1_recall_sha256": "cef2184d32f3bc73abe8b8802cb78031d3732bac64e6b7742f1df37146b23def",
+      "exclusion_count": 500,
+      "exclusion_item_ids_sha256": "d24fde16abfb11849283f3ad2528b17eb721c6699994eb71e8819843dcd2bc2c"
+    },
+    "technology_engineering": {
+      "quota": 700,
+      "quota_aware_classification_capacity": 630,
+      "shortage": 70,
+      "top_k": 150,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 260,
+      "pass1_recall_unique_item_count": 260,
+      "pass1_recall_sha256": "508cd027ac29a333a777d0013c86501a775e4eb091cbc8f27992a59e8daaf1f1",
+      "exclusion_count": 260,
+      "exclusion_item_ids_sha256": "1f4ee37f64b536c5f3af8acc53aec22e6507838a21b5682e74915e0a611875d6"
+    },
+    "technology_science": {
+      "quota": 700,
+      "quota_aware_classification_capacity": 680,
+      "shortage": 20,
+      "top_k": 50,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 190,
+      "pass1_recall_unique_item_count": 190,
+      "pass1_recall_sha256": "1676a646a376743b4a5d3bdb4b9ee20a42c29900481ad12a6f937ca34cbdf957",
+      "exclusion_count": 190,
+      "exclusion_item_ids_sha256": "73eb6fe6509114b0e875dd98a58ab4aa20cdfe4d4f4b9166b7ab84ef548023d2"
+    },
+    "culture_books": {
+      "quota": 700,
+      "quota_aware_classification_capacity": 699,
+      "shortage": 1,
+      "top_k": 20,
+      "prototype_count": 5,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 90,
+      "pass1_recall_unique_item_count": 90,
+      "pass1_recall_sha256": "adc23f3668a741a1ccfe373adb1a62c9a5e42339cb61c2787cad1594d292ce39",
+      "exclusion_count": 90,
+      "exclusion_item_ids_sha256": "dcb7a151b566d5065013c7dbda85c48938542b7267ba85de2511c4df53fb3518"
+    },
+    "news_current": {
+      "quota": 600,
+      "quota_aware_classification_capacity": 437,
+      "shortage": 163,
+      "top_k": 500,
+      "prototype_count": 6,
+      "pass1_config_exclusion_count": 0,
+      "pass1_recall_row_count": 230,
+      "pass1_recall_unique_item_count": 230,
+      "pass1_recall_sha256": "04f15972933902457823b359c1daa9f609acc9b114b2d96f8f5752bc69e16b04",
+      "exclusion_count": 230,
+      "exclusion_item_ids_sha256": "26b53aba9033d37c18ee9e677f3970b45f9fca8d3442e9c6ac6d86bd2b3ce418"
+    }
+  },
+  "first_review": {
+    "review_manifest": {
+      "path": "work/content-library/semantic-review-residual-20260723/manifest.json",
+      "sha256": "94552ef9387eefb1981bf488b3e834e96e6d1ccc875c1043005e36241bfcd6c5"
+    },
+    "exchange_manifest": {
+      "path": "work/content-library/semantic-review-residual-20260723-exchanges/manifest.json",
+      "sha256": "b0d92a6cbc22783c9f9c2352a6d3d5fb20c373237d20bfd845989831ca00bda5"
+    },
+    "audit": {
+      "path": "work/content-library/semantic-review-residual-20260723-audit.json",
+      "sha256": "bd6f0714e5c9159af724509dabb22011a8e33ab70da49c6ca3f9ca973baf2aea"
+    },
+    "positive_count": 1905,
+    "ignored_count": 1223,
+    "total_reviewed_unique_items": 3128,
+    "authoritative_result_files": [
+      {
+        "family": "daily",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-daily-0001.result.jsonl",
+        "rows": 250,
+        "sha256": "4a49560855f7607aef58be42faac46ffa8fd3e42ea9fa1735e3ac34e8c0abc15"
+      },
+      {
+        "family": "travel",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-travel-0001.result.jsonl",
+        "rows": 349,
+        "sha256": "8eddaf7772c530b37883ef7a6de78dc34b52dc22572ebf99ff0aef1128af9d33"
+      },
+      {
+        "family": "work",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-work-0001.result.jsonl",
+        "rows": 209,
+        "sha256": "da7c054db8457bba1eac4df1a1bb5b2eae5a6cfd11b0c4232fe6a33bdcf1ff3e"
+      },
+      {
+        "family": "study",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-study-0001.result.jsonl",
+        "rows": 589,
+        "sha256": "b667544f1e55155ae1dc1433fa19f97e9c47f5625a220748f9a9e9fbf64fa5af"
+      },
+      {
+        "family": "health",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-health-0001.result.jsonl",
+        "rows": 700,
+        "sha256": "a1d054f7670f3c66b1f3dbeeef934b0cacbfd896f08f081484397064bb446feb"
+      },
+      {
+        "family": "technology",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-technology-0001.result.jsonl",
+        "rows": 631,
+        "sha256": "621544d171b1c45150094d929af51a381512caa4adc77cb45efd6d8ab533a241"
+      },
+      {
+        "family": "culture",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-culture-0001.result.jsonl",
+        "rows": 170,
+        "sha256": "1210091c51fbabf7535908dd16e05f6e241a0fc2ee105b7957609eff4fdebf3a"
+      },
+      {
+        "family": "news",
+        "path": "work/content-library/semantic-review-residual-20260723-exchanges/recall-review-news-0001.result.jsonl",
+        "rows": 230,
+        "sha256": "5704bb2f2643b1f057065f387bab62bedac5f03ec5049f292637427c46af2fad"
+      }
+    ],
+    "audit_declared_pre_safety_result_sha256": {
+      "culture": "140c4b27047fa51c979d9d829a0535de7f068e44564cd212544e02f0e3d784b5",
+      "daily": "ead06d30b2bb4f12c9a1a9a563797826281e28c899e6e6802cee13ce8730e850",
+      "health": "eb5adaa5fa36c5f683c0cc499bb9597c16580a2ee5720c65d0edb5bd5a3f85f2",
+      "news": "a56b5ee2aa76c78bb76047b3c5c9a133200baafde7869a098db2a0db94ca0a8e",
+      "study": "919a502e9f173ab68dec07f06fb368ec349d350e989e843d4b3b6e066d2f3e09",
+      "technology": "d36d7e0b9bc929b24e70d1fcab60caa086d59ff791114bd0dfe163f744979918",
+      "travel": "77e744ce71e5b61330013daae0a22fb5e69b5866cb8c0de0502a5432efffc3e5",
+      "work": "b3d471c25e82a30f2ddb70ee346fc1ff03046cd1196b96c9b10645b69ecbdcdc"
+    },
+    "result_hash_note": "authoritative_result_files are hashes of the current final exchange result files; audit_declared_pre_safety_result_sha256 is preserved only as historical audit metadata."
+  },
+  "validation": {
+    "exact_scene_set": true,
+    "top_k_total_equals_1840": true,
+    "all_top_k_lte_500": true,
+    "all_prototype_counts_between_4_and_6": true,
+    "all_exclusions_sorted_unique": true,
+    "all_pass1_config_exclusions_preserved": true,
+    "all_pass1_same_scene_recall_ids_excluded": true,
+    "same_scene_already_reviewed_ids_can_be_recalled": false,
+    "global_cross_scene_exclusion_used": false,
+    "exclusion_item_ids_sha256_encoding": "SHA-256 over compact UTF-8 JSON integer array plus LF",
+    "recall_executed": false
+  }
+}

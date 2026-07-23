@@ -12,6 +12,15 @@ from typing import Any
 
 CURRENT_SCHEMA_VERSION = 1
 VALID_SESSION_MODES = frozenset({"quantitative", "endless"})
+VALID_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
+MAX_RANDOM_KEY = (1 << 63) - 1
+
+
+@dataclass(frozen=True, slots=True)
+class SceneMetadata:
+    key: str
+    label: str
+    children: tuple[SceneMetadata, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +40,8 @@ class ContentQuestion:
     rationale: str
     aliases: tuple[str, ...]
     translation_zh: str = ""
+    top_scene: str = ""
+    sub_scene: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +130,273 @@ class ContentRepository:
         with self.connect() as connection:
             rows = connection.execute(query, parameters).fetchall()
             return [self._question_from_row(connection, row) for row in rows]
+
+    def list_scenes(self) -> list[SceneMetadata]:
+        query = """
+            SELECT
+                top.key AS top_key,
+                top.label AS top_label,
+                child.key AS child_key,
+                child.label AS child_label
+            FROM top_scenes AS top
+            JOIN sub_scenes AS child ON child.top_key = top.key
+            ORDER BY top.sort_order, child.sort_order
+        """
+        with self.connect() as connection:
+            rows = connection.execute(query).fetchall()
+
+        top_order: list[str] = []
+        labels: dict[str, str] = {}
+        children: dict[str, list[SceneMetadata]] = {}
+        for row in rows:
+            top_key = row["top_key"]
+            if top_key not in children:
+                top_order.append(top_key)
+                labels[top_key] = row["top_label"]
+                children[top_key] = []
+            children[top_key].append(SceneMetadata(key=row["child_key"], label=row["child_label"]))
+        return [
+            SceneMetadata(key=key, label=labels[key], children=tuple(children[key]))
+            for key in top_order
+        ]
+
+    def sample_questions(
+        self,
+        *,
+        top_scene: str | None,
+        sub_scene: str | None,
+        difficulty: str,
+        limit: int,
+        exclude_ids: frozenset[str],
+        seed: int,
+    ) -> list[ContentQuestion]:
+        self._validate_sample_inputs(
+            top_scene=top_scene,
+            sub_scene=sub_scene,
+            difficulty=difficulty,
+            limit=limit,
+            exclude_ids=exclude_ids,
+            seed=seed,
+        )
+        if limit == 0:
+            return []
+
+        with self.connect() as connection:
+            scene_keys = self._resolve_sub_scene_keys(
+                connection,
+                top_scene=top_scene,
+                sub_scene=sub_scene,
+            )
+            selected_ids: list[str] = []
+            selected_id_set: set[str] = set()
+            for comparison in (">=", "<"):
+                remaining = limit - len(selected_ids)
+                if remaining <= 0:
+                    break
+                excluded = frozenset((*exclude_ids, *selected_id_set))
+                candidates: list[sqlite3.Row] = []
+                query = self._sample_candidate_query(
+                    exclude_count=len(excluded),
+                    comparison=comparison,
+                )
+                for scene_key in scene_keys:
+                    candidates.extend(
+                        connection.execute(
+                            query,
+                            self._sample_candidate_parameters(
+                                scene_key=scene_key,
+                                seed=seed,
+                                difficulty=difficulty,
+                                exclude_ids=excluded,
+                                limit=remaining,
+                            ),
+                        ).fetchall()
+                    )
+                candidates.sort(key=lambda row: (row["random_key"], row["sentence_id"]))
+                for row in candidates[:remaining]:
+                    selected_ids.append(row["question_id"])
+                    selected_id_set.add(row["question_id"])
+            return self._get_questions_by_ids(connection, selected_ids)
+
+    def get_questions_by_ids(self, ids: list[str] | tuple[str, ...]) -> list[ContentQuestion]:
+        if isinstance(ids, (str, bytes)):
+            raise ValueError("题目 ID 必须是字符串序列")
+        requested_ids = tuple(ids)
+        if any(
+            not isinstance(question_id, str) or not question_id for question_id in requested_ids
+        ):
+            raise ValueError("题目 ID 必须是非空字符串")
+        if not requested_ids:
+            return []
+
+        with self.connect() as connection:
+            return self._get_questions_by_ids(connection, requested_ids)
+
+    @classmethod
+    def _get_questions_by_ids(
+        cls,
+        connection: sqlite3.Connection,
+        requested_ids: tuple[str, ...] | list[str],
+    ) -> list[ContentQuestion]:
+        if not requested_ids:
+            return []
+        unique_ids = tuple(dict.fromkeys(requested_ids))
+        placeholders = ", ".join("?" for _ in unique_ids)
+        query = f"""
+            SELECT
+                q.id,
+                q.sentence_id,
+                s.text AS sentence_text,
+                s.translation_zh,
+                scenes.top_key AS top_scene,
+                scenes.key AS sub_scene,
+                s.source_url,
+                s.normalized_hash,
+                q.difficulty,
+                q.answer_start,
+                q.answer_end,
+                q.canonical_answer,
+                q.answer_word_count,
+                q.difficulty_score,
+                q.rationale,
+                a.alias
+            FROM question_variants AS q
+            JOIN sentences AS s ON s.id = q.sentence_id
+            JOIN sub_scenes AS scenes ON scenes.key = s.sub_scene_key
+            LEFT JOIN aliases AS a INDEXED BY idx_aliases_question
+                ON a.question_variant_id = q.id
+            WHERE q.id IN ({placeholders})
+            ORDER BY q.id, a.alias
+        """
+        rows = connection.execute(query, unique_ids).fetchall()
+        by_id = {question.id: question for question in cls._questions_from_joined_rows(rows)}
+        return [by_id[question_id] for question_id in requested_ids if question_id in by_id]
+
+    @staticmethod
+    def _validate_sample_inputs(
+        *,
+        top_scene: str | None,
+        sub_scene: str | None,
+        difficulty: str,
+        limit: int,
+        exclude_ids: frozenset[str],
+        seed: int,
+    ) -> None:
+        if difficulty not in VALID_DIFFICULTIES:
+            raise ValueError(f"无效难度: {difficulty}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("抽题数量必须是非负整数")
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= MAX_RANDOM_KEY:
+            raise ValueError("随机种子必须是 0 到 2^63-1 之间的整数")
+        if top_scene is not None and (not isinstance(top_scene, str) or not top_scene):
+            raise ValueError("大类 key 必须是非空字符串或 None")
+        if sub_scene is not None and (not isinstance(sub_scene, str) or not sub_scene):
+            raise ValueError("子场景 key 必须是非空字符串或 None")
+        if sub_scene is not None and top_scene is None:
+            raise ValueError("指定子场景时必须同时指定大类")
+        if not isinstance(exclude_ids, frozenset) or any(
+            not isinstance(question_id, str) or not question_id for question_id in exclude_ids
+        ):
+            raise ValueError("排除题目 ID 必须是非空字符串的 frozenset")
+
+    @staticmethod
+    def _resolve_sub_scene_keys(
+        connection: sqlite3.Connection,
+        *,
+        top_scene: str | None,
+        sub_scene: str | None,
+    ) -> tuple[str, ...]:
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if top_scene is not None:
+            clauses.append("top_key = ?")
+            parameters.append(top_scene)
+        if sub_scene is not None:
+            clauses.append("key = ?")
+            parameters.append(sub_scene)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = connection.execute(
+            f"SELECT key FROM sub_scenes{where} ORDER BY sort_order",
+            parameters,
+        ).fetchall()
+        keys = tuple(row[0] for row in rows)
+        if not keys:
+            raise ValueError("场景不存在或大类与子场景不匹配")
+        return keys
+
+    @staticmethod
+    def _sample_candidate_query(
+        *,
+        exclude_count: int,
+        comparison: str,
+    ) -> str:
+        if comparison not in {">=", "<"}:
+            raise ValueError("不支持的 random_key 比较符")
+        exclude_clause = ""
+        if exclude_count:
+            exclude_placeholders = ", ".join("?" for _ in range(exclude_count))
+            exclude_clause = f" AND q.id NOT IN ({exclude_placeholders})"
+        return f"""
+            SELECT q.id AS question_id, s.random_key, s.id AS sentence_id
+            FROM sentences AS s
+            CROSS JOIN question_variants AS q
+            WHERE s.sub_scene_key = ?
+                AND s.random_key {comparison} ?
+                AND q.sentence_id = s.id
+                AND q.difficulty = ?
+                {exclude_clause}
+            ORDER BY s.random_key, s.id
+            LIMIT ?
+        """
+
+    @staticmethod
+    def _sample_candidate_parameters(
+        *,
+        scene_key: str,
+        seed: int,
+        difficulty: str,
+        exclude_ids: frozenset[str],
+        limit: int,
+    ) -> tuple[str | int, ...]:
+        return (scene_key, seed, difficulty, *sorted(exclude_ids), limit)
+
+    @staticmethod
+    def _questions_from_joined_rows(rows: list[sqlite3.Row]) -> list[ContentQuestion]:
+        grouped: dict[str, tuple[sqlite3.Row, list[str]]] = {}
+        order: list[str] = []
+        for row in rows:
+            question_id = row["id"]
+            if question_id not in grouped:
+                order.append(question_id)
+                grouped[question_id] = (row, [])
+            if row["alias"] is not None:
+                grouped[question_id][1].append(row["alias"])
+
+        questions: list[ContentQuestion] = []
+        for question_id in order:
+            row, aliases = grouped[question_id]
+            questions.append(
+                ContentQuestion(
+                    id=row["id"],
+                    sentence_id=row["sentence_id"],
+                    sentence_text=row["sentence_text"],
+                    translation_zh=row["translation_zh"],
+                    category=row["top_scene"],
+                    top_scene=row["top_scene"],
+                    sub_scene=row["sub_scene"],
+                    source_url=row["source_url"],
+                    normalized_hash=row["normalized_hash"],
+                    difficulty=row["difficulty"],
+                    answer_start=row["answer_start"],
+                    answer_end=row["answer_end"],
+                    canonical_answer=row["canonical_answer"],
+                    answer_word_count=row["answer_word_count"],
+                    difficulty_score=row["difficulty_score"],
+                    rationale=row["rationale"],
+                    aliases=tuple(aliases),
+                )
+            )
+        return questions
 
     @staticmethod
     def _question_from_row(

@@ -8,6 +8,11 @@ import unicodedata
 _HTML_TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
+_SUBTITLE_METADATA = re.compile(
+    r"^\d{1,2}:\d{2}:\d{2}(?:[,.]\d{3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[,.]\d{3})?$"
+)
+_STAGE_DIRECTION = re.compile(r"^(?:\[[^\]]+\]|\([^\)]+\))$")
+_SPEAKER_LABEL = re.compile(r"^(?:SPEAKER|SPK|PERSON)\s*\d*:\s*", re.IGNORECASE)
 _QUOTE_TRANSLATION = str.maketrans(
     {
         "‘": "'",
@@ -52,11 +57,18 @@ _WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 
 def rejection_reason(text: str) -> str | None:
+    raw = _SPACE.sub(" ", _HTML_TAG.sub(" ", html.unescape(text))).strip()
+    if _SUBTITLE_METADATA.fullmatch(raw):
+        return "subtitle_metadata"
+    if _STAGE_DIRECTION.fullmatch(raw):
+        return "stage_direction"
+    if _SPEAKER_LABEL.match(raw):
+        return "speaker_label"
     cleaned = clean_sentence(text)
     words = _WORD.findall(cleaned)
-    if len(words) < 6:
+    if len(words) < 5:
         return "too_short"
-    if len(words) > 28 or len(cleaned) > 220:
+    if len(words) > 35:
         return "too_long"
     if not re.search(r"[.!?][\"']?$", cleaned):
         return "incomplete"

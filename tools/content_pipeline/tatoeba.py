@@ -26,4 +26,5 @@ def iter_tatoeba_detailed(path: str | Path) -> Iterator[CollectedSentence]:
                 license_name=TATOEBA_LICENSE_NAME,
                 license_url=TATOEBA_LICENSE_URL,
                 source_author=author,
+                source_item_id=sentence_id,
             )

@@ -40,5 +40,6 @@ def test_default_controller_opens_repair_page_when_offline_assets_are_missing(
     )
 
     assert controller.currentPage == "repair"
-    assert len(controller.repairIssues) == 3
+    assert len(controller.repairIssues) == 4
+    assert any("场景目录" in issue for issue in controller.repairIssues)
     assert any("哈希清单" in issue for issue in controller.repairIssues)
