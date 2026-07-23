@@ -548,6 +548,19 @@ def test_practice_uses_audible_sound_effect_instead_of_silent_media_player() -> 
     assert "MediaPlayer {" not in source
 
 
+def test_replay_stops_current_audio_before_starting_a_new_playback() -> None:
+    source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
+
+    restart_body = source.split("function restartAudioPlayback()", maxsplit=1)[1].split(
+        "\n    }", maxsplit=1
+    )[0]
+    assert restart_body.index("soundEffect.stop()") < restart_body.index(
+        "page.scheduleReadyPlayback(generation)"
+    )
+    assert "playbackGeneration" in restart_body
+    assert "Qt.callLater" in source
+
+
 def test_practice_wraps_long_sentences_and_scales_the_waveform() -> None:
     source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
 

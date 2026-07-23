@@ -16,6 +16,7 @@ Item {
     property bool playPending: false
     property bool playbackStarted: false
     property real playbackProgress: 0
+    property int playbackGeneration: 0
     readonly property int sentenceLength: (controller ? controller.sentencePrefix.length
         + controller.sentenceSuffix.length : 0) + blankCount * 16
     readonly property real waveformScale: sentenceLength > 130 ? 0.58
@@ -33,6 +34,7 @@ Item {
         volume: page.controller ? page.controller.volume : 0.8
         onSourceChanged: {
             stop()
+            page.playbackGeneration += 1
             page.playPending = false
             page.playbackStarted = false
             page.playbackProgress = 0
@@ -40,8 +42,7 @@ Item {
         onStatusChanged: {
             if (status === SoundEffect.Ready && page.playPending) {
                 page.playPending = false
-                page.playbackProgress = 0
-                play()
+                page.scheduleReadyPlayback(page.playbackGeneration)
             }
         }
         onPlayingChanged: {
@@ -52,6 +53,29 @@ Item {
                 page.playbackProgress = 1
             }
         }
+    }
+
+    function scheduleReadyPlayback(generation) {
+        Qt.callLater(function() {
+            if (generation !== page.playbackGeneration
+                    || soundEffect.source.toString() === ""
+                    || soundEffect.status !== SoundEffect.Ready)
+                return
+            soundEffect.play()
+        })
+    }
+
+    function restartAudioPlayback() {
+        page.playbackGeneration += 1
+        const generation = page.playbackGeneration
+        soundEffect.stop()
+        page.playPending = false
+        page.playbackProgress = 0
+        page.playbackStarted = false
+        if (soundEffect.status === SoundEffect.Ready)
+            page.scheduleReadyPlayback(generation)
+        else
+            page.playPending = true
     }
 
     Timer {
@@ -107,12 +131,7 @@ Item {
         function onAudioRequested(_questionId, _rate) {
             if (soundEffect.source.toString() === "")
                 return
-            page.playbackProgress = 0
-            page.playbackStarted = false
-            if (soundEffect.status === SoundEffect.Ready)
-                soundEffect.play()
-            else
-                page.playPending = true
+            page.restartAudioPlayback()
         }
     }
 
