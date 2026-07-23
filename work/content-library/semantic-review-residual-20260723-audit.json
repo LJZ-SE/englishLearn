@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "recall": {
+    "eligible_rows": 306568,
+    "suggestions": 3200,
+    "unique_items": 3128,
+    "review_manifest_sha256": "94552ef9387eefb1981bf488b3e834e96e6d1ccc875c1043005e36241bfcd6c5"
+  },
+  "review": {
+    "positive": 1905,
+    "ignored": 1223,
+    "stratified_audit_seed": 20260723,
+    "stratified_audit_rows": 221,
+    "high_confidence_errors": 0,
+    "manual_safety_rejections": [1462045, 1646834],
+    "result_sha256": {
+      "culture": "140c4b27047fa51c979d9d829a0535de7f068e44564cd212544e02f0e3d784b5",
+      "daily": "ead06d30b2bb4f12c9a1a9a563797826281e28c899e6e6802cee13ce8730e850",
+      "health": "eb5adaa5fa36c5f683c0cc499bb9597c16580a2ee5720c65d0edb5bd5a3f85f2",
+      "news": "a56b5ee2aa76c78bb76047b3c5c9a133200baafde7869a098db2a0db94ca0a8e",
+      "study": "919a502e9f173ab68dec07f06fb368ec349d350e989e843d4b3b6e066d2f3e09",
+      "technology": "d36d7e0b9bc929b24e70d1fcab60caa086d59ff791114bd0dfe163f744979918",
+      "travel": "77e744ce71e5b61330013daae0a22fb5e69b5866cb8c0de0502a5432efffc3e5",
+      "work": "b3d471c25e82a30f2ddb70ee346fc1ff03046cd1196b96c9b10645b69ecbdcdc"
+    },
+    "exchange_manifest_sha256": "b0d92a6cbc22783c9f9c2352a6d3d5fb20c373237d20bfd845989831ca00bda5"
+  },
+  "clone_apply": {
+    "first_run_applied": 1905,
+    "second_run_applied": 0,
+    "second_run_noop": 1905,
+    "capacity": 29260,
+    "shortage": 740,
+    "shortages": {
+      "daily_home": 28,
+      "travel_directions": 9,
+      "work_jobs": 8,
+      "study_academic": 252,
+      "health_fitness": 154,
+      "technology_software": 35,
+      "technology_engineering": 70,
+      "technology_science": 20,
+      "culture_books": 1,
+      "news_current": 163
+    }
+  }
+}
