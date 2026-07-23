@@ -218,6 +218,29 @@ def test_stackexchange_reader_rejects_unknown_sites_and_schema_drift(tmp_path: P
         list(_reader()(archive_path, site="workplace"))
 
 
+def test_stackexchange_xml_reader_closes_file_after_schema_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = importlib.import_module("tools.content_pipeline.stackexchange_source")
+    xml_path = tmp_path / "invalid.xml"
+    xml_path.write_text("<wrong><row /></wrong>", encoding="utf-8")
+    opened_streams = []
+    original_open = Path.open
+
+    def tracked_open(path: Path, *args, **kwargs):
+        stream = original_open(path, *args, **kwargs)
+        opened_streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+
+    with pytest.raises(ValueError, match="根节点"):
+        list(module._iter_rows(xml_path, expected_root="posts", label="Posts.xml"))
+
+    assert opened_streams
+    assert all(stream.closed for stream in opened_streams)
+
+
 @pytest.mark.parametrize(
     ("attribute", "value", "message"),
     [

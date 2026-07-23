@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tools.content_pipeline import production_sources
+from tools.content_pipeline.archive_safety import validate_archive_member_path
 from tools.content_pipeline.production_sources import import_all_sources
 from tools.content_pipeline.work_database import WorkDatabase
 
@@ -337,7 +338,7 @@ def test_sgd_rejects_path_drift_empty_archives_and_duplicate_ids(tmp_path: Path)
         list(iter_sgd_utterances(duplicate))
 
 
-@pytest.mark.parametrize("unsafe_root", ["..", ".", "root\\escape", "/absolute"])
+@pytest.mark.parametrize("unsafe_root", ["..", ".", "C:/escape", "/absolute"])
 def test_sgd_rejects_unsafe_member_paths(tmp_path: Path, unsafe_root: str) -> None:
     from tools.content_pipeline.sgd_source import iter_sgd_utterances
 
@@ -588,7 +589,7 @@ def test_clinc_rejects_schema_drift_empty_and_duplicate_data_members(tmp_path: P
         list(iter_clinc150_utterances(duplicate, normalization_version=1))
 
 
-@pytest.mark.parametrize("unsafe_root", ["..", ".", "root\\escape", "/absolute"])
+@pytest.mark.parametrize("unsafe_root", ["..", ".", "C:/escape", "/absolute"])
 def test_clinc_rejects_unsafe_member_paths(tmp_path: Path, unsafe_root: str) -> None:
     from tools.content_pipeline.clinc_source import iter_clinc150_utterances
 
@@ -601,6 +602,11 @@ def test_clinc_rejects_unsafe_member_paths(tmp_path: Path, unsafe_root: str) -> 
 
     with pytest.raises(ValueError, match="不安全路径"):
         list(iter_clinc150_utterances(archive_path, normalization_version=1))
+
+
+def test_archive_member_validator_rejects_backslashes_before_zip_normalization() -> None:
+    with pytest.raises(ValueError, match="不安全路径"):
+        validate_archive_member_path("root\\escape/data.json", label="测试归档")
 
 
 @pytest.mark.parametrize("member_kind", ["symlink", "fifo"])

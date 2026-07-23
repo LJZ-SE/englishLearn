@@ -324,25 +324,26 @@ def _iter_rows(
     path: Path, *, expected_root: str, label: str
 ) -> Iterator[element_tree.Element]:
     try:
-        context = element_tree.iterparse(path, events=("start", "end"))
-        depth = 0
-        root_seen = False
-        for event, element in context:
-            if event == "start":
-                depth += 1
-                if depth == 1:
-                    if element.tag != expected_root:
-                        raise ValueError(f"{label} 根节点结构漂移")
-                    root_seen = True
-                elif depth != 2 or element.tag != "row":
-                    raise ValueError(f"{label} 子节点结构漂移")
-                continue
-            if depth == 2:
-                yield element
-                element.clear()
-            depth -= 1
-        if not root_seen or depth != 0:
-            raise ValueError(f"{label} 根节点结构漂移")
+        with path.open("rb") as source:
+            context = element_tree.iterparse(source, events=("start", "end"))
+            depth = 0
+            root_seen = False
+            for event, element in context:
+                if event == "start":
+                    depth += 1
+                    if depth == 1:
+                        if element.tag != expected_root:
+                            raise ValueError(f"{label} 根节点结构漂移")
+                        root_seen = True
+                    elif depth != 2 or element.tag != "row":
+                        raise ValueError(f"{label} 子节点结构漂移")
+                    continue
+                if depth == 2:
+                    yield element
+                    element.clear()
+                depth -= 1
+            if not root_seen or depth != 0:
+                raise ValueError(f"{label} 根节点结构漂移")
     except (element_tree.ParseError, UnicodeDecodeError) as error:
         raise ValueError(f"{label} 不是有效 XML") from error
 

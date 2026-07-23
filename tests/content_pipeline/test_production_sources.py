@@ -6,7 +6,6 @@ import sqlite3
 import subprocess
 import sys
 import urllib.error
-import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -197,7 +196,7 @@ def test_refresh_lock_replaces_rows_when_v2_max_items_changes(
 ) -> None:
     manifest = _write_source_fixtures(tmp_path)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    tatoeba_path = Path(urllib.parse.urlparse(payload[0]["url"]).path)
+    tatoeba_path = tmp_path / "fixtures" / "tatoeba.tsv.bz2"
     with bz2.open(tatoeba_path, "wt", encoding="utf-8") as stream:
         stream.write("1\teng\tFirst sentence is here.\talice\n")
         stream.write("2\teng\tSecond sentence is here.\tbob\n")
@@ -412,8 +411,7 @@ def test_locked_source_rejects_changed_upstream_bytes_without_overwriting_lock(
     lock = tmp_path / "source-lock.json"
     import_all_sources(database, manifest, lock)
     before = lock.read_bytes()
-    payload = json.loads(manifest.read_text(encoding="utf-8"))
-    upstream = Path(urllib.parse.urlparse(payload[0]["url"]).path)
+    upstream = tmp_path / "fixtures" / "tatoeba.tsv.bz2"
     with bz2.open(upstream, "wt", encoding="utf-8") as stream:
         stream.write("2\teng\tChanged upstream bytes.\tbob\n")
     cached = lock.parent / json.loads(before)["sources"][0]["cache_path"]
