@@ -885,6 +885,23 @@ def test_builder_extends_stable_id_prefix_on_collision(
     assert ids == ["s_0123456789abcdef", "s_0123456789abcdef22222222"]
 
 
+def test_builder_allows_sources_without_named_authors(tmp_path: Path) -> None:
+    fixture_root = tmp_path / "fixture"
+    build_fixture_database(fixture_root)
+    work_database = WorkDatabase(fixture_root / "work.db")
+    with work_database.connect() as connection:
+        connection.execute("UPDATE raw_items SET source_author = ''")
+
+    result = build_database(
+        work_database,
+        tmp_path / "anonymous-author.db",
+        tmp_path / "anonymous-author-report.json",
+        tmp_path / "anonymous-author-sources.json",
+    )
+
+    assert result.sentence_count == len(SCENES)
+
+
 def test_builder_rejects_missing_or_invalid_variant_payload_without_replacing_candidate(
     tmp_path: Path,
 ) -> None:

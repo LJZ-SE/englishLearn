@@ -424,7 +424,12 @@ class WorkDatabase:
                     WHERE (
                             s.item_id IS NULL
                             OR (:model_version IS NOT NULL
-                                AND s.model_version NOT IN (:model_version, 'llm-repair'))
+                                AND s.model_version NOT IN (
+                                    :model_version,
+                                    'llm-repair',
+                                    'historical-review-replay-v1',
+                                    'recall-review-v1'
+                                ))
                           )
                       AND x.item_id IS NULL
                     ORDER BY r.id LIMIT :limit
@@ -449,7 +454,12 @@ class WorkDatabase:
                     WHERE (
                             s.item_id IS NULL
                             OR (:model_version IS NOT NULL
-                                AND s.model_version NOT IN (:model_version, 'llm-repair'))
+                                AND s.model_version NOT IN (
+                                    :model_version,
+                                    'llm-repair',
+                                    'historical-review-replay-v1',
+                                    'recall-review-v1'
+                                ))
                           )
                       AND x.item_id IS NULL
                     ORDER BY r.id LIMIT :limit

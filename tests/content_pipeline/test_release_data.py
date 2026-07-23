@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tools.content_pipeline.clean import rejection_reason
 from tools.content_pipeline.dedupe import NearDuplicateIndex
+from tools.content_pipeline.scenes import SCENES, TOTAL_SENTENCE_QUOTA
 from tools.content_pipeline.selection import is_near_duplicate
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -111,13 +112,15 @@ def test_first_release_reports_and_source_manifest_match_database() -> None:
     assert sum(item["sentence_count"] for item in sources) == report["sentence_count"]
     assert all(item["license_name"] and item["license_url"] for item in sources)
     if CONTENT_DATABASE == DATA_DIR / "content.db":
-        assert report["category_distribution"] == {
-            "daily": 75,
-            "exam": 75,
-            "movies": 75,
-            "news_podcasts": 75,
+        assert report["sentence_count"] == TOTAL_SENTENCE_QUOTA == 30_000
+        assert report["variant_count"] == 90_000
+        assert report["scene_distribution"] == {
+            scene.key: scene.quota for scene in SCENES
         }
-        assert report["source_distribution"] == {
-            "English Wikinews": 75,
-            "Tatoeba": 225,
+        assert report["difficulty_distribution"] == {
+            "easy": 30_000,
+            "medium": 30_000,
+            "hard": 30_000,
         }
+        assert report["source_distribution"]["legacy-content"] == 300
+        assert len(report["source_distribution"]) >= 20

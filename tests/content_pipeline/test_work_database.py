@@ -39,6 +39,39 @@ def test_work_database_is_idempotent_and_resumes_pending_rows(tmp_path: Path) ->
     assert [row.id for row in database.claim_batch("dedupe", limit=10)] == [first_id]
 
 
+@pytest.mark.parametrize(
+    "model_version",
+    ("llm-repair", "historical-review-replay-v1", "recall-review-v1"),
+)
+def test_claim_stage_batch_preserves_authoritative_classifications(
+    tmp_path: Path,
+    model_version: str,
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    item_id = add_raw_item(database)
+    database.mark_stage(item_id, "clean", payload={"clean_text": "A research result."})
+    database.mark_stage(item_id, "dedupe", payload={"simhash64": "0" * 16})
+    database.mark_stage(
+        item_id,
+        "classify",
+        payload={
+            "top_scene": "study",
+            "sub_scene": "study_academic",
+            "confidence": 1.0,
+            "method": "reviewed",
+        },
+        model_version=model_version,
+    )
+
+    assert (
+        database.claim_stage_batch(
+            "classify", limit=10, stale_model_version="scene-candidate-v13"
+        )
+        == []
+    )
+
+
 def test_upsert_raw_does_not_write_when_source_fields_are_unchanged(tmp_path: Path) -> None:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()

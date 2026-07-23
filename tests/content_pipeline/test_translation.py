@@ -89,6 +89,33 @@ def test_validate_translation_checks_short_sentence_length_and_currency_identity
     assert validate_translation("The fare is EUR 20.", "票价是20欧元。") == ()
 
 
+@pytest.mark.parametrize(
+    ("source", "translation"),
+    [
+        ("The train arrives at 9:30.", "火车在9点30分到达。"),
+        ("The budget is 40,000 dollars.", "预算是4万美元。"),
+        ("The budget is 1.51 billion dollars.", "预算是15.1亿美元。"),
+        ("Return it before January 25th.", "请在1月25日之前归还。"),
+        ("It happened on September 1, 2008.", "事情发生在2008年9月1日。"),
+        ("It costs ten dollars.", "价格是10美元。"),
+        (
+            "The regular price is $2980. 00 until December 31st, then $2,699. 00.",
+            "正常价为2980.00美元，12月31日前的特价为2,699.00美元。",
+        ),
+        ("It is equivalent t0 7. 9 Yuan.", "它相当于7.9元。"),
+        ("The show starts at 1. 10 pm.", "演出在晚上1:10开始。"),
+        ("I found 10. 56 Signers listed here.", "我找到第10项，这里列出了56位签署者。"),
+        ("The postcode is cb12dp.", "邮政编码是CB12DP。"),
+        ("Run 4km or 2.5miles.", "跑4公里或2.5英里。"),
+    ],
+)
+def test_validate_translation_accepts_equivalent_number_formats(
+    source: str,
+    translation: str,
+) -> None:
+    assert validate_translation(source, translation) == ()
+
+
 def test_validate_translation_rejects_added_currency_or_percentage_markers() -> None:
     assert "currency_mismatch" in validate_translation("Pay 20.", "支付20美元。")
     assert "percentage_mismatch" in validate_translation("There are 20 users.", "用户占20%。")
@@ -98,6 +125,57 @@ def test_validate_translation_normalizes_jpy_and_treats_yen_symbol_as_ambiguous(
     assert validate_translation("The fare is 20 yen.", "票价是20日元。") == ()
     assert "currency_mismatch" in validate_translation("The fare is 20 yen.", "票价是20美元。")
     assert "currency_mismatch" in validate_translation("The fare is ¥20.", "票价是20日元。")
+
+
+def test_validate_translation_accepts_non_us_dollar_names_in_chinese() -> None:
+    assert validate_translation(
+        "Exchange 200 yen for Canadian dollars.",
+        "用200日元兑换加拿大元。",
+    ) == ()
+    assert validate_translation("Show the Singapore dollar rate.", "显示新加坡元汇率。") == ()
+    assert validate_translation("The price is 20 yuan.", "价格是20元。") == ()
+
+
+def test_validate_translation_does_not_treat_weight_in_pounds_as_currency() -> None:
+    assert validate_translation(
+        "She has lost almost ten pounds.",
+        "她的体重减轻了将近十磅。",
+    ) == ()
+    assert validate_translation("The fee is ten pounds.", "费用是十英镑。") == ()
+    assert validate_translation(
+        "I am 141 pounds, 63 kg, 168 cm, and 19 years old.",
+        "我体重141磅（63公斤），身高168厘米，19岁。",
+    ) == ()
+
+
+def test_validate_translation_does_not_treat_names_or_terms_as_currency() -> None:
+    assert validate_translation("Book King Yen Restaurant.", "预订金燕餐厅。") == ()
+    assert validate_translation("The actor is Donnie Yen.", "演员是甄子丹。") == ()
+    assert validate_translation("Study the elements.", "研究这些元素。") == ()
+    assert validate_translation("Compare EUR PhD programs.", "比较欧洲博士项目。") == ()
+
+
+def test_validate_translation_allows_source_proper_names_but_not_untranslated_phrases() -> None:
+    assert validate_translation(
+        "Randy Pausch taught computer science.",
+        "兰迪·波施（Randy Pausch）教授计算机科学。",
+    ) == ()
+    assert validate_translation(
+        "Open the document in Microsoft Word.",
+        "请用Microsoft Word打开文档。",
+    ) == ()
+    assert validate_translation(
+        "Watch it at https://example.com/watch?v=1.",
+        "请在https://example.com/watch?v=1观看。",
+    ) == ()
+    assert validate_translation(
+        "Only a small percentage gets this chance.",
+        "只有占总人口极小百分比的人能获得这个机会。",
+    ) == ()
+    assert "english_residue" in validate_translation(
+        "This train arrives shortly.",
+        "这是 a train arriving shortly。",
+    )
 
 
 def test_failed_draft_is_exported_and_only_valid_repair_completes_stage(tmp_path: Path) -> None:

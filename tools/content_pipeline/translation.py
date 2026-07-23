@@ -3,27 +3,69 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections import Counter
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
 
 from tools.content_pipeline.work_database import WorkDatabase
 
 OPUS_MT_MODEL = "Helsinki-NLP/opus-mt-en-zh"
-_NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
+_NUMBER = re.compile(
+    r"(?<![A-Za-z0-9])\d+(?:[.,:]\d+)*(?:st|nd|rd|th)?"
+    r"(?![A-Za-z0-9]|[.,:]\d)",
+    re.IGNORECASE,
+)
+_NUMBER_SCALE = re.compile(
+    r"^\s*(thousand|million|billion|千|万|亿)",
+    re.IGNORECASE,
+)
+_GROUPED_DIGIT_SPACE = re.compile(r"(?<=\d)\s+(?=\d{3}(?:\D|$))")
+_ATTACHED_MEASUREMENT_UNIT = re.compile(
+    r"(?<=\d)(?=(?:km|miles?|kg|kilograms?|cm|centimeters?)\b)",
+    re.IGNORECASE,
+)
+_SPACED_DECIMAL_POINT = re.compile(r"(?<=\d)\.\s+(?=\d)")
+_SPACED_LIST_POINT = re.compile(r"(?<=\d)\.\s+(?=\d+\s+[A-Z][A-Za-z]*s\b)")
+_SPACED_TIME_POINT = re.compile(
+    r"(?<=\d)\.\s+(?=\d{2}\s*(?:a\.?m\.?|p\.?m\.?))",
+    re.IGNORECASE,
+)
+_SPACED_GROUPING_COMMA = re.compile(r"(?<=\d),\s+(?=\d{3}(?:\D|$))")
+_ALPHANUMERIC_CODE = re.compile(
+    r"(?<![A-Za-z0-9])(?=[A-Za-z0-9]*\d)[A-Za-z][A-Za-z0-9]*(?![A-Za-z0-9])"
+)
+_URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]{2,}")
 _CURRENCY_PATTERNS = {
-    "USD": re.compile(r"(?:\$|\b(?:USD|US dollars?|dollars?)\b|美元|美金)", re.IGNORECASE),
-    "EUR": re.compile(r"(?:€|\b(?:EUR|euros?)\b|欧元)", re.IGNORECASE),
-    "GBP": re.compile(r"(?:£|\b(?:GBP|pounds?)\b|英镑)", re.IGNORECASE),
-    "CNY": re.compile(
-        r"(?:\b(?:CNY|RMB|yuan|renminbi)\b|人民币|(?<![美欧日])元)",
+    "USD": re.compile(
+        r"(?:\$|\b(?:USD|US dollars?|dollars?)\b|美元|美金|加拿大元|新加坡元|"
+        r"澳元|港元|新西兰元)",
         re.IGNORECASE,
     ),
+    "EUR": re.compile(r"(?:€|\b(?:EUR|euros?)\b|欧元)", re.IGNORECASE),
+    "GBP": re.compile(r"(?:£|\b(?:GBP|pounds?)\b|英镑)", re.IGNORECASE),
+    "CNY": re.compile(r"(?:\b(?:CNY|RMB|yuan|renminbi)\b|人民币)", re.IGNORECASE),
     "JPY": re.compile(r"(?:\b(?:JPY|yen)\b|日元)", re.IGNORECASE),
     "AMBIGUOUS_YEN": re.compile(r"[¥￥]"),
 }
-_PERCENT = re.compile(r"(?:%|％|\bpercent(?:age)?\b|百分之)", re.IGNORECASE)
+_PERCENT = re.compile(r"(?:%|％|\bpercent(?:age)?\b|百分(?:之|比))", re.IGNORECASE)
+_EXPLICIT_GBP = re.compile(r"(?:£|\bGBP\b|英镑)", re.IGNORECASE)
+_EXPLICIT_JPY = re.compile(r"(?:[¥￥]|\bJPY\b|日元)", re.IGNORECASE)
+_POUND_WEIGHT_CONTEXT = re.compile(
+    r"(?:\b(?:weigh(?:s|ed|ing)?|lose|lost|losing|gain(?:s|ed|ing)?|weight)\b"
+    r".{0,48}\bpounds?\b|\bpounds?\b.{0,48}\b(?:heavier|lighter|weight)\b|"
+    r"\b\d+(?:\.\d+)?\s+pounds?\b.{0,80}\b(?:kg|kilograms?|cm|centimeters?|years? old)\b)",
+    re.IGNORECASE,
+)
+_NON_CNY_YUAN = re.compile(r"(?:加拿大元|新加坡元|澳元|港元|新西兰元|美元|欧元|日元)")
+_GENERIC_CNY_YUAN = re.compile(
+    r"(?:\d+(?:[.,]\d+)*|[一二三四五六七八九十百千万亿两]+|多少|几)\s*元"
+)
+_YEN_VENUE_NAME = re.compile(r"\bYen\s+(?:Restaurant|Cafe|Hotel)\b", re.IGNORECASE)
+_YEN_PERSON_NAME = re.compile(r"\b(?!Japanese\b)[A-Z][a-z]+\s+Yen\b")
+_EUR_NON_CURRENCY = re.compile(r"\bEUR\s+(?:PhD|doctoral)\b", re.IGNORECASE)
 _IMPORT_FIELDS = {"item_id", "translation_zh", "review_note"}
 
 
@@ -103,10 +145,11 @@ def validate_translation(source: str, translation: str) -> tuple[str, ...]:
 
     issues: list[str] = []
     han_count = len(_HAN.findall(translation))
-    latin_count = sum(len(word) for word in _LATIN_WORD.findall(translation))
+    english_words = _untranslated_english_words(source, translation)
+    latin_count = sum(len(word) for word in english_words)
     if han_count / max(han_count + latin_count, 1) < 0.35:
         issues.append("low_chinese_ratio")
-    if _NUMBER.findall(source) != _NUMBER.findall(translation):
+    if _has_number_mismatch(source, translation):
         issues.append("number_mismatch")
     source_currencies = _currency_categories(source)
     if source_currencies != _currency_categories(translation):
@@ -114,7 +157,6 @@ def validate_translation(source: str, translation: str) -> tuple[str, ...]:
     if bool(_PERCENT.search(source)) != bool(_PERCENT.search(translation)):
         issues.append("percentage_mismatch")
 
-    english_words = _LATIN_WORD.findall(translation)
     if len(english_words) >= 2 or any(len(word) >= 8 for word in english_words):
         issues.append("english_residue")
 
@@ -201,9 +243,98 @@ def import_llm_repairs(database: WorkDatabase, path: str | Path) -> int:
 
 
 def _currency_categories(text: str) -> frozenset[str]:
-    return frozenset(
+    categories = {
         currency for currency, pattern in _CURRENCY_PATTERNS.items() if pattern.search(text)
+    }
+    # pound 既可能表示英镑，也可能表示重量；有明确体重语境且没有货币符号时不算币种。
+    if (
+        "GBP" in categories
+        and not _EXPLICIT_GBP.search(text)
+        and _POUND_WEIGHT_CONTEXT.search(text)
+    ):
+        categories.remove("GBP")
+    if (
+        "JPY" in categories
+        and not _EXPLICIT_JPY.search(text)
+        and (_YEN_VENUE_NAME.search(text) or _YEN_PERSON_NAME.search(text))
+    ):
+        categories.remove("JPY")
+    if "EUR" in categories and _EUR_NON_CURRENCY.search(text):
+        categories.remove("EUR")
+    if _GENERIC_CNY_YUAN.search(_NON_CNY_YUAN.sub("", text)):
+        categories.add("CNY")
+    return frozenset(categories)
+
+
+def _has_number_mismatch(source: str, translation: str) -> bool:
+    source_numbers = _number_signatures(source)
+    if not source_numbers:
+        return False
+    translation_numbers = _number_signatures(translation)
+    return any(
+        translation_numbers[signature] < count
+        for signature, count in source_numbers.items()
     )
+
+
+def _untranslated_english_words(source: str, translation: str) -> list[str]:
+    source_words = {word.casefold() for word in _LATIN_WORD.findall(source)}
+    without_urls = _URL.sub("", translation)
+    candidates = _LATIN_WORD.findall(_ALPHANUMERIC_CODE.sub("", without_urls))
+    return [
+        word
+        for word in candidates
+        if not (
+            word.casefold() in source_words
+            and (word[0].isupper() or any(character.isupper() for character in word[1:]))
+        )
+    ]
+
+
+def _number_signatures(text: str) -> Counter[str]:
+    text = _ATTACHED_MEASUREMENT_UNIT.sub(" ", text)
+    text = _SPACED_LIST_POINT.sub(" ", text)
+    text = _SPACED_TIME_POINT.sub(":", text)
+    text = _SPACED_DECIMAL_POINT.sub(".", text)
+    text = _SPACED_GROUPING_COMMA.sub(",", text)
+    text = _GROUPED_DIGIT_SPACE.sub("", text)
+    signatures: Counter[str] = Counter()
+    for match in _NUMBER.finditer(text):
+        token = re.sub(r"(?:st|nd|rd|th)$", "", match.group(), flags=re.IGNORECASE)
+        if ":" in token:
+            signatures.update(_plain_number_signature(part) for part in token.split(":"))
+            continue
+        if token.count(".") > 1:
+            signatures[f"version:{token}"] += 1
+            continue
+        try:
+            value = Decimal(token.replace(",", ""))
+        except InvalidOperation:
+            continue
+        scale_match = _NUMBER_SCALE.match(text[match.end() :])
+        if scale_match is not None:
+            value *= {
+                "thousand": Decimal(1_000),
+                "million": Decimal(1_000_000),
+                "billion": Decimal(1_000_000_000),
+                "千": Decimal(1_000),
+                "万": Decimal(10_000),
+                "亿": Decimal(100_000_000),
+            }[scale_match.group(1).casefold()]
+        signatures[_decimal_signature(value)] += 1
+    return signatures
+
+
+def _plain_number_signature(token: str) -> str:
+    try:
+        return _decimal_signature(Decimal(token.replace(",", "")))
+    except InvalidOperation:
+        return f"literal:{token}"
+
+
+def _decimal_signature(value: Decimal) -> str:
+    normalized = value.normalize()
+    return f"number:{format(normalized, 'f')}"
 
 
 def _parse_import_record(line: str, line_number: int) -> dict[str, int | str]:

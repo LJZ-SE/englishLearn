@@ -311,7 +311,14 @@ def _load_publish_rows(database: WorkDatabase) -> list[_PublishRow]:
         if definition is None or definition.top_key != top_scene:
             raise BuildError(f"条目 {item_id} 的 top_scene/sub_scene 不匹配")
         provenance = tuple(str(value).strip() for value in raw[2:8])
-        if not all(provenance):
+        required_provenance = (
+            provenance[0],
+            provenance[1],
+            provenance[3],
+            provenance[4],
+            provenance[5],
+        )
+        if not all(required_provenance):
             raise BuildError(f"条目 {item_id} 缺少来源或许可字段")
         digest = normalized_hash(text)
         if digest in seen_hashes:
