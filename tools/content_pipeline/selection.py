@@ -214,11 +214,22 @@ def _select_regular_rows[RowT](
         remaining = max(author_limit - author_counts[author], 0)
         _add_flow_edge(graph, author_nodes[author], end, remaining)
 
+    supplied_ranks = [getattr(row, "selection_rank", None) for row in ordered_rows]
+    if all(
+        isinstance(rank, int) and not isinstance(rank, bool) and rank >= 0
+        for rank in supplied_ranks
+    ):
+        # 生产内核会裁掉不可能入选的边，但必须保留它们在完整候选池中
+        # 造成的排序缺口，否则压缩后的并列成本会改变确定性最优解。
+        tie_ranks = [int(rank) for rank in supplied_ranks]
+    else:
+        tie_ranks = list(range(len(ordered_rows)))
+
     # 置信度先量化为百万分之一；tie_scale 保证任意 1 个置信度单位的总收益
     # 都严格高于整批候选的哈希及 ID 次序差异。
-    tie_scale = needed * max(len(ordered_rows), 1) + 1
+    tie_scale = needed * (max(tie_ranks, default=0) + 1) + 1
     candidate_edges: list[_FlowEdge] = []
-    for tie_rank, row in enumerate(ordered_rows):
+    for tie_rank, row in zip(tie_ranks, ordered_rows, strict=True):
         source = str(getattr(row, "source_name", ""))
         author = str(getattr(row, "source_author", "")).strip()
         target = author_nodes[author] if author else end

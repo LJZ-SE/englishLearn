@@ -15,7 +15,9 @@ from tools.content_pipeline.classification import (
     export_classification_repairs,
     import_classification_repairs,
 )
+from tools.content_pipeline.clean import normalized_hash
 from tools.content_pipeline.scenes import SCENES, SceneDefinition
+from tools.content_pipeline.selection import SceneQuotaError
 from tools.content_pipeline.work_database import WorkDatabase
 
 
@@ -698,6 +700,419 @@ def test_bounded_exact_selection_does_not_use_unbounded_stage_inputs(
 
     assert summary is not None and summary["selected"] == 5
     assert database.stage_counts()["select"] == 5
+
+
+def test_bounded_exact_selection_skips_unusable_variant_candidate_and_caches_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 1)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    unusable_id = _ready_item(database, "unusable", "It is fine.")
+    usable_id = _ready_item(
+        database,
+        "usable",
+        "The hotel reservation fixture is confirmed for tonight.",
+    )
+    for item_id, confidence in ((unusable_id, 0.99), (usable_id, 0.80)):
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": confidence,
+                "method": "keyword",
+            },
+        )
+
+    summary = cli._select_items(database, bounded=True)
+
+    assert summary is not None and summary["selected"] == 1
+    with database.connect() as connection:
+        selected_id, payload_json = connection.execute(
+            "SELECT item_id, payload_json FROM stage_results WHERE stage='select'"
+        ).fetchone()
+    assert selected_id == usable_id
+    payload = json.loads(payload_json)
+    assert payload["variant_gate_version"] == 1
+    variants = payload["variants"]
+    assert [variant["difficulty"] for variant in variants] == ["easy", "medium", "hard"]
+    assert len(variants) == 3
+    for variant in variants:
+        start = variant["answer_start"]
+        end = variant["answer_end"]
+        assert payload_json is not None
+        assert (
+            "The hotel reservation fixture is confirmed for tonight."[start:end]
+            == variant["canonical_answer"]
+        )
+
+
+def test_bounded_exact_selection_reads_past_pre_gate_source_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 1)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    item_ids: list[int] = []
+    for index, text in enumerate(
+        (
+            "It is fine.",
+            "It is calm.",
+            "It is quiet.",
+            "The hotel reservation fixture is confirmed for tonight.",
+        )
+    ):
+        item_id = _ready_item(database, f"rank-{index}", text, source_name="one-source")
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": 1.0 - index * 0.01,
+                "method": "keyword",
+            },
+        )
+        item_ids.append(item_id)
+
+    summary = cli._select_items(database, bounded=True)
+
+    assert summary is not None and summary["selected"] == 1
+    with database.connect() as connection:
+        selected_ids = connection.execute(
+            "SELECT item_id FROM stage_results WHERE stage='select'"
+        ).fetchall()
+    assert selected_ids == [(item_ids[-1],)]
+
+
+def test_bounded_exact_selection_scans_equal_confidence_across_page_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 1)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    texts = [
+        f"The hotel reservation fixture number {index} is confirmed tonight."
+        for index in range(513)
+    ]
+    best_text = min(texts, key=normalized_hash)
+    texts.remove(best_text)
+    texts.append(best_text)
+    best_id = 0
+    for index, text in enumerate(texts):
+        item_id = _ready_item(database, f"tie-{index}", text, source_name=f"source-{index}")
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": 0.9,
+                "method": "keyword",
+            },
+        )
+        if text == best_text:
+            best_id = item_id
+
+    cli._select_items(database, bounded=True)
+
+    with database.connect() as connection:
+        selected_id = connection.execute(
+            "SELECT item_id FROM stage_results WHERE stage='select'"
+        ).fetchone()[0]
+    assert selected_id == best_id
+
+
+def test_bounded_exact_selection_kernel_stays_bounded_for_one_source_shortage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 10)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    for index in range(700):
+        item_id = _ready_item(
+            database,
+            f"one-source-{index}",
+            f"The hotel reservation fixture number {index} is confirmed tonight.",
+            source_name="one-source",
+        )
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": 0.9,
+                "method": "keyword",
+            },
+        )
+    candidate_counts: list[int] = []
+    original_select = cli.select_scene_quota
+
+    def recording_select(scene_definition: SceneDefinition, rows: object):
+        materialized = list(rows)  # type: ignore[arg-type]
+        candidate_counts.append(len(materialized))
+        return original_select(scene_definition, materialized)
+
+    monkeypatch.setattr(cli, "select_scene_quota", recording_select)
+
+    with pytest.raises(SceneQuotaError):
+        cli._select_items(database, bounded=True)
+
+    assert candidate_counts and max(candidate_counts) <= 20
+
+
+def test_bounded_selection_rejects_large_protected_pool_before_loading_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 10)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    item_ids: list[int] = []
+    for index in range(700):
+        item_id = _ready_item(
+            database,
+            f"protected-{index}",
+            f"The hotel reservation fixture number {index} is confirmed tonight.",
+            source_name=f"source-{index}",
+        )
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": 0.9,
+                "method": "keyword",
+            },
+        )
+        item_ids.append(item_id)
+    with database.connect() as connection:
+        connection.executemany(
+            "UPDATE raw_items SET protected=1 WHERE id=?",
+            ((item_id,) for item_id in item_ids),
+        )
+
+    def fail_if_loaded(_text: str) -> dict[str, object]:
+        raise AssertionError("protected 冲突应在加载候选前失败")
+
+    def fail_if_selected(*_args: object) -> list[object]:
+        raise AssertionError("protected 冲突不应进入全量选择流")
+
+    monkeypatch.setattr(cli, "generate_variant_payload", fail_if_loaded)
+    monkeypatch.setattr(cli, "select_scene_quota", fail_if_selected)
+
+    with pytest.raises(SceneQuotaError, match="protected quota conflict"):
+        cli._select_items(database, bounded=True)
+
+
+def test_bounded_selection_rejects_concurrent_input_change_without_overwriting_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 2)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    protected_id = _ready_item(
+        database,
+        "protected-snapshot",
+        "The hotel reservation is confirmed for the protected guest tonight.",
+        source_name="protected-source",
+    )
+    regular_id = _ready_item(
+        database,
+        "regular-snapshot",
+        "The hotel booking is ready for the regular visitor tonight.",
+        source_name="regular-source",
+    )
+    with database.connect() as connection:
+        connection.execute("UPDATE raw_items SET protected=1 WHERE id=?", (protected_id,))
+    for item_id, confidence in ((protected_id, 0.9), (regular_id, 0.8)):
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": confidence,
+                "method": "keyword",
+            },
+        )
+    previous_select = {"top_scene": "travel", "sub_scene": "travel_hotel"}
+    previous_translation = {"translation_zh": "酒店预订已确认。", "issues": []}
+    previous_variants = {"variants": [{"fixture": "old"}]}
+    database.replace_stage("select", [(protected_id, previous_select)])
+    database.mark_stage(protected_id, "translate", payload=previous_translation)
+    database.mark_stage(protected_id, "variants", payload=previous_variants)
+    with database.connect() as connection:
+        before = connection.execute(
+            "SELECT item_id, stage, payload_json FROM stage_results "
+            "WHERE stage IN ('select', 'translate', 'variants') ORDER BY stage"
+        ).fetchall()
+        connection.execute("PRAGMA journal_mode=WAL")
+
+    original_connect = database.connect
+    changed = False
+
+    class MutatingConnection:
+        def __init__(self) -> None:
+            self.connection = original_connect()
+
+        def execute(self, sql: str, parameters: object = ()):
+            nonlocal changed
+            if (
+                not changed
+                and "r.protected=?" in sql
+                and parameters == (scene.key, scene.top_key, 0)
+            ):
+                changed = True
+                changed_payload = json.dumps(
+                    {
+                        "top_scene": "travel",
+                        "sub_scene": "travel_hotel",
+                        "confidence": 0.1,
+                        "method": "keyword",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                with original_connect() as writer:
+                    writer.execute(
+                        "UPDATE stage_results SET payload_json=? "
+                        "WHERE item_id=? AND stage='classify'",
+                        (changed_payload, regular_id),
+                    )
+            return self.connection.execute(sql, parameters)  # type: ignore[arg-type]
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self.connection.__exit__(*args)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.connection, name)
+
+    monkeypatch.setattr(database, "connect", MutatingConnection)
+
+    with pytest.raises(ValueError, match="选择输入快照已变化"):
+        cli._select_items(database, bounded=True)
+
+    with original_connect() as connection:
+        after = connection.execute(
+            "SELECT item_id, stage, payload_json FROM stage_results "
+            "WHERE stage IN ('select', 'translate', 'variants') ORDER BY stage"
+        ).fetchall()
+    assert changed
+    assert after == before
+
+
+def test_bounded_exact_selection_rejects_unusable_protected_item_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 1)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    previous_id = _ready_item(
+        database,
+        "previous",
+        "The hotel reservation fixture is confirmed for tonight.",
+    )
+    protected_id = _ready_item(database, "protected", "It is fine.")
+    with database.connect() as connection:
+        connection.execute("UPDATE raw_items SET protected=1 WHERE id=?", (protected_id,))
+    for item_id, confidence in ((previous_id, 0.8), (protected_id, 1.0)):
+        database.mark_stage(
+            item_id,
+            "classify",
+            payload={
+                "top_scene": "travel",
+                "sub_scene": "travel_hotel",
+                "confidence": confidence,
+                "method": "keyword",
+            },
+        )
+    previous_payload = {"top_scene": "travel", "sub_scene": "travel_hotel"}
+    database.replace_stage("select", [(previous_id, previous_payload)])
+    previous_translation = {"translation_zh": "酒店预订已确认。", "issues": []}
+    previous_variants = {"variants": [{"fixture": "old"}]}
+    database.mark_stage(previous_id, "translate", payload=previous_translation)
+    database.mark_stage(previous_id, "variants", payload=previous_variants)
+
+    with pytest.raises(ValueError, match=f"受保护条目 {protected_id}.*三档题型"):
+        cli._select_items(database, bounded=True)
+
+    with database.connect() as connection:
+        selected = connection.execute(
+            "SELECT item_id, stage, payload_json FROM stage_results "
+            "WHERE stage IN ('select', 'translate', 'variants') ORDER BY stage"
+        ).fetchall()
+    assert selected == [
+        (
+            previous_id,
+            "select",
+            json.dumps(previous_payload, ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            previous_id,
+            "translate",
+            json.dumps(previous_translation, ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            previous_id,
+            "variants",
+            json.dumps(previous_variants, ensure_ascii=False, sort_keys=True),
+        ),
+    ]
+
+
+def test_bounded_exact_selection_generates_spans_from_clean_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    scene = SceneDefinition("travel", "出行旅行", "travel_hotel", "酒店住宿", 1)
+    monkeypatch.setattr(cli, "SCENES", (scene,))
+    raw_text = "The <b>hotel</b> reservation is confirmed for tonight."
+    clean_text = "The hotel reservation is confirmed for tonight."
+    item_id = _ready_item(database, "html", raw_text)
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE stage_results SET payload_json=? WHERE item_id=? AND stage='clean'",
+            (json.dumps({"clean_text": clean_text}), item_id),
+        )
+    database.mark_stage(
+        item_id,
+        "classify",
+        payload={
+            "top_scene": "travel",
+            "sub_scene": "travel_hotel",
+            "confidence": 0.9,
+            "method": "keyword",
+        },
+    )
+
+    cli._select_items(database, bounded=True)
+
+    with database.connect() as connection:
+        payload_json = connection.execute(
+            "SELECT payload_json FROM stage_results WHERE item_id=? AND stage='select'",
+            (item_id,),
+        ).fetchone()[0]
+    for variant in json.loads(payload_json)["variants"]:
+        assert (
+            clean_text[variant["answer_start"] : variant["answer_end"]]
+            == variant["canonical_answer"]
+        )
 
 
 def test_bounded_selection_failure_preserves_previous_atomic_snapshot(

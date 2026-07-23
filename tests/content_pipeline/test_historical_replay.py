@@ -263,7 +263,7 @@ def test_replay_accepts_strict_lexical_recall_request_schema(tmp_path: Path) -> 
     assert summary["applied"] == 1
 
 
-@pytest.mark.parametrize("field", ["source_name", "source_author", "text"])
+@pytest.mark.parametrize("field", ["source_name", "text"])
 def test_replay_rejects_whitespace_only_identity_fields(tmp_path: Path, field: str) -> None:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
@@ -276,6 +276,86 @@ def test_replay_rejects_whitespace_only_identity_fields(tmp_path: Path, field: s
 
     with pytest.raises(HistoricalReplayError, match=rf"{field} 必须为非空字符串"):
         replay_classifications(database, [(request_path, result_path)])
+
+
+def test_replay_allows_blank_author_when_identity_maps_uniquely(tmp_path: Path) -> None:
+    database_path = tmp_path / "work.db"
+    database = WorkDatabase(database_path)
+    database.initialize()
+    item_id = _classified_item(
+        database,
+        "The author is not recorded.",
+        source_item_id="unknown-author",
+        source_author="",
+    )
+    request_path = tmp_path / "request.jsonl"
+    result_path = tmp_path / "result.jsonl"
+    _write_jsonl(
+        request_path,
+        [_request(6001, "The author is not recorded.", source_author="")],
+    )
+    _write_jsonl(result_path, [_result(6001)])
+
+    summary = replay_classifications(database, [(request_path, result_path)])
+
+    assert summary["applied"] == 1
+    assert _payload(database_path, item_id)["method"] == "historical_review_replay"
+
+
+@pytest.mark.parametrize("source_author", [None, 7, False])
+def test_replay_rejects_non_string_author(
+    tmp_path: Path, source_author: object
+) -> None:
+    database = WorkDatabase(tmp_path / "work.db")
+    database.initialize()
+    request_path = tmp_path / "request.jsonl"
+    result_path = tmp_path / "result.jsonl"
+    row = _request(6002, "Sentence")
+    row["source_author"] = source_author
+    _write_jsonl(request_path, [row])
+    _write_jsonl(result_path, [_result(6002)])
+
+    with pytest.raises(HistoricalReplayError, match="source_author 必须为字符串"):
+        replay_classifications(database, [(request_path, result_path)])
+
+
+def test_replay_blank_author_ambiguous_identity_fails_atomically(tmp_path: Path) -> None:
+    database_path = tmp_path / "work.db"
+    database = WorkDatabase(database_path)
+    database.initialize()
+    valid_id = _classified_item(
+        database,
+        "Unique sentence.",
+        source_item_id="unique",
+        source_author="",
+    )
+    _classified_item(
+        database,
+        "Ambiguous sentence.",
+        source_item_id="ambiguous-1",
+        source_author="",
+    )
+    _classified_item(
+        database,
+        "Ambiguous sentence.",
+        source_item_id="ambiguous-2",
+        source_author="",
+    )
+    request_path = tmp_path / "request.jsonl"
+    result_path = tmp_path / "result.jsonl"
+    _write_jsonl(
+        request_path,
+        [
+            _request(6101, "Unique sentence.", source_author=""),
+            _request(6102, "Ambiguous sentence.", source_author=""),
+        ],
+    )
+    _write_jsonl(result_path, [_result(6101), _result(6102)])
+
+    with pytest.raises(HistoricalReplayError, match="matches=2"):
+        replay_classifications(database, [(request_path, result_path)])
+
+    assert _payload(database_path, valid_id)["method"] == "out_of_candidate_pool"
 
 
 def test_replay_streaming_reader_rejects_excessive_line_count(tmp_path: Path) -> None:

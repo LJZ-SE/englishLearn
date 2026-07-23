@@ -109,10 +109,8 @@ def _load_requests(path: Path) -> dict[int, tuple[str, str, str]]:
         text = row["text"]
         if not isinstance(source_name, str) or not source_name.strip():
             raise HistoricalReplayError(f"{path}:{line_number} source_name 必须为非空字符串")
-        if not isinstance(source_author, str) or not source_author.strip():
-            raise HistoricalReplayError(
-                f"{path}:{line_number} source_author 必须为非空字符串"
-            )
+        if not isinstance(source_author, str):
+            raise HistoricalReplayError(f"{path}:{line_number} source_author 必须为字符串")
         if not isinstance(text, str) or not text.strip():
             raise HistoricalReplayError(f"{path}:{line_number} text 必须为非空字符串")
         suggested_scene = row.get("suggested_scene")

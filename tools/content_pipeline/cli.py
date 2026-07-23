@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import sqlite3
 from collections.abc import Iterable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from tools.content_pipeline.candidates import generate_variant_payload
 from tools.content_pipeline.categorize import SceneClassifier
 from tools.content_pipeline.classification import (
     ClassificationImportError,
     export_classification_repairs,
     import_classification_repairs,
 )
-from tools.content_pipeline.clean import clean_sentence, rejection_reason
+from tools.content_pipeline.clean import clean_sentence, normalized_hash, rejection_reason
 from tools.content_pipeline.convokit_source import iter_convokit_utterances
 from tools.content_pipeline.gutenberg import iter_gutenberg_text
 from tools.content_pipeline.historical_replay import (
@@ -26,8 +30,18 @@ from tools.content_pipeline.production_sources import (
     import_legacy_database,
     report_sources,
 )
-from tools.content_pipeline.scenes import SCENES, SUB_SCENES
-from tools.content_pipeline.selection import select_scene_quota, select_scene_quotas
+from tools.content_pipeline.recall_review import (
+    RecallReviewError,
+    apply_recall_review_results,
+    prepare_recall_review_batches,
+    validate_recall_review_results,
+)
+from tools.content_pipeline.scenes import SCENES, SUB_SCENES, SceneDefinition
+from tools.content_pipeline.selection import (
+    SceneQuotaError,
+    select_scene_quota,
+    select_scene_quotas,
+)
 from tools.content_pipeline.semantic_recall import (
     ModelMetadata,
     RecallScene,
@@ -44,7 +58,12 @@ from tools.content_pipeline.translation import (
     run_translation_stage,
 )
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
-from tools.content_pipeline.work_database import WorkDatabase, WorkItem
+from tools.content_pipeline.work_database import (
+    ProtectedSelectionConflict,
+    SelectionInputSnapshot,
+    WorkDatabase,
+    WorkItem,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +76,7 @@ class _SelectionRow:
     sub_scene: str
     confidence: float
     protected: bool
+    selection_rank: int | None = None
 
 
 def main() -> None:
@@ -130,9 +150,7 @@ def main() -> None:
     recalls_parser.add_argument("work_db", type=Path)
     recalls_parser.add_argument("--config", type=Path, required=True)
     recalls_parser.add_argument("--model-path", type=Path, required=True)
-    recalls_parser.add_argument(
-        "--model-name", default="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    recalls_parser.add_argument("--model-name", default="sentence-transformers/all-MiniLM-L6-v2")
     recalls_parser.add_argument("--model-revision", required=True)
     recalls_parser.add_argument("--model-sha256", required=True)
     recalls_parser.add_argument("--device", choices=("cpu", "mps"), default="cpu")
@@ -145,6 +163,18 @@ def main() -> None:
     lexical_recall_parser.add_argument("--config", type=Path, required=True)
     lexical_recall_parser.add_argument("--output", type=Path, required=True)
     lexical_recall_parser.add_argument("--exclude", type=Path, nargs="*", default=[])
+    review_prepare_parser = subparsers.add_parser("prepare-recall-review")
+    review_prepare_parser.add_argument("recall_dir", type=Path)
+    review_prepare_parser.add_argument("output_dir", type=Path)
+    review_prepare_parser.add_argument("--batch-size", type=_review_batch_size, default=1000)
+    review_validate_parser = subparsers.add_parser("validate-recall-review")
+    review_validate_parser.add_argument("manifest", type=Path)
+    review_validate_parser.add_argument("results", type=Path, nargs="+")
+    review_validate_parser.add_argument("--exchange-dir", type=Path, required=True)
+    review_apply_parser = subparsers.add_parser("apply-recall-review")
+    review_apply_parser.add_argument("work_db", type=Path)
+    review_apply_parser.add_argument("manifest", type=Path)
+    review_apply_parser.add_argument("results", type=Path, nargs="+")
     translate_parser = subparsers.add_parser("translate")
     translate_parser.add_argument("work_db", type=Path)
     translate_parser.add_argument("--batch-size", type=int, default=32)
@@ -154,6 +184,28 @@ def main() -> None:
         exchange_parser.add_argument("work_db", type=Path)
         exchange_parser.add_argument("path", type=Path)
     arguments = parser.parse_args()
+    if arguments.command == "prepare-recall-review":
+        try:
+            summary = prepare_recall_review_batches(
+                arguments.recall_dir,
+                arguments.output_dir,
+                batch_size=arguments.batch_size,
+            )
+        except RecallReviewError as error:
+            parser.error(str(error))
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        return
+    if arguments.command == "validate-recall-review":
+        try:
+            summary = validate_recall_review_results(
+                arguments.manifest,
+                arguments.results,
+                arguments.exchange_dir,
+            )
+        except RecallReviewError as error:
+            parser.error(str(error))
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        return
     database = WorkDatabase(arguments.work_db)
 
     if arguments.command == "init":
@@ -163,6 +215,13 @@ def main() -> None:
         print(json.dumps(database.stage_counts(), ensure_ascii=False))
         return
     database.initialize()
+    if arguments.command == "apply-recall-review":
+        try:
+            summary = apply_recall_review_results(database, arguments.manifest, arguments.results)
+        except (RecallReviewError, ValueError) as error:
+            parser.error(str(error))
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        return
     if arguments.command == "import-all":
         source_counts = import_all_sources(
             database,
@@ -221,9 +280,7 @@ def main() -> None:
     elif arguments.command == "classify":
         summary = _classify_items(database, *_stage_options(arguments))
         if arguments.export_llm is not None:
-            summary["exported_llm"] = export_classification_repairs(
-                database, arguments.export_llm
-            )
+            summary["exported_llm"] = export_classification_repairs(database, arguments.export_llm)
         summary["method_counts"] = database.classification_method_counts()
         summary["pending"] = database.pending_classification_repairs()
         print(json.dumps(summary, ensure_ascii=False))
@@ -345,6 +402,13 @@ def _recall_top_k(value: str) -> int:
     return parsed
 
 
+def _review_batch_size(value: str) -> int:
+    parsed = int(value)
+    if not 1 <= parsed <= 1000:
+        raise argparse.ArgumentTypeError("必须是 1 到 1000 之间的整数")
+    return parsed
+
+
 def _load_recall_prototypes(path: Path, sub_scene: str) -> tuple[str, ...]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -396,25 +460,17 @@ def _load_recall_scenes(path: Path) -> tuple[RecallScene, ...]:
             or any(not isinstance(text, str) or not text.strip() for text in prototypes)
         ):
             raise ValueError(f"多场景语义召回 scenes[{index}] prototypes 非法")
-        if (
-            not isinstance(top_k, int)
-            or isinstance(top_k, bool)
-            or not 1 <= top_k <= 500
-        ):
+        if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 500:
             raise ValueError(f"多场景语义召回 scenes[{index}] top_k 非法")
         if (
             not isinstance(excluded_item_ids, list)
             or any(
-                not isinstance(item_id, int)
-                or isinstance(item_id, bool)
-                or item_id <= 0
+                not isinstance(item_id, int) or isinstance(item_id, bool) or item_id <= 0
                 for item_id in excluded_item_ids
             )
             or len(excluded_item_ids) != len(set(excluded_item_ids))
         ):
-            raise ValueError(
-                f"多场景语义召回 scenes[{index}] excluded_item_ids 非法"
-            )
+            raise ValueError(f"多场景语义召回 scenes[{index}] excluded_item_ids 非法")
         scenes.append(
             RecallScene(
                 sub_scene=sub_scene,
@@ -593,17 +649,13 @@ def _classify_items(
                 summary["out_of_candidate_pool"] += 1
             else:
                 summary["classified"] += 1
-        database.checkpoint_stage_batch(
-            "classify", results, model_version=model_version
-        )
+        database.checkpoint_stage_batch("classify", results, model_version=model_version)
         if not run_to_completion:
             break
     return summary
 
 
-def _select_items(
-    database: WorkDatabase, *, bounded: bool = False
-) -> dict[str, object] | None:
+def _select_items(database: WorkDatabase, *, bounded: bool = False) -> dict[str, object] | None:
     if bounded:
         return _select_items_bounded(database)
     candidates: list[_SelectionRow] = []
@@ -640,40 +692,213 @@ def _select_items(
 
 
 def _select_items_bounded(database: WorkDatabase) -> dict[str, object]:
-    selected_rows: list[tuple[_SelectionRow, str]] = []
+    selected_rows: list[tuple[_SelectionRow, str, dict[str, object]]] = []
+    input_snapshots: list[SelectionInputSnapshot] = []
     scene_counts: dict[str, int] = {}
+    variant_rejected = 0
     for scene in SCENES:
-        candidates = [
-            _SelectionRow(
-                id=stage_input.item.id,
-                text=stage_input.item.text,
-                source_name=stage_input.item.source_name,
-                source_author=stage_input.item.source_author,
-                top_scene=str(stage_input.predecessor_payload.get("top_scene") or ""),
-                sub_scene=str(stage_input.predecessor_payload.get("sub_scene") or ""),
-                confidence=float(stage_input.predecessor_payload.get("confidence") or 0.0),
-                protected=stage_input.item.protected,
+        try:
+            candidates, rejected_count, input_snapshot = _variant_ready_selection_kernel(
+                database, scene
             )
-            for stage_input in database.bounded_selection_candidates(
-                scene.key, quota=scene.quota
-            )
-        ]
+        except ProtectedSelectionConflict as error:
+            raise SceneQuotaError({scene.key: 0}, list(error.conflicts)) from error
+        variant_rejected += rejected_count
+        input_snapshots.append(input_snapshot)
         scene_selected = select_scene_quota(scene, candidates)
         scene_counts[scene.key] = len(scene_selected)
-        selected_rows.extend((row, scene.key) for row in scene_selected)
+        selected_rows.extend(
+            (row, scene.key, generate_variant_payload(row.text)) for row in scene_selected
+        )
     database.replace_stage(
         "select",
         [
-            (row.id, {"top_scene": row.top_scene, "sub_scene": sub_scene})
-            for row, sub_scene in selected_rows
+            (
+                row.id,
+                {
+                    "top_scene": row.top_scene,
+                    "sub_scene": sub_scene,
+                    "variant_gate_version": 1,
+                    **variant_payload,
+                },
+            )
+            for row, sub_scene, variant_payload in selected_rows
         ],
+        expected_selection_inputs=tuple(input_snapshots),
     )
     return {
         "selected": len(selected_rows),
-        "protected": sum(row.protected for row, _ in selected_rows),
+        "protected": sum(row.protected for row, _, _ in selected_rows),
+        "variant_rejected": variant_rejected,
         "scene_counts": scene_counts,
         "concentration": database.selection_concentration(),
     }
+
+
+def _variant_ready_selection_kernel(
+    database: WorkDatabase,
+    scene: SceneDefinition,
+) -> tuple[list[_SelectionRow], int, SelectionInputSnapshot]:
+    source_limit = max(1, math.floor(scene.quota * 0.45))
+    author_limit = max(1, math.floor(scene.quota * 0.08))
+    pair_limit = min(source_limit, author_limit)
+    source_keep = scene.quota + source_limit
+    author_keep = scene.quota + author_limit
+    global_keep = (
+        scene.quota
+        + (scene.quota // source_limit) * source_keep
+        + (scene.quota // author_limit) * author_keep
+    )
+    rejected_count = 0
+    with closing(sqlite3.connect("")) as store:
+        store.execute("PRAGMA cache_size=-8192")
+        store.execute(
+            """
+            CREATE TABLE candidates(
+                id INTEGER PRIMARY KEY,
+                text TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                source_author TEXT NOT NULL,
+                top_scene TEXT NOT NULL,
+                sub_scene TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                protected INTEGER NOT NULL,
+                tie_hash TEXT NOT NULL
+            )
+            """
+        )
+        candidate_pages = database.selection_candidate_pages(
+            scene.key,
+            top_scene=scene.top_key,
+            quota=scene.quota,
+            source_limit=source_limit,
+            author_limit=author_limit,
+        )
+        for page in candidate_pages:
+            ready_rows: list[tuple[object, ...]] = []
+            for stage_input in page:
+                item = stage_input.item
+                try:
+                    generate_variant_payload(item.text)
+                except ValueError as error:
+                    if item.protected:
+                        raise ValueError(
+                            f"受保护条目 {item.id} 无法生成合法三档题型: {error}"
+                        ) from error
+                    rejected_count += 1
+                    continue
+                ready_rows.append(
+                    (
+                        item.id,
+                        item.text,
+                        item.source_name,
+                        item.source_author,
+                        str(stage_input.predecessor_payload.get("top_scene") or ""),
+                        str(stage_input.predecessor_payload.get("sub_scene") or ""),
+                        float(stage_input.predecessor_payload.get("confidence") or 0.0),
+                        int(item.protected),
+                        normalized_hash(item.text),
+                    )
+                )
+            store.executemany(
+                "INSERT INTO candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ready_rows,
+            )
+
+        # 任一可行解最多使用 source_limit/author_limit 条同源或同作者记录。
+        # 先限制同来源-作者的平行边，再限制每个端点；全局上界覆盖所有可能
+        # 被已饱和来源、作者或已选记录阻挡的更优边，因此不会删掉最优解。
+        rows = store.execute(
+            """
+            WITH pair_ranked AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        ORDER BY confidence DESC, tie_hash, CAST(id AS TEXT)
+                    ) - 1 AS selection_rank,
+                    ROW_NUMBER() OVER (
+                    PARTITION BY source_name,
+                        CASE WHEN trim(source_author)=''
+                             THEN 'blank:' || id ELSE 'author:' || source_author END
+                    ORDER BY confidence DESC, tie_hash, CAST(id AS TEXT)
+                ) AS pair_rank
+                FROM candidates WHERE protected=0
+            ),
+            pair_kept AS (
+                SELECT * FROM pair_ranked
+                WHERE pair_rank <= CASE WHEN trim(source_author)=''
+                                       THEN :source_limit ELSE :pair_limit END
+            ),
+            source_ranked AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_name
+                    ORDER BY confidence DESC, tie_hash, CAST(id AS TEXT)
+                ) AS source_rank
+                FROM pair_kept
+            ),
+            source_kept AS (
+                SELECT * FROM source_ranked WHERE source_rank <= :source_keep
+            ),
+            author_ranked AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY CASE WHEN trim(source_author)=''
+                        THEN 'blank:' || id ELSE 'author:' || source_author END
+                    ORDER BY confidence DESC, tie_hash, CAST(id AS TEXT)
+                ) AS author_rank
+                FROM source_kept
+            ),
+            author_kept AS (
+                SELECT * FROM author_ranked
+                WHERE trim(source_author)='' OR author_rank <= :author_keep
+            ),
+            global_ranked AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    ORDER BY confidence DESC, tie_hash, CAST(id AS TEXT)
+                ) AS global_rank
+                FROM author_kept
+            ),
+            bounded AS (
+                SELECT id, text, source_name, source_author, top_scene, sub_scene,
+                       confidence, protected, tie_hash, NULL AS selection_rank
+                FROM candidates WHERE protected=1
+                UNION ALL
+                SELECT id, text, source_name, source_author, top_scene, sub_scene,
+                       confidence, protected, tie_hash, selection_rank
+                FROM global_ranked WHERE global_rank <= :global_keep
+            )
+            SELECT id, text, source_name, source_author, top_scene, sub_scene,
+                   confidence, protected, selection_rank
+            FROM bounded
+            ORDER BY protected DESC, confidence DESC, tie_hash, CAST(id AS TEXT)
+            """,
+            {
+                "source_limit": source_limit,
+                "author_limit": author_limit,
+                "pair_limit": pair_limit,
+                "source_keep": source_keep,
+                "author_keep": author_keep,
+                "global_keep": global_keep,
+            },
+        ).fetchall()
+    if candidate_pages.snapshot is None:
+        raise RuntimeError(f"场景 {scene.key} 的选择输入快照未完成")
+    return (
+        [
+            _SelectionRow(
+                id=int(row[0]),
+                text=str(row[1]),
+                source_name=str(row[2]),
+                source_author=str(row[3]),
+                top_scene=str(row[4]),
+                sub_scene=str(row[5]),
+                confidence=float(row[6]),
+                protected=bool(row[7]),
+                selection_rank=int(row[8]) if row[8] is not None else None,
+            )
+            for row in rows
+        ],
+        rejected_count,
+        candidate_pages.snapshot,
+    )
 
 
 def _clean_text(database: WorkDatabase, item: WorkItem) -> str:

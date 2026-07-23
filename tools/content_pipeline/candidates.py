@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -125,12 +126,19 @@ def _frequency_score(word: str) -> float:
     return max(0.5, 8.0 - frequency)
 
 
-def _spacy_pos_bonus(sentence: str) -> dict[tuple[int, int], float]:
+@lru_cache(maxsize=1)
+def _spacy_pipeline():
     try:
         import spacy
 
-        pipeline = spacy.blank("en")
+        return spacy.blank("en")
     except ImportError:
+        return None
+
+
+def _spacy_pos_bonus(sentence: str) -> dict[tuple[int, int], float]:
+    pipeline = _spacy_pipeline()
+    if pipeline is None:
         return {}
     result: dict[tuple[int, int], float] = {}
     for token in pipeline(sentence):
@@ -246,3 +254,75 @@ def generate_variants(sentence: str) -> tuple[QuestionVariant, QuestionVariant, 
             )
         )
     return tuple(variants)  # type: ignore[return-value]
+
+
+def generate_variant_payload(sentence: str) -> dict[str, object]:
+    """生成可直接持久化的三档题型，并防御性校验答案区间。"""
+    variants = generate_variants(sentence)
+    if (
+        not isinstance(variants, tuple)
+        or len(variants) != 3
+        or any(not isinstance(item, QuestionVariant) for item in variants)
+    ):
+        raise ValueError("句子必须生成三个合法题型对象")
+    if tuple(item.difficulty for item in variants) != (
+        "easy",
+        "medium",
+        "hard",
+    ):
+        raise ValueError("句子必须生成 easy/medium/hard 三个版本")
+    for variant in variants:
+        if not isinstance(variant.canonical_answer, str) or not variant.canonical_answer:
+            raise ValueError("题型答案无效")
+        if not isinstance(variant.score, (int, float)) or isinstance(variant.score, bool):
+            raise ValueError("题型难度分值无效")
+        try:
+            finite_score = math.isfinite(variant.score)
+        except (OverflowError, TypeError) as error:
+            raise ValueError("题型难度分值无效") from error
+        if not finite_score:
+            raise ValueError("题型难度分值无效")
+        if not isinstance(variant.rationale, str) or not variant.rationale.strip():
+            raise ValueError("题型说明无效")
+        if not isinstance(variant.aliases, tuple) or any(
+            not isinstance(alias, str) or not alias.strip() for alias in variant.aliases
+        ):
+            raise ValueError("题型别名无效")
+        if (
+            isinstance(variant.answer_start, bool)
+            or isinstance(variant.answer_end, bool)
+            or not isinstance(variant.answer_start, int)
+            or not isinstance(variant.answer_end, int)
+            or variant.answer_start < 0
+            or variant.answer_end <= variant.answer_start
+            or variant.answer_end > len(sentence)
+            or sentence[variant.answer_start : variant.answer_end]
+            != variant.canonical_answer
+        ):
+            raise ValueError("题型答案区间无法精确填回原句")
+        if (
+            isinstance(variant.blank_count, bool)
+            or not isinstance(variant.blank_count, int)
+            or not 1 <= variant.blank_count <= 4
+            or variant.blank_count != len(variant.canonical_answer.split())
+        ):
+            raise ValueError("题型空位数量与答案词数不一致")
+    if len({item.canonical_answer.casefold() for item in variants}) != 3:
+        raise ValueError("句子的三个版本答案必须不同")
+    if not (variants[0].score < variants[1].score < variants[2].score):
+        raise ValueError("句子的三个难度分值必须严格递增")
+    return {
+        "variants": [
+            {
+                "difficulty": variant.difficulty,
+                "answer_start": variant.answer_start,
+                "answer_end": variant.answer_end,
+                "canonical_answer": variant.canonical_answer,
+                "answer_word_count": variant.blank_count,
+                "difficulty_score": variant.score,
+                "rationale": variant.rationale,
+                "aliases": list(variant.aliases),
+            }
+            for variant in variants
+        ]
+    }

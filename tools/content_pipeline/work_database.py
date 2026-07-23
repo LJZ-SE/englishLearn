@@ -4,6 +4,8 @@ import hashlib
 import json
 import math
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,13 +33,12 @@ _POSITIVE_CLASSIFICATION_METHODS = frozenset(
         "single_keyword_whitelist",
         "llm_repair",
         "historical_review_replay",
+        "recall_review",
     }
 )
-_NULL_CLASSIFICATION_METHODS = frozenset(
-    {"llm_required", "llm_rejected", "out_of_candidate_pool"}
-)
+_NULL_CLASSIFICATION_METHODS = frozenset({"llm_required", "llm_rejected", "out_of_candidate_pool"})
 _CLASSIFICATION_REASON_METHODS = frozenset(
-    {"llm_repair", "llm_rejected", "historical_review_replay"}
+    {"llm_repair", "llm_rejected", "historical_review_replay", "recall_review"}
 )
 
 
@@ -79,6 +80,76 @@ class TranslationRepair:
 class TranslationBatch:
     selection_generation: str
     items: tuple[WorkItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionInputSnapshot:
+    top_scene: str
+    sub_scene: str
+    generation: str
+
+
+class ProtectedSelectionConflict(ValueError):
+    def __init__(self, conflicts: list[str]) -> None:
+        self.conflicts = tuple(conflicts)
+        super().__init__("; ".join(conflicts))
+
+
+class SelectionCandidatePages:
+    def __init__(
+        self,
+        database: WorkDatabase,
+        *,
+        top_scene: str,
+        sub_scene: str,
+        quota: int,
+        source_limit: int,
+        author_limit: int,
+        page_size: int,
+    ) -> None:
+        self.database = database
+        self.top_scene = top_scene
+        self.sub_scene = sub_scene
+        self.quota = quota
+        self.source_limit = source_limit
+        self.author_limit = author_limit
+        self.page_size = page_size
+        self.snapshot: SelectionInputSnapshot | None = None
+        self._started = False
+
+    def __iter__(self) -> Iterator[list[StageInput]]:
+        if self._started:
+            raise RuntimeError("选择候选分页只允许消费一次")
+        self._started = True
+        digest = hashlib.sha256()
+        with closing(self.database.connect()) as connection:
+            # 聚合检查、protected 和 regular 游标必须共享同一个显式读事务，
+            # 否则并发分类更新可能拼出数据库中从未真实存在过的混合快照。
+            connection.execute("BEGIN")
+            conflicts = _protected_selection_conflicts(
+                connection,
+                top_scene=self.top_scene,
+                sub_scene=self.sub_scene,
+                quota=self.quota,
+                source_limit=self.source_limit,
+                author_limit=self.author_limit,
+            )
+            if conflicts:
+                raise ProtectedSelectionConflict(conflicts)
+            for protected in (1, 0):
+                cursor = connection.execute(
+                    _SELECTION_INPUT_QUERY,
+                    (self.sub_scene, self.top_scene, protected),
+                )
+                while rows := cursor.fetchmany(self.page_size):
+                    for row in rows:
+                        _update_selection_input_digest(digest, row)
+                    yield [_stage_input(row) for row in rows]
+        self.snapshot = SelectionInputSnapshot(
+            top_scene=self.top_scene,
+            sub_scene=self.sub_scene,
+            generation=digest.hexdigest(),
+        )
 
 
 class WorkDatabase:
@@ -266,9 +337,7 @@ class WorkDatabase:
                     """,
                     (source_name,),
                 )
-            connection.execute(
-                "DELETE FROM raw_items WHERE source_name = ?", (source_name,)
-            )
+            connection.execute("DELETE FROM raw_items WHERE source_name = ?", (source_name,))
             _invalidate_selection_snapshot(connection)
         return count
 
@@ -420,24 +489,32 @@ class WorkDatabase:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if previous_stage is None:
-                eligible = {
-                    int(row[0])
-                    for row in connection.execute(
-                        f"SELECT id FROM raw_items WHERE id IN ({_placeholders(item_ids)})",
-                        item_ids,
-                    )
-                } if item_ids else set()
+                eligible = (
+                    {
+                        int(row[0])
+                        for row in connection.execute(
+                            f"SELECT id FROM raw_items WHERE id IN ({_placeholders(item_ids)})",
+                            item_ids,
+                        )
+                    }
+                    if item_ids
+                    else set()
+                )
             else:
-                eligible = {
-                    int(row[0])
-                    for row in connection.execute(
-                        f"""
+                eligible = (
+                    {
+                        int(row[0])
+                        for row in connection.execute(
+                            f"""
                         SELECT item_id FROM stage_results
                         WHERE stage = ? AND item_id IN ({_placeholders(item_ids)})
                         """,
-                        [previous_stage, *item_ids],
-                    )
-                } if item_ids else set()
+                            [previous_stage, *item_ids],
+                        )
+                    }
+                    if item_ids
+                    else set()
+                )
             if eligible != set(item_ids):
                 raise ValueError(f"阶段 {stage} 批次包含不可写条目")
             updated_at = _now()
@@ -684,8 +761,7 @@ class WorkDatabase:
                 missing = sorted(pending - supplied)
                 unknown = sorted(supplied - pending)
                 raise ValueError(
-                    f"分类修正集合不完整: "
-                    f"missing={missing[:20]}, unknown={unknown[:20]}"
+                    f"分类修正集合不完整: missing={missing[:20]}, unknown={unknown[:20]}"
                 )
             updated_at = _now()
             connection.executemany(
@@ -702,9 +778,7 @@ class WorkDatabase:
                                 "sub_scene": sub_scene,
                                 "confidence": 1.0 if sub_scene is not None else 0.0,
                                 "method": (
-                                    "llm_repair"
-                                    if sub_scene is not None
-                                    else "llm_rejected"
+                                    "llm_repair" if sub_scene is not None else "llm_rejected"
                                 ),
                                 "reason": reason,
                             }
@@ -753,10 +827,7 @@ class WorkDatabase:
                     top_scene, sub_scene, reason
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                [
-                    (ordinal, *decision)
-                    for ordinal, decision in enumerate(decisions)
-                ],
+                [(ordinal, *decision) for ordinal, decision in enumerate(decisions)],
             )
             # 固定从 raw_items 扫描一次，再用临时表的身份索引筛选，避免逐项全库查找。
             rows = connection.execute(
@@ -841,6 +912,76 @@ class WorkDatabase:
             "noop": noop,
         }
 
+    def apply_current_recall_reviews(
+        self, decisions: list[tuple[int, str, str, str, str, str, str]]
+    ) -> dict[str, int]:
+        """按当前 item_id 应用复审，同时以 request 身份字段防止错库更新。"""
+        if not decisions:
+            return {"applied": 0, "noop": 0, "skipped_rejected": 0}
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            updates: list[tuple[str, str, int]] = []
+            noop = skipped_rejected = 0
+            updated_at = _now()
+            for (
+                item_id,
+                source_name,
+                source_author,
+                text,
+                top_scene,
+                sub_scene,
+                reason,
+            ) in decisions:
+                raw = connection.execute(
+                    "SELECT source_name, source_author, text FROM raw_items WHERE id=?", (item_id,)
+                ).fetchone()
+                if raw is None or tuple(raw) != (source_name, source_author, text):
+                    raise ValueError(f"当前复审 item_id={item_id} 的身份不一致或不存在")
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM rejections WHERE item_id=?", (item_id,)
+                    ).fetchone()
+                    is not None
+                ):
+                    skipped_rejected += 1
+                    continue
+                row = connection.execute(
+                    "SELECT payload_json FROM stage_results WHERE item_id=? AND stage='classify'",
+                    (item_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"条目 {item_id} 未完成 classify")
+                current = _validate_classification_payload(item_id, str(row[0]))
+                if current.get("top_scene") == top_scene and current.get("sub_scene") == sub_scene:
+                    noop += 1
+                    continue
+                if current.get("method") != "out_of_candidate_pool":
+                    raise ValueError(f"条目 {item_id} 已有分类冲突")
+                updates.append(
+                    (
+                        _dump_payload(
+                            {
+                                "top_scene": top_scene,
+                                "sub_scene": sub_scene,
+                                "confidence": 1.0,
+                                "method": "recall_review",
+                            "reason": reason,
+                            }
+                        ),
+                        updated_at,
+                        item_id,
+                    )
+                )
+            if updates:
+                connection.executemany(
+                    "UPDATE stage_results SET payload_json=?, "
+                    "model_version='recall-review-v1', updated_at=? "
+                    "WHERE item_id=? AND stage='classify'",
+                    updates,
+                )
+                _invalidate_selection_snapshot(connection)
+        return {"applied": len(updates), "noop": noop, "skipped_rejected": skipped_rejected}
+
     def bounded_selection_candidates(
         self,
         sub_scene: str,
@@ -870,7 +1011,10 @@ class WorkDatabase:
                 """
                 WITH candidates AS (
                     SELECT r.id, r.source_name, r.source_item_id, r.source_url,
-                           r.source_author, r.license_name, r.license_url, r.text,
+                           r.source_author, r.license_name, r.license_url,
+                           COALESCE(
+                               json_extract(cleaned.payload_json, '$.clean_text'), r.text
+                           ) AS text,
                            r.protected, r.top_scene, r.sub_scene, classified.payload_json,
                            ROW_NUMBER() OVER (
                                PARTITION BY r.source_name
@@ -889,6 +1033,8 @@ class WorkDatabase:
                            ) AS author_rank
                     FROM stage_results AS classified
                     JOIN raw_items AS r ON r.id=classified.item_id
+                    JOIN stage_results AS cleaned
+                      ON cleaned.item_id=r.id AND cleaned.stage='clean'
                     LEFT JOIN rejections AS rejected ON rejected.item_id=r.id
                     WHERE classified.stage='classify'
                       AND json_extract(classified.payload_json, '$.sub_scene')=:sub_scene
@@ -920,6 +1066,42 @@ class WorkDatabase:
             )
             for row in rows
         ]
+
+    def selection_candidate_pages(
+        self,
+        sub_scene: str,
+        *,
+        top_scene: str | None = None,
+        quota: int | None = None,
+        source_limit: int | None = None,
+        author_limit: int | None = None,
+        page_size: int = 512,
+    ) -> SelectionCandidatePages:
+        """按质量顺序分页读取完整场景池，避免门控前截断合法后备。"""
+        if page_size < 1:
+            raise ValueError("选择候选页大小必须大于零")
+        scene = SUB_SCENES.get(sub_scene)
+        resolved_top_scene = top_scene or (scene.top_key if scene is not None else "")
+        resolved_quota = quota if quota is not None else (scene.quota if scene is not None else 1)
+        resolved_source_limit = (
+            source_limit
+            if source_limit is not None
+            else max(1, math.floor(resolved_quota * 0.45))
+        )
+        resolved_author_limit = (
+            author_limit
+            if author_limit is not None
+            else max(1, math.floor(resolved_quota * 0.08))
+        )
+        return SelectionCandidatePages(
+            self,
+            top_scene=resolved_top_scene,
+            sub_scene=sub_scene,
+            quota=resolved_quota,
+            source_limit=resolved_source_limit,
+            author_limit=resolved_author_limit,
+            page_size=page_size,
+        )
 
     def selection_concentration(self) -> dict[str, dict[str, float | int | str]]:
         report: dict[str, dict[str, float | int | str]] = {}
@@ -985,7 +1167,10 @@ class WorkDatabase:
         results: list[tuple[int, dict[str, Any]]],
         *,
         model_version: str = "",
+        expected_selection_inputs: tuple[SelectionInputSnapshot, ...] | None = None,
     ) -> bool:
+        if expected_selection_inputs is not None and stage != "select":
+            raise ValueError("输入快照 CAS 只适用于 select 阶段")
         previous_stage = _previous_stage(stage)
         serialized = [(item_id, _dump_payload(payload)) for item_id, payload in results]
         item_ids = [item_id for item_id, _ in serialized]
@@ -997,6 +1182,16 @@ class WorkDatabase:
         )
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            for snapshot in expected_selection_inputs or ():
+                current_generation = _selection_input_generation(
+                    connection,
+                    top_scene=snapshot.top_scene,
+                    sub_scene=snapshot.sub_scene,
+                )
+                if current_generation != snapshot.generation:
+                    raise ValueError(
+                        f"选择输入快照已变化，拒绝覆盖旧结果: {snapshot.sub_scene}"
+                    )
             existing = {
                 int(item_id): (str(payload_json), str(version))
                 for item_id, payload_json, version in connection.execute(
@@ -1117,13 +1312,24 @@ class WorkDatabase:
             ).fetchone()
             if current_generation != (selection_generation,):
                 raise ValueError("选择快照已变化，拒绝写入旧 generation 的翻译批次")
-            eligible = {
-                int(row[0])
+            selected_rows = {
+                int(row[0]): str(row[1])
                 for row in connection.execute(
-                    "SELECT item_id FROM stage_results WHERE stage = 'select'"
+                    f"""
+                    SELECT item_id, payload_json FROM stage_results
+                    WHERE stage='select' AND item_id IN ({_placeholders(item_ids)})
+                    """,
+                    item_ids,
                 )
             }
-            rejected = {int(row[0]) for row in connection.execute("SELECT item_id FROM rejections")}
+            eligible = set(selected_rows)
+            rejected = {
+                int(row[0])
+                for row in connection.execute(
+                    f"SELECT item_id FROM rejections WHERE item_id IN ({_placeholders(item_ids)})",
+                    item_ids,
+                )
+            }
             invalid = sorted((set(item_ids) - eligible) | (set(item_ids) & rejected))
             if invalid:
                 raise ValueError(f"翻译批次包含不可写条目: {invalid}")
@@ -1180,6 +1386,12 @@ class WorkDatabase:
                         model_version,
                         updated_at,
                     ),
+                )
+                _materialize_cached_variants(
+                    connection,
+                    item_id=item_id,
+                    select_payload_json=selected_rows[item_id],
+                    updated_at=updated_at,
                 )
 
     def translation_repairs(self) -> list[TranslationRepair]:
@@ -1244,7 +1456,8 @@ class WorkDatabase:
             if current_generation != (str(repair[1]),):
                 raise ValueError(f"条目 {item_id} 的选择快照已变化")
             selected = connection.execute(
-                "SELECT 1 FROM stage_results WHERE item_id = ? AND stage = 'select'", (item_id,)
+                "SELECT payload_json FROM stage_results WHERE item_id = ? AND stage = 'select'",
+                (item_id,),
             ).fetchone()
             if selected is None:
                 raise ValueError(f"条目 {item_id} 已不在当前选择快照中")
@@ -1283,6 +1496,12 @@ class WorkDatabase:
                     ),
                     updated_at,
                 ),
+            )
+            _materialize_cached_variants(
+                connection,
+                item_id=item_id,
+                select_payload_json=str(selected[0]),
+                updated_at=updated_at,
             )
         return True
 
@@ -1496,8 +1715,163 @@ def _work_item(row: tuple[Any, ...]) -> WorkItem:
     )
 
 
+def _stage_input(row: tuple[Any, ...]) -> StageInput:
+    return StageInput(
+        item=_work_item(row),
+        predecessor_payload=json.loads(row[11]),
+        stage_payload=json.loads(row[12]) if row[12] is not None else None,
+    )
+
+
+_SELECTION_INPUT_QUERY = """
+    SELECT r.id, r.source_name, r.source_item_id, r.source_url,
+           r.source_author, r.license_name, r.license_url,
+           COALESCE(json_extract(cleaned.payload_json, '$.clean_text'), r.text),
+           r.protected, r.top_scene, r.sub_scene, classified.payload_json, NULL
+    FROM stage_results AS classified
+    JOIN raw_items AS r ON r.id=classified.item_id
+    JOIN stage_results AS cleaned
+      ON cleaned.item_id=r.id AND cleaned.stage='clean'
+    LEFT JOIN rejections AS rejected ON rejected.item_id=r.id
+    WHERE classified.stage='classify'
+      AND json_extract(classified.payload_json, '$.sub_scene')=?
+      AND json_extract(classified.payload_json, '$.top_scene')=?
+      AND r.protected=?
+      AND rejected.item_id IS NULL
+    ORDER BY json_extract(classified.payload_json, '$.confidence') DESC, r.id
+"""
+
+
+def _protected_selection_conflicts(
+    connection: sqlite3.Connection,
+    *,
+    top_scene: str,
+    sub_scene: str,
+    quota: int,
+    source_limit: int,
+    author_limit: int,
+) -> list[str]:
+    parameters = (sub_scene, top_scene)
+    protected_cte = """
+        WITH protected AS (
+            SELECT r.source_name, trim(r.source_author) AS source_author
+            FROM stage_results AS classified
+            JOIN raw_items AS r ON r.id=classified.item_id
+            JOIN stage_results AS cleaned
+              ON cleaned.item_id=r.id AND cleaned.stage='clean'
+            LEFT JOIN rejections AS rejected ON rejected.item_id=r.id
+            WHERE classified.stage='classify'
+              AND json_extract(classified.payload_json, '$.sub_scene')=?
+              AND json_extract(classified.payload_json, '$.top_scene')=?
+              AND r.protected=1
+              AND rejected.item_id IS NULL
+        )
+    """
+    total = int(
+        connection.execute(
+            protected_cte + "SELECT COUNT(*) FROM protected", parameters
+        ).fetchone()[0]
+    )
+    source_conflicts = connection.execute(
+        protected_cte
+        + """
+        SELECT source_name, COUNT(*) AS count
+        FROM protected GROUP BY source_name HAVING count>?
+        ORDER BY count DESC, source_name LIMIT 8
+        """,
+        (*parameters, source_limit),
+    ).fetchall()
+    author_conflicts = connection.execute(
+        protected_cte
+        + """
+        SELECT source_author, COUNT(*) AS count
+        FROM protected WHERE source_author<>''
+        GROUP BY source_author HAVING count>?
+        ORDER BY count DESC, source_author LIMIT 8
+        """,
+        (*parameters, author_limit),
+    ).fetchall()
+    conflicts: list[str] = []
+    if total > quota:
+        conflicts.append(f"protected quota conflict in {sub_scene}: {total} > {quota}")
+    conflicts.extend(
+        f"protected source conflict in {sub_scene}: {str(source)!r} {count} > {source_limit}"
+        for source, count in source_conflicts
+    )
+    conflicts.extend(
+        f"protected author conflict in {sub_scene}: {str(author)!r} {count} > {author_limit}"
+        for author, count in author_conflicts
+    )
+    return conflicts
+
+
+def _update_selection_input_digest(digest: Any, row: tuple[Any, ...]) -> None:
+    canonical = json.dumps(
+        list(row), ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    digest.update(canonical.encode("utf-8"))
+    digest.update(b"\n")
+
+
+def _selection_input_generation(
+    connection: sqlite3.Connection,
+    *,
+    top_scene: str,
+    sub_scene: str,
+) -> str:
+    digest = hashlib.sha256()
+    for protected in (1, 0):
+        cursor = connection.execute(
+            _SELECTION_INPUT_QUERY,
+            (sub_scene, top_scene, protected),
+        )
+        while rows := cursor.fetchmany(512):
+            for row in rows:
+                _update_selection_input_digest(digest, row)
+    return digest.hexdigest()
+
+
 def _dump_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _materialize_cached_variants(
+    connection: sqlite3.Connection,
+    *,
+    item_id: int,
+    select_payload_json: str,
+    updated_at: str,
+) -> None:
+    try:
+        selected = json.loads(select_payload_json)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError(f"条目 {item_id} 的 select payload 无效") from error
+    if not isinstance(selected, dict):
+        raise ValueError(f"条目 {item_id} 的 select payload 无效")
+    gate_version = selected.get("variant_gate_version")
+    if gate_version is None:
+        return
+    if gate_version != 1:
+        raise ValueError(f"条目 {item_id} 的 variant gate 版本无效")
+    variants = selected.get("variants")
+    if (
+        not isinstance(variants, list)
+        or len(variants) != 3
+        or any(not isinstance(variant, dict) for variant in variants)
+        or [variant.get("difficulty") for variant in variants] != ["easy", "medium", "hard"]
+    ):
+        raise ValueError(f"条目 {item_id} 的缓存 variants 无效")
+    connection.execute(
+        """
+        INSERT INTO stage_results(item_id, stage, payload_json, model_version, updated_at)
+        VALUES (?, 'variants', ?, 'selection-variant-gate-v1', ?)
+        ON CONFLICT(item_id, stage) DO UPDATE SET
+            payload_json = excluded.payload_json,
+            model_version = excluded.model_version,
+            updated_at = excluded.updated_at
+        """,
+        (item_id, _dump_payload({"variants": variants}), updated_at),
+    )
 
 
 def _validate_classification_payload(item_id: int, payload_json: str) -> dict[str, Any]:
@@ -1522,8 +1896,10 @@ def _validate_classification_payload(item_id: int, payload_json: str) -> dict[st
         confidence_value = float(confidence)
     except (OverflowError, TypeError, ValueError):
         confidence_value = math.nan
-    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not (
-        math.isfinite(confidence_value) and 0.0 <= confidence_value <= 1.0
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not (math.isfinite(confidence_value) and 0.0 <= confidence_value <= 1.0)
     ):
         raise ValueError(f"条目 {item_id} 的 classify 载荷 confidence 非法")
     if method in _CLASSIFICATION_REASON_METHODS:

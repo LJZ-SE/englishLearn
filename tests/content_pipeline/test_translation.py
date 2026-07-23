@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from tools.content_pipeline.builder import build_database
+from tools.content_pipeline.candidates import generate_variant_payload
 from tools.content_pipeline.translation import (
     TranslationImportError,
     export_llm_repairs,
@@ -140,6 +142,47 @@ def test_failed_draft_is_exported_and_only_valid_repair_completes_stage(tmp_path
     assert model_version == "llm-repair"
 
 
+def test_successful_translation_materializes_cached_variants_and_builds(
+    tmp_path: Path,
+) -> None:
+    database = _selected_database(
+        tmp_path,
+        ("The train arrives at nine each morning.",),
+        cached_variants=True,
+    )
+
+    assert run_translation_stage(database, FakeTranslator(), batch_size=1) == 1
+    assert database.stage_counts()["variants"] == 1
+
+    result = build_database(
+        database,
+        tmp_path / "candidate.db",
+        tmp_path / "quality-report.json",
+        tmp_path / "sources.json",
+    )
+    assert (result.sentence_count, result.variant_count) == (1, 3)
+
+
+def test_successful_translation_repair_materializes_cached_variants(tmp_path: Path) -> None:
+    database = _selected_database(
+        tmp_path,
+        ("The train arrives at 9:30 each morning.",),
+        cached_variants=True,
+    )
+    assert run_translation_stage(database, FakeTranslator(), batch_size=1) == 1
+    assert database.stage_counts().get("variants", 0) == 0
+
+    assert database.apply_translation_repair(
+        1,
+        translation="火车每天早上9:30到达。",
+        issues=(),
+        review_note="补回时间",
+    ) is True
+
+    assert database.stage_counts()["translate"] == 1
+    assert database.stage_counts()["variants"] == 1
+
+
 def test_import_is_recoverable_per_line_and_revalidates_failed_repair(tmp_path: Path) -> None:
     database = _selected_database(
         tmp_path,
@@ -222,6 +265,7 @@ def test_stale_selection_generation_cannot_checkpoint_translation(tmp_path: Path
         )
 
     assert database.stage_counts().get("translate", 0) == 0
+    assert database.stage_counts().get("variants", 0) == 0
     assert database.translation_repairs() == []
 
 
@@ -291,7 +335,12 @@ def test_initialize_clears_orphan_repair_and_generation_without_select(tmp_path:
     assert repair_count == (0,)
 
 
-def _selected_database(tmp_path: Path, texts: tuple[str, ...]) -> WorkDatabase:
+def _selected_database(
+    tmp_path: Path,
+    texts: tuple[str, ...],
+    *,
+    cached_variants: bool = False,
+) -> WorkDatabase:
     database = WorkDatabase(tmp_path / "work.db")
     database.initialize()
     item_ids: list[int] = []
@@ -316,7 +365,21 @@ def _selected_database(tmp_path: Path, texts: tuple[str, ...]) -> WorkDatabase:
     database.replace_stage(
         "select",
         [
-            (item_id, {"top_scene": "travel", "sub_scene": "travel_transport"})
+            (
+                item_id,
+                {
+                    "top_scene": "travel",
+                    "sub_scene": "travel_transport",
+                    **(
+                        {
+                            "variant_gate_version": 1,
+                            **generate_variant_payload(texts[item_id - 1]),
+                        }
+                        if cached_variants
+                        else {}
+                    ),
+                },
+            )
             for item_id in item_ids
         ],
         model_version="selector-v1",

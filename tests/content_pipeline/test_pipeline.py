@@ -4,19 +4,26 @@ import bz2
 import hashlib
 import json
 import sqlite3
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
 
 import tools.content_pipeline.builder as builder
+import tools.content_pipeline.candidates as candidates
 from tools.content_pipeline.builder import BuildError, build_database
 from tools.content_pipeline.candidates import generate_variants
 from tools.content_pipeline.categorize import CategoryClassifier, SceneClassifier
 from tools.content_pipeline.clean import clean_sentence, normalized_hash, rejection_reason
 from tools.content_pipeline.collector import SourceConfig, collect_sources, load_source_configs
-from tools.content_pipeline.models import BuildResult, CollectedSentence
-from tools.content_pipeline.scenes import SCENES
-from tools.content_pipeline.selection import curate_balanced, curate_category, is_near_duplicate
+from tools.content_pipeline.models import BuildResult, CollectedSentence, QuestionVariant
+from tools.content_pipeline.scenes import SCENES, SceneDefinition
+from tools.content_pipeline.selection import (
+    curate_balanced,
+    curate_category,
+    is_near_duplicate,
+    select_scene_quota,
+)
 from tools.content_pipeline.snapshot import load_snapshot, write_snapshot
 from tools.content_pipeline.tatoeba import iter_tatoeba_detailed
 from tools.content_pipeline.wikinews import iter_wikinews_extracts
@@ -238,6 +245,125 @@ def test_generate_variants_returns_three_distinct_exact_spans_with_increasing_sc
         )
         assert rebuilt == original
     assert any(item.blank_count > 1 for item in variants)
+
+
+def test_variant_payload_rejects_missing_difficulty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        candidates,
+        "generate_variants",
+        lambda _sentence: (
+            QuestionVariant("easy", 0, 5, "alpha", 1, 1.0, "词频实词"),
+            QuestionVariant("easy", 6, 10, "beta", 1, 2.0, "词频实词"),
+            QuestionVariant("hard", 11, 16, "gamma", 1, 3.0, "词频实词"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="easy/medium/hard"):
+        candidates.generate_variant_payload("alpha beta gamma")
+
+
+def test_variant_payload_rejects_answer_span_that_cannot_restore_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        candidates,
+        "generate_variants",
+        lambda _sentence: (
+            QuestionVariant("easy", 0, 5, "alpha", 1, 1.0, "词频实词"),
+            QuestionVariant("medium", 6, 10, "beta", 1, 2.0, "词频实词"),
+            QuestionVariant("hard", 0, 5, "gamma", 1, 3.0, "词频实词"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="区间"):
+        candidates.generate_variant_payload("alpha beta gamma")
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "message"),
+    [
+        ("score", True, "分值"),
+        ("score", None, "分值"),
+        ("rationale", None, "说明"),
+        ("aliases", None, "别名"),
+        ("aliases", (None,), "别名"),
+    ],
+)
+def test_variant_payload_wraps_invalid_generated_types_as_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    bad_value: object,
+    message: str,
+) -> None:
+    variants = (
+        QuestionVariant("easy", 0, 5, "alpha", 1, 1.0, "词频实词"),
+        QuestionVariant("medium", 6, 10, "beta", 1, 2.0, "词频实词"),
+        QuestionVariant("hard", 11, 16, "gamma", 1, 3.0, "词频实词"),
+    )
+    malformed = replace(variants[1], **{field: bad_value})
+    monkeypatch.setattr(
+        candidates,
+        "generate_variants",
+        lambda _sentence: (variants[0], malformed, variants[2]),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        candidates.generate_variant_payload("alpha beta gamma")
+
+
+@pytest.mark.parametrize(
+    "generated",
+    [
+        None,
+        [object(), object(), object()],
+    ],
+)
+def test_variant_payload_rejects_malformed_generator_container_as_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+    generated: object,
+) -> None:
+    monkeypatch.setattr(candidates, "generate_variants", lambda _sentence: generated)
+
+    with pytest.raises(ValueError):
+        candidates.generate_variant_payload("alpha beta gamma")
+
+
+def test_variant_payload_rejects_huge_integer_score_as_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    variants = (
+        QuestionVariant("easy", 0, 5, "alpha", 1, 1.0, "词频实词"),
+        QuestionVariant("medium", 6, 10, "beta", 1, 10**400, "词频实词"),
+        QuestionVariant("hard", 11, 16, "gamma", 1, 3.0, "词频实词"),
+    )
+    monkeypatch.setattr(candidates, "generate_variants", lambda _sentence: variants)
+
+    with pytest.raises(ValueError, match="分值"):
+        candidates.generate_variant_payload("alpha beta gamma")
+
+
+def test_spacy_pipeline_is_reused_across_variant_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import spacy
+
+    calls = 0
+
+    def fake_blank(_language: str):
+        nonlocal calls
+        calls += 1
+        return lambda _sentence: ()
+
+    candidates._spacy_pipeline.cache_clear()
+    monkeypatch.setattr(spacy, "blank", fake_blank)
+
+    candidates._spacy_pos_bonus("The first sentence is ready.")
+    candidates._spacy_pos_bonus("The second sentence is ready.")
+
+    assert calls == 1
+    candidates._spacy_pipeline.cache_clear()
 
 
 def test_generate_variants_adds_common_contraction_aliases() -> None:
@@ -579,6 +705,60 @@ def test_curate_single_category_is_deterministic_and_exact() -> None:
 
     assert len(forward) == 2
     assert [item.text for item in forward] == [item.text for item in backward]
+
+
+def test_scene_selection_preserves_full_pool_rank_gaps_after_kernel_reduction() -> None:
+    @dataclass(frozen=True)
+    class RankedRow:
+        id: int
+        source_name: str
+        source_author: str
+        confidence: float
+        selection_rank: int
+        text: str
+        top_scene: str = "test"
+        sub_scene: str = "test_scene"
+        protected: bool = False
+
+    rows = [
+        RankedRow(
+            1,
+            "source-1",
+            "author-1",
+            0.75,
+            0,
+            "sentence 116 1 words alpha beta gamma.",
+        ),
+        RankedRow(
+            7,
+            "source-1",
+            "author-0",
+            0.75,
+            1,
+            "sentence 116 7 words alpha beta gamma.",
+        ),
+        RankedRow(
+            9,
+            "source-0",
+            "author-1",
+            0.25,
+            4,
+            "sentence 116 9 words alpha beta gamma.",
+        ),
+        RankedRow(
+            5,
+            "source-0",
+            "author-0",
+            0.25,
+            6,
+            "sentence 116 5 words alpha beta gamma.",
+        ),
+    ]
+    scene = SceneDefinition("test", "测试", "test_scene", "测试场景", 2)
+
+    selected = select_scene_quota(scene, rows)
+
+    assert [row.id for row in selected] == [7, 9]
 
 
 def test_builder_writes_scene_metadata_stable_ids_and_query_indexes(tmp_path: Path) -> None:
