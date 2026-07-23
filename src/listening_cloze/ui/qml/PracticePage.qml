@@ -17,6 +17,7 @@ Item {
     property bool playbackStarted: false
     property real playbackProgress: 0
     property int playbackGeneration: 0
+    property bool translationPreviewVisible: false
     readonly property int sentenceLength: (controller ? controller.sentencePrefix.length
         + controller.sentenceSuffix.length : 0) + blankCount * 16
     readonly property real waveformScale: sentenceLength > 130 ? 0.58
@@ -127,6 +128,7 @@ Item {
         }
         function onQuestionChanged() {
             page.clearAnswers()
+            page.translationPreviewVisible = false
         }
         function onAudioRequested(_questionId, _rate) {
             if (soundEffect.source.toString() === "")
@@ -473,7 +475,8 @@ Item {
                     objectName: "translationPanel"
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? translationText.implicitHeight + 30 : 0
-                    visible: (page.visualCorrect || page.state === "revealed") && page.controller
+                    visible: (page.translationPreviewVisible || page.visualCorrect
+                              || page.state === "revealed") && page.controller
                              && page.controller.sentenceTranslation.length > 0
                     radius: 12
                     color: "#F1F8FF"
@@ -499,6 +502,25 @@ Item {
                         objectName: "submitButton"
                         text: page.controller && page.controller.canAdvance ? "下一题" : "检查答案"
                         onClicked: page.submitOrAdvance()
+                    }
+                    Button {
+                        id: translationToggleButton
+                        objectName: "translationToggleButton"
+                        text: page.translationPreviewVisible ? "隐藏中文" : "显示中文"
+                        flat: true
+                        visible: !page.answered
+                        enabled: page.controller
+                                 && page.controller.sentenceTranslation.length > 0
+                        contentItem: Text {
+                            text: parent.text
+                            color: parent.enabled ? "#0A6DF0" : "#A4ADBB"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 17
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: page.translationPreviewVisible =
+                                   !page.translationPreviewVisible
                     }
                     Button {
                         text: "查看答案"

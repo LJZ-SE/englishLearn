@@ -507,6 +507,7 @@ def test_main_qml_loads_and_exposes_primary_practice_controls(qtbot, qtlog) -> N
         "speedSelector",
         "answerFields",
         "translationPanel",
+        "translationToggleButton",
         "submitButton",
         "mascot",
         "progressTrack",
@@ -574,8 +575,10 @@ def test_practice_shows_chinese_translation_after_reveal_or_correct_answer() -> 
     source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
 
     assert "中文翻译" in source
-    assert 'page.visualCorrect || page.state === "revealed"' in source
+    assert "page.translationPreviewVisible || page.visualCorrect" in source
+    assert 'page.state === "revealed"' in source
     assert "sentenceTranslation" in source
+    assert "page.translationPreviewVisible = false" in source
 
 
 @pytest.mark.qt_serial
@@ -1011,3 +1014,66 @@ def test_correct_answer_reveals_the_full_sentence_translation(tmp_path, qtbot) -
     QCoreApplication.processEvents()
 
     assert translation_panel.property("visible") is True
+
+
+@pytest.mark.qt_serial
+def test_translation_button_only_toggles_translation_visibility(tmp_path, qtbot) -> None:
+    sentence = "They listen today."
+    answer = "listen"
+    question = ContentQuestion(
+        id="q-translation-preview",
+        sentence_id="s-translation-preview",
+        sentence_text=sentence,
+        category="daily",
+        source_url="https://example.test/translation-preview",
+        normalized_hash="translation-preview-hash",
+        difficulty="easy",
+        answer_start=sentence.index(answer),
+        answer_end=sentence.index(answer) + len(answer),
+        canonical_answer=answer,
+        answer_word_count=1,
+        difficulty_score=1.0,
+        rationale="翻译预览不改变答题状态",
+        aliases=(),
+        translation_zh="他们今天听了。",
+    )
+
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    controller.startQuantitative("daily", "easy", 1)
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"backend": controller})
+    engine.load(ui_path("Main.qml"))
+    root = engine.rootObjects()[0]
+    QCoreApplication.processEvents()
+
+    translation_button = root.findChild(QQuickItem, "translationToggleButton")
+    translation_panel = root.findChild(QQuickItem, "translationPanel")
+    answer_input = _find_visual_item(root, "answerInput0")
+    assert translation_button is not None
+    assert translation_panel is not None
+    assert answer_input is not None
+    assert translation_panel.property("visible") is False
+    assert answer_input.property("text") == ""
+    assert controller.feedbackState == "idle"
+
+    QMetaObject.invokeMethod(translation_button, "clicked")
+    QCoreApplication.processEvents()
+
+    assert translation_panel.property("visible") is True
+    assert answer_input.property("text") == ""
+    assert controller.feedbackState == "idle"
+    assert controller.progressStates == ["current"]
+
+    QMetaObject.invokeMethod(translation_button, "clicked")
+    QCoreApplication.processEvents()
+
+    assert translation_panel.property("visible") is False
+    assert answer_input.property("text") == ""
+    assert controller.feedbackState == "idle"
