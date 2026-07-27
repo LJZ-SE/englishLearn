@@ -779,6 +779,22 @@ def test_compact_practice_header_keeps_essential_controls_inside_window(
         assert offline_badge is not None
         assert offline_badge.property("visible") is False
 
+    back_button = root.findChild(QQuickItem, "backHomeButton")
+    back_icon = root.findChild(QQuickItem, "practiceBackHomeIcon")
+    back_label = root.findChild(QQuickItem, "practiceBackHomeLabel")
+    assert back_button is not None
+    assert back_icon is not None
+    assert back_label is not None
+    icon_center = back_icon.mapToItem(
+        back_button,
+        QPointF(back_icon.width() / 2, back_icon.height() / 2),
+    )
+    label_center = back_label.mapToItem(
+        back_button,
+        QPointF(back_label.width() / 2, back_label.height() / 2),
+    )
+    assert abs(icon_center.y() - label_center.y()) <= 1
+
 
 def test_main_qml_uses_empty_scene_placeholder_without_backend() -> None:
     source = ui_path("Main.qml").read_text(encoding="utf-8")

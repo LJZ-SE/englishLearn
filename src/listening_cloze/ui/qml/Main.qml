@@ -121,13 +121,24 @@ ApplicationWindow {
                     color: backHomeButton.hovered ? "#F2F7FD" : "#FAFBFC"
                     border.color: AppTheme.border
                 }
-                contentItem: Text {
-                    text: "←  主页"
-                    color: "#354258"
-                    font.family: AppTheme.fontFamily
-                    font.pixelSize: 15
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: RowLayout {
+                    anchors.centerIn: parent
+                    spacing: 7
+                    AppIcon {
+                        name: "arrow_back"
+                        iconColor: "#354258"
+                        iconSize: 18
+                        Layout.preferredWidth: 18
+                        Layout.preferredHeight: 18
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Text {
+                        text: "主页"
+                        color: "#354258"
+                        font.family: AppTheme.fontFamily
+                        font.pixelSize: 15
+                        Layout.alignment: Qt.AlignVCenter
+                    }
                 }
                 onClicked: {
                     appWindow.learningPage = "home"
@@ -407,21 +418,25 @@ ApplicationWindow {
                         color: practiceBackHomeButton.hovered
                                ? AppTheme.primarySoft : "transparent"
                     }
-                    contentItem: Row {
+                    contentItem: RowLayout {
+                        anchors.centerIn: parent
                         spacing: 7
                         AppIcon {
+                            objectName: "practiceBackHomeIcon"
                             name: "arrow_back"
                             iconColor: "#354258"
                             iconSize: 18
-                            width: 19
-                            height: 40
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
+                            objectName: "practiceBackHomeLabel"
                             text: "返回主页"
                             color: "#354258"
                             font.family: AppTheme.fontFamily
                             font.pixelSize: 15
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
                         }
                     }
                     onClicked: appWindow.navigateFromPractice("home")

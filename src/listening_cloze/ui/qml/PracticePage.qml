@@ -246,7 +246,7 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: page.compactContent ? 164
                                                 : page.denseQuestionLayout
-                                                  ? 182 : 214
+                                                  ? 172 : 214
                         spacing: page.compactContent ? 14 : 22
 
                         Rectangle {
@@ -478,7 +478,7 @@ Item {
                             visible: practiceScroll.availableWidth >= 920
                             Layout.preferredWidth: visible ? 184 : 0
                             Layout.preferredHeight:
-                                page.denseQuestionLayout ? 184 : 200
+                                page.denseQuestionLayout ? 172 : 200
                             Layout.alignment: Qt.AlignVCenter
                             Layout.rightMargin: 12
                             spacing: -8
@@ -513,7 +513,7 @@ Item {
                                 Layout.preferredWidth:
                                     page.denseQuestionLayout ? 158 : 174
                                 Layout.preferredHeight:
-                                    page.denseQuestionLayout ? 134 : 150
+                                    page.denseQuestionLayout ? 122 : 150
                                 mood: page.visualCorrect ? "correct"
                                       : page.visualWrong ? "incorrect"
                                       : page.state
