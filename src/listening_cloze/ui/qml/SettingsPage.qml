@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Item {
     id: page
     property var controller
+    property var closeAction
 
     Dialog {
         id: resetDialog
@@ -16,7 +17,7 @@ Item {
         onAccepted: if (page.controller) page.controller.resetLearningRecords(true)
         Text {
             width: 360
-            text: "将删除答题记录和未完成练习，但保留应用设置。此操作不可撤销。"
+            text: "将删除答题记录、未完成练习、错题本和词汇本，但保留应用设置。此操作不可撤销。"
             wrapMode: Text.WordWrap
             color: "#39465C"
         }
@@ -24,7 +25,7 @@ Item {
 
     Rectangle {
         width: Math.min(parent.width - 120, 820)
-        height: 520
+        height: 610
         anchors.centerIn: parent
         radius: 20
         color: "white"
@@ -34,8 +35,8 @@ Item {
             anchors.fill: parent
             anchors.margins: 38
             spacing: 22
-            Text { text: "设置"; color: "#182236"; font.pixelSize: 30; font.bold: true; font.family: "Segoe UI" }
-            Text { text: "默认语速"; color: "#39465C"; font.pixelSize: 16; font.family: "Segoe UI" }
+            Text { text: "设置"; color: "#182236"; font.pixelSize: 30; font.bold: true; font.family: AppTheme.fontFamily }
+            Text { text: "默认语速"; color: "#39465C"; font.pixelSize: 16; font.family: AppTheme.fontFamily }
             RowLayout {
                 spacing: 10
                 Repeater {
@@ -48,7 +49,27 @@ Item {
                     }
                 }
             }
-            Text { text: "音量"; color: "#39465C"; font.pixelSize: 16; font.family: "Segoe UI" }
+            Text {
+                text: "每日学习目标"
+                color: "#39465C"
+                font.pixelSize: 16
+                font.family: AppTheme.fontFamily
+            }
+            RowLayout {
+                spacing: 10
+                Repeater {
+                    model: [10, 20, 30, 50]
+                    ChoiceChip {
+                        required property int modelData
+                        text: modelData + " 题"
+                        selected: page.controller
+                                  && page.controller.dailyQuestionGoal === modelData
+                        onClicked: if (page.controller)
+                                       page.controller.setDailyQuestionGoal(modelData)
+                    }
+                }
+            }
+            Text { text: "音量"; color: "#39465C"; font.pixelSize: 16; font.family: AppTheme.fontFamily }
             Slider {
                 Layout.fillWidth: true
                 from: 0
@@ -84,7 +105,12 @@ Item {
                 PrimaryButton {
                     objectName: "settingsDoneButton"
                     text: "完成"
-                    onClicked: if (page.controller) page.controller.closeSettings()
+                    onClicked: {
+                        if (page.closeAction)
+                            page.closeAction()
+                        else if (page.controller)
+                            page.controller.closeSettings()
+                    }
                 }
             }
         }

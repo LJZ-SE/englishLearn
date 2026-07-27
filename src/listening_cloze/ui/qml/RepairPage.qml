@@ -28,7 +28,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 text: "离线资源需要修复"
                 color: "#1B2639"
-                font.family: "Segoe UI"
+                font.family: AppTheme.fontFamily
                 font.pixelSize: 28
                 font.bold: true
             }
@@ -36,7 +36,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 text: "以下文件缺失或损坏。应用不会在运行时联网下载，请重新安装完整资源包。"
                 color: "#69758A"
-                font.family: "Segoe UI"
+                font.family: AppTheme.fontFamily
                 font.pixelSize: 15
                 wrapMode: Text.WordWrap
                 Layout.maximumWidth: 620
@@ -56,7 +56,7 @@ Item {
                         required property var modelData
                         spacing: 10
                         Text { text: "●"; color: "#F04438"; font.pixelSize: 13 }
-                        Text { text: modelData; color: "#3A465A"; font.family: "Segoe UI"; font.pixelSize: 15 }
+                        Text { text: modelData; color: "#3A465A"; font.family: AppTheme.fontFamily; font.pixelSize: 15 }
                     }
                 }
             }
@@ -64,7 +64,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 text: "学习记录保存在独立目录中，重新安装不会覆盖记录。"
                 color: "#8290A4"
-                font.family: "Segoe UI"
+                font.family: AppTheme.fontFamily
                 font.pixelSize: 13
             }
         }

@@ -22,9 +22,9 @@ Button {
     contentItem: Text {
         text: control.text
         color: control.secondary ? "#0A6DF0" : "white"
-        font.family: "Segoe UI"
+        font.family: AppTheme.fontFamily
         font.pixelSize: 18
-        font.weight: Font.DemiBold
+        font.weight: Font.Medium
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }

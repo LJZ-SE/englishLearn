@@ -1,4 +1,5 @@
 import random
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -560,6 +561,197 @@ def test_quantitative_wrong_questions_can_start_immediate_review(tmp_path: Path)
     assert len(engine.items) == 1
     assert engine.current.question.id == wrong_id
     assert engine.stats.completed == 0
+
+
+def test_first_result_updates_daily_activity_and_session_duration(tmp_path: Path) -> None:
+    current_time = [100.0]
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "word")]),
+        users,
+        rng=random.Random(20),
+        clock=lambda: current_time[0],
+        local_date=lambda: date(2026, 7, 24),
+    )
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=1)
+
+    current_time[0] += 12
+    engine.submit(["word"])
+
+    activity = users.get_daily_activity("2026-07-24")
+    session = users.load_unfinished_session()
+    assert activity is not None
+    assert activity.completed_count == 1
+    assert activity.correct_count == 1
+    assert activity.duration_seconds == 12
+    assert session is not None
+    assert session.duration_seconds == 12
+
+
+def test_paused_session_does_not_count_time_spent_outside_practice(tmp_path: Path) -> None:
+    current_time = [100.0]
+    current_wall_time = [datetime(2026, 7, 24, 9, 0, 0)]
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "word")]),
+        users,
+        rng=random.Random(26),
+        clock=lambda: current_time[0],
+        local_now=lambda: current_wall_time[0],
+    )
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=1)
+
+    current_time[0] += 8
+    current_wall_time[0] += timedelta(seconds=8)
+    engine.pause_timing()
+    current_time[0] += 120
+    current_wall_time[0] += timedelta(seconds=120)
+    engine.resume_timing()
+    current_time[0] += 4
+    current_wall_time[0] += timedelta(seconds=4)
+    engine.pause_timing()
+
+    activity = users.get_daily_activity("2026-07-24")
+    session = users.load_unfinished_session()
+    assert activity is not None
+    assert activity.duration_seconds == 12
+    assert session is not None
+    assert session.duration_seconds == 12
+
+
+def test_active_duration_is_split_at_local_midnight(tmp_path: Path) -> None:
+    current_time = [100.0]
+    current_wall_time = [datetime(2026, 7, 24, 23, 59, 50)]
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "word")]),
+        users,
+        rng=random.Random(27),
+        clock=lambda: current_time[0],
+        local_now=lambda: current_wall_time[0],
+    )
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=1)
+
+    current_time[0] += 20
+    current_wall_time[0] += timedelta(seconds=20)
+    engine.pause_timing()
+
+    before_midnight = users.get_daily_activity("2026-07-24")
+    after_midnight = users.get_daily_activity("2026-07-25")
+    assert before_midnight is not None
+    assert after_midnight is not None
+    assert before_midnight.duration_seconds == 10
+    assert after_midnight.duration_seconds == 10
+
+
+def test_first_wrong_answer_adds_complete_phrase_to_vocabulary_once(tmp_path: Path) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "take part in")]),
+        users,
+        rng=random.Random(21),
+    )
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=1)
+
+    engine.submit(["wrong", "answer", "here"])
+    engine.reveal_answer()
+
+    entries = users.list_vocabulary()
+    assert len(entries) == 1
+    assert entries[0].term == "take part in"
+    assert entries[0].reason == "wrong"
+    assert entries[0].encounter_count == 1
+
+
+def test_revealing_before_submission_adds_vocabulary_with_revealed_reason(
+    tmp_path: Path,
+) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "take part in")]),
+        users,
+        rng=random.Random(22),
+    )
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=1)
+
+    engine.reveal_answer()
+
+    entry = users.list_vocabulary()[0]
+    assert entry.term == "take part in"
+    assert entry.reason == "revealed"
+
+
+def test_wrong_book_review_marks_question_mastered_after_three_sessions(
+    tmp_path: Path,
+) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    users.record_attempt("q1", is_correct=False)
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "word")]),
+        users,
+        rng=random.Random(23),
+    )
+
+    for expected_streak in (1, 2, 3):
+        engine.start_wrong_review(["q1"])
+        engine.submit(["word"])
+        progress = users.get_question_progress("q1")
+        assert progress is not None
+        assert progress.review_correct_streak == expected_streak
+
+    assert progress.mastered_at is not None
+    assert users.list_pending_progress() == []
+
+
+def test_vocabulary_review_restores_source_questions_in_requested_order(
+    tmp_path: Path,
+) -> None:
+    questions = [
+        _question("q1", "easy", "listen"),
+        _question("q2", "easy", "take part in"),
+    ]
+    engine = PracticeEngine(
+        FakeContentRepository(questions),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(24),
+    )
+
+    engine.start_vocabulary_review(["q2", "q1"])
+
+    assert [item.question.id for item in engine.items] == ["q2", "q1"]
+    assert engine.mode is PracticeMode.QUANTITATIVE
+
+
+def test_saved_review_skips_questions_that_are_no_longer_in_content(
+    tmp_path: Path,
+) -> None:
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "listen")]),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(29),
+    )
+
+    engine.start_wrong_review(["missing", "q1"])
+
+    assert [item.question.id for item in engine.items] == ["q1"]
+    assert engine.last_review_skipped_count == 1
+
+
+def test_manual_vocabulary_add_does_not_change_question_result(tmp_path: Path) -> None:
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "easy", "take part in")]),
+        users,
+        rng=random.Random(25),
+    )
+    engine.start_quantitative(category="daily", difficulty=Difficulty.EASY, count=1)
+
+    engine.add_current_to_vocabulary()
+
+    assert engine.current_in_vocabulary
+    assert engine.stats.completed == 0
+    assert users.get_question_progress("q1") is None
+    assert users.list_vocabulary()[0].reason == "manual"
 
 
 def _question(

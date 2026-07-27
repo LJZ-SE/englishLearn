@@ -41,7 +41,7 @@ Item {
         Text {
             text: "场景"
             color: "#39465C"
-            font.family: "Segoe UI"
+            font.family: AppTheme.fontFamily
             font.pixelSize: 14
         }
 
@@ -98,7 +98,7 @@ Item {
             visible: root.sceneCatalog.length === 0
             text: "暂无可用场景，请检查本地题库。"
             color: "#8793A7"
-            font.family: "Segoe UI"
+            font.family: AppTheme.fontFamily
             font.pixelSize: 14
         }
 
@@ -106,7 +106,7 @@ Item {
             visible: root.selectedChildren.length > 0
             text: "细分场景"
             color: "#536178"
-            font.family: "Segoe UI"
+            font.family: AppTheme.fontFamily
             font.pixelSize: 13
         }
 

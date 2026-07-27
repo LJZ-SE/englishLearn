@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 3
 VALID_SESSION_MODES = frozenset({"quantitative", "endless"})
 VALID_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 MAX_RANDOM_KEY = (1 << 63) - 1
@@ -53,6 +54,9 @@ class QuestionProgress:
     view_answer_count: int
     first_answered_at: str | None
     updated_at: str
+    review_correct_streak: int
+    mastered_at: str | None
+    first_wrong_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +66,38 @@ class SessionRecord:
     state: dict[str, Any]
     completed: bool
     created_at: str
+    updated_at: str
+    practice_type: str
+    top_scene: str
+    sub_scene: str
+    difficulty: str
+    target_count: int | None
+    completed_count: int
+    correct_count: int
+    duration_seconds: int
+    completed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyEntry:
+    entry_id: str
+    normalized_term: str
+    term: str
+    source_question_id: str
+    sentence: str
+    translation: str
+    reason: str
+    encounter_count: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class DailyActivity:
+    activity_date: str
+    completed_count: int
+    correct_count: int
+    duration_seconds: int
     updated_at: str
 
 
@@ -466,7 +502,125 @@ def _create_schema_v1(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {0: _create_schema_v1}
+def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+    statements = (
+        "ALTER TABLE question_progress ADD COLUMN "
+        "review_correct_streak INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE question_progress ADD COLUMN mastered_at TEXT",
+        "ALTER TABLE question_progress ADD COLUMN first_wrong_at TEXT",
+        "ALTER TABLE sessions ADD COLUMN practice_type TEXT",
+        "ALTER TABLE sessions ADD COLUMN top_scene TEXT",
+        "ALTER TABLE sessions ADD COLUMN sub_scene TEXT",
+        "ALTER TABLE sessions ADD COLUMN difficulty TEXT",
+        "ALTER TABLE sessions ADD COLUMN target_count INTEGER",
+        "ALTER TABLE sessions ADD COLUMN completed_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN correct_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN completed_at TEXT",
+        """
+        CREATE TABLE daily_activity (
+            activity_date TEXT PRIMARY KEY,
+            completed_count INTEGER NOT NULL DEFAULT 0 CHECK(completed_count >= 0),
+            correct_count INTEGER NOT NULL DEFAULT 0 CHECK(correct_count >= 0),
+            duration_seconds INTEGER NOT NULL DEFAULT 0 CHECK(duration_seconds >= 0),
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE vocabulary_entries (
+            entry_id TEXT PRIMARY KEY,
+            normalized_term TEXT NOT NULL UNIQUE,
+            term TEXT NOT NULL,
+            source_question_id TEXT NOT NULL,
+            sentence TEXT NOT NULL,
+            translation TEXT NOT NULL,
+            reason TEXT NOT NULL CHECK(reason IN ('wrong', 'revealed', 'manual')),
+            encounter_count INTEGER NOT NULL DEFAULT 1 CHECK(encounter_count >= 1),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_sessions_history ON sessions(updated_at DESC, session_id DESC)",
+        "CREATE INDEX idx_progress_pending "
+        "ON question_progress(first_correct, mastered_at, updated_at DESC)",
+        "CREATE INDEX idx_vocabulary_updated "
+        "ON vocabulary_entries(updated_at DESC, entry_id DESC)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+    connection.execute(
+        """
+        UPDATE question_progress
+        SET first_wrong_at = first_answered_at
+        WHERE first_correct = 0 AND first_wrong_at IS NULL
+        """
+    )
+    rows = connection.execute(
+        "SELECT session_id, mode, state_json, completed, updated_at FROM sessions"
+    ).fetchall()
+    for row in rows:
+        state = json.loads(row["state_json"])
+        raw_stats = state.get("stats", {})
+        stats = raw_stats if isinstance(raw_stats, dict) else {}
+        question_ids = state.get("question_ids", [])
+        target_count = state.get("target_count")
+        if target_count is None and row["mode"] == "quantitative" and isinstance(
+            question_ids, list
+        ):
+            target_count = len(question_ids)
+        connection.execute(
+            """
+            UPDATE sessions
+            SET practice_type = ?,
+                top_scene = ?,
+                sub_scene = ?,
+                difficulty = ?,
+                target_count = ?,
+                completed_count = ?,
+                correct_count = ?,
+                completed_at = CASE WHEN completed = 1 THEN updated_at ELSE NULL END
+            WHERE session_id = ?
+            """,
+            (
+                row["mode"],
+                state.get("top_scene"),
+                state.get("sub_scene"),
+                state.get("difficulty"),
+                target_count,
+                int(stats.get("completed", 0)),
+                int(stats.get("correct", 0)),
+                row["session_id"],
+            ),
+        )
+
+
+def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        INSERT INTO daily_activity(
+            activity_date, completed_count, correct_count,
+            duration_seconds, updated_at
+        )
+        SELECT
+            substr(updated_at, 1, 10),
+            SUM(completed_count),
+            SUM(correct_count),
+            SUM(duration_seconds),
+            MAX(updated_at)
+        FROM sessions
+        WHERE completed_count > 0
+        GROUP BY substr(updated_at, 1, 10)
+        ON CONFLICT(activity_date) DO NOTHING
+        """
+    )
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    0: _create_schema_v1,
+    1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
+}
 
 
 class UserRepository:
@@ -517,13 +671,15 @@ class UserRepository:
 
     def record_attempt(self, question_id: str, *, is_correct: bool) -> QuestionProgress:
         now = _utc_now()
+        first_wrong_at = None if is_correct else now
         with self._connection() as connection, connection:
             connection.execute(
                 """
                 INSERT INTO question_progress(
                     question_id, first_correct, attempt_count, replay_count,
-                    view_answer_count, first_answered_at, updated_at
-                ) VALUES (?, ?, 1, 0, 0, ?, ?)
+                    view_answer_count, first_answered_at, updated_at,
+                    review_correct_streak, mastered_at, first_wrong_at
+                ) VALUES (?, ?, 1, 0, 0, ?, ?, 0, NULL, ?)
                 ON CONFLICT(question_id) DO UPDATE SET
                     first_correct = COALESCE(
                         question_progress.first_correct,
@@ -534,9 +690,24 @@ class UserRepository:
                         question_progress.first_answered_at,
                         excluded.first_answered_at
                     ),
+                    review_correct_streak = CASE
+                        WHEN excluded.first_correct = 0 THEN 0
+                        ELSE question_progress.review_correct_streak
+                    END,
+                    mastered_at = CASE
+                        WHEN excluded.first_correct = 0 THEN NULL
+                        ELSE question_progress.mastered_at
+                    END,
+                    first_wrong_at = CASE
+                        WHEN excluded.first_correct = 0 THEN COALESCE(
+                            question_progress.first_wrong_at,
+                            excluded.first_wrong_at
+                        )
+                        ELSE question_progress.first_wrong_at
+                    END,
                     updated_at = excluded.updated_at
                 """,
-                (question_id, int(is_correct), now, now),
+                (question_id, int(is_correct), now, now, first_wrong_at),
             )
             return self._get_question_progress(connection, question_id)
 
@@ -564,16 +735,77 @@ class UserRepository:
                 """
                 INSERT INTO question_progress(
                     question_id, first_correct, attempt_count, replay_count,
-                    view_answer_count, first_answered_at, updated_at
-                ) VALUES (?, 0, 0, 0, 1, ?, ?)
+                    view_answer_count, first_answered_at, updated_at,
+                    review_correct_streak, mastered_at, first_wrong_at
+                ) VALUES (?, 0, 0, 0, 1, ?, ?, 0, NULL, ?)
                 ON CONFLICT(question_id) DO UPDATE SET
                     first_correct = COALESCE(question_progress.first_correct, 0),
                     view_answer_count = question_progress.view_answer_count + 1,
                     first_answered_at = COALESCE(question_progress.first_answered_at, ?),
+                    review_correct_streak = 0,
+                    mastered_at = NULL,
+                    first_wrong_at = COALESCE(
+                        question_progress.first_wrong_at,
+                        excluded.first_wrong_at
+                    ),
                     updated_at = excluded.updated_at
                 """,
-                (question_id, now, now, now),
+                (question_id, now, now, now, now),
             )
+            return self._get_question_progress(connection, question_id)
+
+    def record_review_result(
+        self,
+        question_id: str,
+        *,
+        is_correct: bool,
+    ) -> QuestionProgress:
+        now = _utc_now()
+        with self._connection() as connection, connection:
+            row = connection.execute(
+                "SELECT review_correct_streak FROM question_progress WHERE question_id = ?",
+                (question_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO question_progress(
+                        question_id, first_correct, attempt_count, replay_count,
+                        view_answer_count, first_answered_at, updated_at,
+                        review_correct_streak, mastered_at, first_wrong_at
+                    ) VALUES (?, 0, 0, 0, 0, ?, ?, 0, NULL, ?)
+                    """,
+                    (question_id, now, now, now),
+                )
+                current_streak = 0
+            else:
+                current_streak = int(row["review_correct_streak"])
+
+            next_streak = min(3, current_streak + 1) if is_correct else 0
+            mastered_at = now if next_streak >= 3 else None
+            connection.execute(
+                """
+                UPDATE question_progress
+                SET review_correct_streak = ?, mastered_at = ?, updated_at = ?
+                WHERE question_id = ?
+                """,
+                (next_streak, mastered_at, now, question_id),
+            )
+            return self._get_question_progress(connection, question_id)
+
+    def mark_mastered(self, question_id: str) -> QuestionProgress:
+        now = _utc_now()
+        with self._connection() as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE question_progress
+                SET mastered_at = ?, updated_at = ?
+                WHERE question_id = ?
+                """,
+                (now, now, question_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(question_id)
             return self._get_question_progress(connection, question_id)
 
     def get_question_progress(self, question_id: str) -> QuestionProgress | None:
@@ -595,6 +827,206 @@ class UserRepository:
         with self._connection() as connection, connection:
             connection.execute("DELETE FROM question_progress")
             connection.execute("DELETE FROM sessions")
+            connection.execute("DELETE FROM daily_activity")
+            connection.execute("DELETE FROM vocabulary_entries")
+
+    def upsert_vocabulary(
+        self,
+        *,
+        term: str,
+        source_question_id: str,
+        sentence: str,
+        translation: str,
+        reason: str,
+    ) -> VocabularyEntry:
+        if reason not in {"wrong", "revealed", "manual"}:
+            raise ValueError(f"不支持的词汇收录原因: {reason}")
+        normalized_term = _normalize_vocabulary_term(term)
+        display_term = " ".join(term.split())
+        if not normalized_term:
+            raise ValueError("词汇或短语不能为空")
+
+        now = _utc_now()
+        entry_id = uuid.uuid4().hex
+        with self._connection() as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO vocabulary_entries(
+                    entry_id, normalized_term, term, source_question_id,
+                    sentence, translation, reason, encounter_count,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(normalized_term) DO UPDATE SET
+                    term = excluded.term,
+                    source_question_id = excluded.source_question_id,
+                    sentence = excluded.sentence,
+                    translation = excluded.translation,
+                    reason = excluded.reason,
+                    encounter_count = vocabulary_entries.encounter_count + 1,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    entry_id,
+                    normalized_term,
+                    display_term,
+                    source_question_id,
+                    sentence,
+                    translation,
+                    reason,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM vocabulary_entries WHERE normalized_term = ?",
+                (normalized_term,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("词汇写入后未能读取")
+        return _vocabulary_from_row(row)
+
+    def remove_vocabulary(self, entry_id: str) -> None:
+        with self._connection() as connection, connection:
+            connection.execute(
+                "DELETE FROM vocabulary_entries WHERE entry_id = ?",
+                (entry_id,),
+            )
+
+    def list_vocabulary(self, *, search_text: str = "") -> list[VocabularyEntry]:
+        query = "SELECT * FROM vocabulary_entries"
+        parameters: tuple[str, ...] = ()
+        normalized_search = _normalize_vocabulary_term(search_text)
+        if normalized_search:
+            query += " WHERE normalized_term LIKE ?"
+            parameters = (f"%{normalized_search}%",)
+        query += " ORDER BY updated_at DESC, entry_id DESC"
+        with self._connection() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [_vocabulary_from_row(row) for row in rows]
+
+    def has_vocabulary(self, term: str) -> bool:
+        normalized_term = _normalize_vocabulary_term(term)
+        if not normalized_term:
+            return False
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM vocabulary_entries WHERE normalized_term = ?",
+                (normalized_term,),
+            ).fetchone()
+        return row is not None
+
+    def record_daily_activity(
+        self,
+        activity_date: str,
+        *,
+        completed_delta: int = 0,
+        correct_delta: int = 0,
+        duration_delta: int = 0,
+    ) -> DailyActivity:
+        deltas = (completed_delta, correct_delta, duration_delta)
+        if any(isinstance(value, bool) or value < 0 for value in deltas):
+            raise ValueError("学习活动增量必须是非负整数")
+        if correct_delta > completed_delta:
+            raise ValueError("正确题数增量不能大于完成题数增量")
+        now = _utc_now()
+        with self._connection() as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO daily_activity(
+                    activity_date, completed_count, correct_count,
+                    duration_seconds, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(activity_date) DO UPDATE SET
+                    completed_count = daily_activity.completed_count
+                                      + excluded.completed_count,
+                    correct_count = daily_activity.correct_count
+                                    + excluded.correct_count,
+                    duration_seconds = daily_activity.duration_seconds
+                                       + excluded.duration_seconds,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    activity_date,
+                    completed_delta,
+                    correct_delta,
+                    duration_delta,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM daily_activity WHERE activity_date = ?",
+                (activity_date,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("学习活动写入后未能读取")
+        return _daily_activity_from_row(row)
+
+    def get_daily_activity(self, activity_date: str) -> DailyActivity | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM daily_activity WHERE activity_date = ?",
+                (activity_date,),
+            ).fetchone()
+        return None if row is None else _daily_activity_from_row(row)
+
+    def list_daily_activity(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[DailyActivity]:
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if start_date is not None:
+            clauses.append("activity_date >= ?")
+            parameters.append(start_date)
+        if end_date is not None:
+            clauses.append("activity_date <= ?")
+            parameters.append(end_date)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM daily_activity{where} ORDER BY activity_date",
+                parameters,
+            ).fetchall()
+        return [_daily_activity_from_row(row) for row in rows]
+
+    def list_sessions(
+        self,
+        *,
+        practice_type: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[SessionRecord]:
+        if offset < 0 or (limit is not None and limit < 1):
+            raise ValueError("会话分页参数无效")
+        query = "SELECT * FROM sessions"
+        parameters: list[str | int] = []
+        if practice_type is not None:
+            query += " WHERE practice_type = ?"
+            parameters.append(practice_type)
+        query += " ORDER BY updated_at DESC, session_id DESC"
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            parameters.extend((limit, offset))
+        elif offset:
+            query += " LIMIT -1 OFFSET ?"
+            parameters.append(offset)
+        with self._connection() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [_session_from_row(row) for row in rows]
+
+    def list_pending_progress(self) -> list[QuestionProgress]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM question_progress
+                WHERE first_correct = 0 AND mastered_at IS NULL
+                ORDER BY COALESCE(first_wrong_at, updated_at) DESC, question_id
+                """
+            ).fetchall()
+        return [_progress_from_row(row) for row in rows]
 
     def get_learning_summary(self) -> dict[str, Any]:
         with self._connection() as connection:
@@ -628,21 +1060,68 @@ class UserRepository:
     ) -> SessionRecord:
         if mode not in VALID_SESSION_MODES:
             raise ValueError(f"不支持的练习模式: {mode}")
-        state_json = _encode_json(dict(state))
+        state_dict = dict(state)
+        state_json = _encode_json(state_dict)
+        raw_stats = state_dict.get("stats", {})
+        stats = raw_stats if isinstance(raw_stats, dict) else {}
+        practice_type = str(state_dict.get("practice_type") or mode)
+        top_scene = str(state_dict.get("top_scene") or "")
+        sub_scene = str(state_dict.get("sub_scene") or "")
+        difficulty = str(state_dict.get("difficulty") or "")
+        target_count = state_dict.get("target_count")
+        if target_count is not None:
+            target_count = int(target_count)
+        completed_count = int(stats.get("completed", 0))
+        correct_count = int(stats.get("correct", 0))
+        duration_seconds = int(state_dict.get("duration_seconds", 0))
         now = _utc_now()
+        completed_at = now if completed else None
         with self._connection() as connection, connection:
             connection.execute(
                 """
                 INSERT INTO sessions(
-                    session_id, mode, state_json, completed, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    session_id, mode, state_json, completed, created_at, updated_at,
+                    practice_type, top_scene, sub_scene, difficulty, target_count,
+                    completed_count, correct_count, duration_seconds, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     mode = excluded.mode,
                     state_json = excluded.state_json,
                     completed = excluded.completed,
+                    practice_type = excluded.practice_type,
+                    top_scene = excluded.top_scene,
+                    sub_scene = excluded.sub_scene,
+                    difficulty = excluded.difficulty,
+                    target_count = excluded.target_count,
+                    completed_count = excluded.completed_count,
+                    correct_count = excluded.correct_count,
+                    duration_seconds = excluded.duration_seconds,
+                    completed_at = CASE
+                        WHEN excluded.completed = 1 THEN COALESCE(
+                            sessions.completed_at,
+                            excluded.completed_at
+                        )
+                        ELSE NULL
+                    END,
                     updated_at = excluded.updated_at
                 """,
-                (session_id, mode, state_json, int(completed), now, now),
+                (
+                    session_id,
+                    mode,
+                    state_json,
+                    int(completed),
+                    now,
+                    now,
+                    practice_type,
+                    top_scene,
+                    sub_scene,
+                    difficulty,
+                    target_count,
+                    completed_count,
+                    correct_count,
+                    duration_seconds,
+                    completed_at,
+                ),
             )
             return self._get_session(connection, session_id)
 
@@ -671,8 +1150,14 @@ class UserRepository:
         now = _utc_now()
         with self._connection() as connection, connection:
             cursor = connection.execute(
-                "UPDATE sessions SET completed = 1, updated_at = ? WHERE session_id = ?",
-                (now, session_id),
+                """
+                UPDATE sessions
+                SET completed = 1,
+                    completed_at = COALESCE(completed_at, ?),
+                    updated_at = ?
+                WHERE session_id = ?
+                """,
+                (now, now, session_id),
             )
             if cursor.rowcount == 0:
                 raise KeyError(session_id)
@@ -774,6 +1259,9 @@ def _progress_from_row(row: sqlite3.Row) -> QuestionProgress:
         view_answer_count=row["view_answer_count"],
         first_answered_at=row["first_answered_at"],
         updated_at=row["updated_at"],
+        review_correct_streak=row["review_correct_streak"],
+        mastered_at=row["mastered_at"],
+        first_wrong_at=row["first_wrong_at"],
     )
 
 
@@ -785,7 +1273,45 @@ def _session_from_row(row: sqlite3.Row) -> SessionRecord:
         completed=bool(row["completed"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        practice_type=row["practice_type"] or row["mode"],
+        top_scene=row["top_scene"] or "",
+        sub_scene=row["sub_scene"] or "",
+        difficulty=row["difficulty"] or "",
+        target_count=row["target_count"],
+        completed_count=row["completed_count"],
+        correct_count=row["correct_count"],
+        duration_seconds=row["duration_seconds"],
+        completed_at=row["completed_at"],
     )
+
+
+def _vocabulary_from_row(row: sqlite3.Row) -> VocabularyEntry:
+    return VocabularyEntry(
+        entry_id=row["entry_id"],
+        normalized_term=row["normalized_term"],
+        term=row["term"],
+        source_question_id=row["source_question_id"],
+        sentence=row["sentence"],
+        translation=row["translation"],
+        reason=row["reason"],
+        encounter_count=row["encounter_count"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _daily_activity_from_row(row: sqlite3.Row) -> DailyActivity:
+    return DailyActivity(
+        activity_date=row["activity_date"],
+        completed_count=row["completed_count"],
+        correct_count=row["correct_count"],
+        duration_seconds=row["duration_seconds"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _normalize_vocabulary_term(term: str) -> str:
+    return " ".join(term.casefold().split())
 
 
 def _encode_json(value: Any) -> str:

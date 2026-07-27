@@ -22,7 +22,7 @@ Item {
             text: page.controller && page.controller.isEndlessSummary
                 ? "无尽模式练习结束" : "这一轮完成了！"
             color: "#182236"
-            font.family: "Segoe UI"
+            font.family: AppTheme.fontFamily
             font.pixelSize: 34
             font.bold: true
         }
@@ -30,7 +30,7 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             text: "每一次认真听，都会让下一句更清晰。"
             color: "#69758A"
-            font.family: "Segoe UI"
+            font.family: AppTheme.fontFamily
             font.pixelSize: 16
         }
         RowLayout {

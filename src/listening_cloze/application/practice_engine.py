@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import random
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timedelta
+from datetime import time as datetime_time
 from enum import StrEnum
 from typing import Protocol
 
@@ -46,6 +49,29 @@ class UserStore(Protocol):
 
     def record_view_answer(self, question_id: str): ...
 
+    def record_review_result(self, question_id: str, *, is_correct: bool): ...
+
+    def record_daily_activity(
+        self,
+        activity_date: str,
+        *,
+        completed_delta: int = 0,
+        correct_delta: int = 0,
+        duration_delta: int = 0,
+    ): ...
+
+    def upsert_vocabulary(
+        self,
+        *,
+        term: str,
+        source_question_id: str,
+        sentence: str,
+        translation: str,
+        reason: str,
+    ): ...
+
+    def has_vocabulary(self, term: str) -> bool: ...
+
     def save_session(
         self,
         session_id: str,
@@ -58,6 +84,8 @@ class UserStore(Protocol):
     def complete_session(self, session_id: str) -> SessionRecord: ...
 
     def load_unfinished_session(self, *, mode: str | None = None) -> SessionRecord | None: ...
+
+    def load_session(self, session_id: str) -> SessionRecord | None: ...
 
     def list_question_progress(self): ...
 
@@ -131,12 +159,26 @@ class PracticeEngine:
         users: UserStore,
         *,
         rng: random.Random | None = None,
+        clock: Callable[[], float] | None = None,
+        local_date: Callable[[], date] | None = None,
+        local_now: Callable[[], datetime] | None = None,
     ) -> None:
         self._content = content
         self._users = users
         self._rng = rng or random.Random()
         self._selector = QuestionSelector(rng=self._rng)
         self._feedback = FeedbackSelector(rng=self._rng)
+        self._clock = clock or time.monotonic
+        if local_now is not None:
+            self._local_now = local_now
+            self._local_date = local_date or (lambda: self._local_now().date())
+        else:
+            self._local_date = local_date or date.today
+            self._local_now = (
+                datetime.now
+                if local_date is None
+                else lambda: datetime.combine(self._local_date(), datetime_time.min)
+            )
         self.mode: PracticeMode | None = None
         self.items: list[PracticeItem] = []
         self.position = 0
@@ -149,6 +191,13 @@ class PracticeEngine:
         self._target_count: int | None = None
         self._queue_needs_rebuild = False
         self._outcomes: list[str] = []
+        self._practice_type = ""
+        self._duration_base_seconds = 0.0
+        self._duration_anchor: float | None = None
+        self._recorded_duration_seconds = 0
+        self._duration_record_anchor = self._local_now()
+        self._duration_active = False
+        self._last_review_skipped_count = 0
 
     @property
     def current(self) -> PracticeItem:
@@ -181,6 +230,10 @@ class PracticeEngine:
     @property
     def has_review_items(self) -> bool:
         return self.mode is PracticeMode.QUANTITATIVE and "wrong" in self._outcomes
+
+    @property
+    def last_review_skipped_count(self) -> int:
+        return self._last_review_skipped_count
 
     @property
     def progress_states(self) -> list[str]:
@@ -229,7 +282,11 @@ class PracticeEngine:
         )
         if len(candidates) < count:
             raise ValueError(f"题库只有 {len(candidates)} 道符合条件的题，无法开始 {count} 题练习")
-        self._reset(PracticeMode.QUANTITATIVE, selected_scene)
+        self._reset(
+            PracticeMode.QUANTITATIVE,
+            selected_scene,
+            practice_type=PracticeMode.QUANTITATIVE.value,
+        )
         self._target_count = count
         self.items = self._select_unique(candidates, count)
         self._begin_current()
@@ -244,6 +301,7 @@ class PracticeEngine:
         self._reset(
             PracticeMode.ENDLESS,
             self._resolve_scene(scene=scene, category=category),
+            practice_type=PracticeMode.ENDLESS.value,
         )
         self.endless_state = EndlessDifficultyState.new_session()
         self._fill_endless_queue()
@@ -259,16 +317,41 @@ class PracticeEngine:
         if not review_items:
             raise RuntimeError("本轮没有需要复习的题目")
         self.end_session()
-        self._reset(PracticeMode.QUANTITATIVE, self._scene)
+        self._reset(
+            PracticeMode.QUANTITATIVE,
+            self._scene,
+            practice_type="wrong_review",
+        )
         self._target_count = len(review_items)
         self.items = review_items
         self._begin_current()
         self._save_session()
 
+    def start_wrong_review(self, question_ids: Sequence[str]) -> None:
+        self._start_saved_items_review(
+            question_ids,
+            practice_type="wrong_review",
+        )
+
+    def start_vocabulary_review(self, question_ids: Sequence[str]) -> None:
+        self._start_saved_items_review(
+            question_ids,
+            practice_type="vocabulary_review",
+        )
+
     def resume_latest(self) -> bool:
         record = self._users.load_unfinished_session()
         if record is None:
             return False
+        return self._restore_session(record)
+
+    def resume_session(self, session_id: str) -> bool:
+        record = self._users.load_session(session_id)
+        if record is None or record.completed:
+            return False
+        return self._restore_session(record)
+
+    def _restore_session(self, record: SessionRecord) -> bool:
         state = record.state
         question_ids = [str(question_id) for question_id in state.get("question_ids", [])]
         restored_questions = self._content.get_questions_by_ids(question_ids)
@@ -280,6 +363,7 @@ class PracticeEngine:
         saved_position = max(0, min(int(state.get("position", 0)), len(self.items) - 1))
         self.position = saved_position
         self._session_id = record.session_id
+        self._practice_type = record.practice_type
         self._scene = self._scene_from_state(state)
         raw_target = state.get("target_count")
         self._target_count = int(raw_target) if raw_target is not None else None
@@ -304,6 +388,14 @@ class PracticeEngine:
         else:
             self.endless_state = None
         self._queue_needs_rebuild = bool(state.get("queue_needs_rebuild", False))
+        self._duration_base_seconds = float(state.get("duration_seconds", 0))
+        self._recorded_duration_seconds = int(
+            state.get("recorded_duration_seconds", self._duration_base_seconds)
+        )
+        self._duration_anchor = self._clock()
+        self._duration_record_anchor = self._local_now()
+        self._duration_active = True
+        self._last_review_skipped_count = 0
         if self.mode is PracticeMode.ENDLESS:
             self.items = self.items[saved_position : saved_position + 3]
             self.position = 0
@@ -311,6 +403,39 @@ class PracticeEngine:
                 self._fill_endless_queue()
         self._restore_attempt(state.get("attempt", {}))
         return True
+
+    def _start_saved_items_review(
+        self,
+        question_ids: Sequence[str],
+        *,
+        practice_type: str,
+    ) -> None:
+        ordered_ids = list(dict.fromkeys(str(question_id) for question_id in question_ids))
+        if not ordered_ids:
+            raise RuntimeError("没有可复习的题目")
+        available_by_id = {
+            question.id: question
+            for question in self._content.get_questions_by_ids(ordered_ids)
+        }
+        restored = [
+            available_by_id[question_id]
+            for question_id in ordered_ids
+            if question_id in available_by_id
+        ]
+        skipped_count = len(ordered_ids) - len(restored)
+        if not restored:
+            raise RuntimeError("所选复习题已不在当前题库中")
+        self.end_session()
+        self._reset(
+            PracticeMode.QUANTITATIVE,
+            SceneSelection(None, None),
+            practice_type=practice_type,
+        )
+        self._last_review_skipped_count = skipped_count
+        self._target_count = len(restored)
+        self.items = [self._to_domain(question) for question in restored]
+        self._begin_current()
+        self._save_session()
 
     def submit(self, inputs: Sequence[str]) -> SubmissionResult:
         attempt = self._require_attempt()
@@ -322,6 +447,13 @@ class PracticeEngine:
         self._users.record_attempt(self.current.question.id, is_correct=feedback.is_correct)
 
         if is_first:
+            if self._practice_type == "wrong_review":
+                self._users.record_review_result(
+                    self.current.question.id,
+                    is_correct=feedback.counted_correct,
+                )
+            if not feedback.counted_correct:
+                self._record_vocabulary(reason="wrong")
             self._record_first_outcome(feedback.counted_correct)
 
         difficulty_changed = (
@@ -364,6 +496,7 @@ class PracticeEngine:
             self._users.record_view_answer(self.current.question.id)
             self.stats.viewed_answers += 1
         if is_first:
+            self._record_vocabulary(reason="revealed")
             self._record_first_outcome(False)
         self._can_advance = True
         self._save_session()
@@ -373,6 +506,18 @@ class PracticeEngine:
         self._users.record_replay(self.current.question.id)
         self.stats.replays += 1
         self._save_session()
+
+    @property
+    def current_in_vocabulary(self) -> bool:
+        if not self.items:
+            return False
+        return self._users.has_vocabulary(self.current.question.canonical_answer)
+
+    def add_current_to_vocabulary(self) -> None:
+        if not self.items:
+            raise RuntimeError("练习尚未开始")
+        if not self.current_in_vocabulary:
+            self._record_vocabulary(reason="manual")
 
     def skip_current_for_audio_error(self) -> None:
         if not self.items:
@@ -409,6 +554,13 @@ class PracticeEngine:
         self._attempt = None
         self._session_id = ""
         self._outcomes = []
+        self._practice_type = ""
+        self._duration_base_seconds = 0.0
+        self._recorded_duration_seconds = 0
+        self._duration_anchor = None
+        self._duration_record_anchor = self._local_now()
+        self._duration_active = False
+        self._last_review_skipped_count = 0
 
     def learning_summary(self) -> dict[str, object]:
         return self._users.get_learning_summary()
@@ -418,7 +570,7 @@ class PracticeEngine:
             raise RuntimeError("答对或查看答案后才能进入下一题")
         if self.mode is PracticeMode.QUANTITATIVE:
             if self.position + 1 >= len(self.items):
-                self._users.complete_session(self._session_id)
+                self.end_session()
                 return False
             self.position += 1
         else:
@@ -437,9 +589,43 @@ class PracticeEngine:
 
     def end_session(self) -> None:
         if self._session_id:
+            self.pause_timing()
             self._users.complete_session(self._session_id)
 
-    def _reset(self, mode: PracticeMode, scene: SceneSelection | str) -> None:
+    @property
+    def is_timing_active(self) -> bool:
+        return self._duration_active
+
+    def pause_timing(self) -> None:
+        if not self._duration_active:
+            return
+        assert self._duration_anchor is not None
+        elapsed = max(0.0, self._clock() - self._duration_anchor)
+        self._record_duration_delta()
+        self._duration_base_seconds += elapsed
+        self._duration_anchor = None
+        self._duration_active = False
+        self._save_session()
+
+    def resume_timing(self) -> None:
+        if (
+            self._duration_active
+            or not self._session_id
+            or self.mode is None
+            or not self.items
+        ):
+            return
+        self._duration_anchor = self._clock()
+        self._duration_record_anchor = self._local_now()
+        self._duration_active = True
+
+    def _reset(
+        self,
+        mode: PracticeMode,
+        scene: SceneSelection | str,
+        *,
+        practice_type: str | None = None,
+    ) -> None:
         self.mode = mode
         self.items = []
         self.position = 0
@@ -456,6 +642,13 @@ class PracticeEngine:
         self._target_count = None
         self._queue_needs_rebuild = False
         self._outcomes = []
+        self._practice_type = practice_type or mode.value
+        self._duration_base_seconds = 0.0
+        self._recorded_duration_seconds = 0
+        self._duration_anchor = self._clock()
+        self._duration_record_anchor = self._local_now()
+        self._duration_active = True
+        self._last_review_skipped_count = 0
 
     def _select_unique(
         self,
@@ -512,6 +705,11 @@ class PracticeEngine:
             self.stats.wrong += 1
             self.stats.current_correct_streak = 0
         self._outcomes.append("correct" if is_correct else "wrong")
+        self._users.record_daily_activity(
+            self._local_date().isoformat(),
+            completed_delta=1,
+            correct_delta=int(is_correct),
+        )
 
         if self.endless_state is not None:
             self.endless_state.record_outcome(is_correct=is_correct)
@@ -524,12 +722,18 @@ class PracticeEngine:
     def _save_session(self) -> None:
         if not self._session_id or self.mode is None:
             return
+        self._record_duration_delta()
+        duration_seconds = self._current_duration_seconds()
         state: dict[str, object] = {
             "question_ids": [item.question.id for item in self.items],
             "position": self.position,
+            "practice_type": self._practice_type,
             "top_scene": self._scene.top_scene,
             "sub_scene": self._scene.sub_scene,
+            "difficulty": self.current.question.difficulty.value,
             "target_count": self._target_count,
+            "duration_seconds": duration_seconds,
+            "recorded_duration_seconds": self._recorded_duration_seconds,
             "outcomes": list(self._outcomes),
             "queue_needs_rebuild": self._queue_needs_rebuild,
             "stats": {
@@ -552,6 +756,42 @@ class PracticeEngine:
             self._session_id,
             mode=self.mode.value,
             state=state,
+        )
+
+    def _current_duration_seconds(self) -> int:
+        if not self._duration_active or self._duration_anchor is None:
+            return int(self._duration_base_seconds)
+        return int(
+            self._duration_base_seconds
+            + max(0.0, self._clock() - self._duration_anchor)
+        )
+
+    def _record_duration_delta(self) -> None:
+        duration_seconds = self._current_duration_seconds()
+        duration_delta = max(0, duration_seconds - self._recorded_duration_seconds)
+        if not duration_delta:
+            return
+        now = self._local_now()
+        for activity_date, seconds in _split_duration_by_date(
+            self._duration_record_anchor,
+            now,
+            duration_delta,
+        ).items():
+            self._users.record_daily_activity(
+                activity_date.isoformat(),
+                duration_delta=seconds,
+            )
+        self._recorded_duration_seconds = duration_seconds
+        self._duration_record_anchor = now
+
+    def _record_vocabulary(self, *, reason: str) -> None:
+        question = self.current.question
+        self._users.upsert_vocabulary(
+            term=question.canonical_answer,
+            source_question_id=question.id,
+            sentence=question.sentence,
+            translation=question.translation_zh,
+            reason=reason,
         )
 
     def _require_attempt(self) -> QuestionAttempt:
@@ -648,3 +888,36 @@ class PracticeEngine:
             answer_start=raw.answer_start,
             answer_end=raw.answer_end,
         )
+
+
+def _split_duration_by_date(
+    started_at: datetime,
+    ended_at: datetime,
+    total_seconds: int,
+) -> dict[date, int]:
+    if total_seconds <= 0:
+        return {}
+    if ended_at <= started_at or ended_at.date() == started_at.date():
+        return {ended_at.date(): total_seconds}
+
+    allocation: dict[date, int] = {}
+    cursor = started_at
+    remaining = total_seconds
+    while cursor.date() < ended_at.date() and remaining > 0:
+        next_midnight = datetime.combine(
+            cursor.date() + timedelta(days=1),
+            datetime_time.min,
+            tzinfo=cursor.tzinfo,
+        )
+        before_midnight = max(
+            0,
+            int((next_midnight - cursor).total_seconds()),
+        )
+        assigned = min(remaining, before_midnight)
+        if assigned:
+            allocation[cursor.date()] = allocation.get(cursor.date(), 0) + assigned
+            remaining -= assigned
+        cursor = next_midnight
+    if remaining:
+        allocation[ended_at.date()] = allocation.get(ended_at.date(), 0) + remaining
+    return allocation

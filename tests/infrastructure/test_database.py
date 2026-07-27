@@ -527,7 +527,172 @@ def test_new_user_database_has_current_schema_version(tmp_path: Path) -> None:
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-    assert {"settings", "question_progress", "sessions"} <= tables
+    assert {
+        "settings",
+        "question_progress",
+        "sessions",
+        "daily_activity",
+        "vocabulary_entries",
+    } <= tables
+
+
+def test_user_database_migrates_v1_to_current_without_losing_learning_data(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "user.db"
+    backups = tmp_path / "backups"
+    with sqlite3.connect(database) as connection, connection:
+        database_module._create_schema_v1(connection)
+        connection.execute("PRAGMA user_version = 1")
+        connection.execute(
+            """
+            INSERT INTO question_progress(
+                question_id, first_correct, attempt_count, replay_count,
+                view_answer_count, first_answered_at, updated_at
+            ) VALUES ('q1', 0, 2, 1, 1, '2026-07-20T10:00:00+00:00',
+                      '2026-07-20T10:05:00+00:00')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO sessions(
+                session_id, mode, state_json, completed, created_at, updated_at
+            ) VALUES (?, 'quantitative', ?, 0, ?, ?)
+            """,
+            (
+                "legacy-session",
+                json.dumps(
+                    {
+                        "question_ids": ["q1", "q2"],
+                        "position": 1,
+                        "top_scene": "study",
+                        "sub_scene": "study_cet4",
+                        "difficulty": "medium",
+                        "target_count": 20,
+                        "stats": {"completed": 1, "correct": 0},
+                    }
+                ),
+                "2026-07-20T10:00:00+00:00",
+                "2026-07-20T10:05:00+00:00",
+            ),
+        )
+
+    repository = UserRepository(database, backups_dir=backups)
+
+    assert repository.schema_version == CURRENT_SCHEMA_VERSION
+    progress = repository.get_question_progress("q1")
+    assert progress is not None
+    assert progress.first_wrong_at == "2026-07-20T10:00:00+00:00"
+    assert progress.review_correct_streak == 0
+    session = repository.load_session("legacy-session")
+    assert session is not None
+    assert session.practice_type == "quantitative"
+    assert session.top_scene == "study"
+    assert session.sub_scene == "study_cet4"
+    assert session.difficulty == "medium"
+    assert session.target_count == 20
+    assert session.completed_count == 1
+    assert session.correct_count == 0
+    assert session.duration_seconds == 0
+    activity = repository.get_daily_activity("2026-07-20")
+    assert activity is not None
+    assert activity.completed_count == 1
+    assert len(list(backups.glob("*.db.bak"))) == 1
+
+
+def test_wrong_review_mastery_requires_three_consecutive_correct_results(
+    tmp_path: Path,
+) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+    repository.record_attempt("q1", is_correct=False)
+
+    for expected in (1, 2, 3):
+        progress = repository.record_review_result("q1", is_correct=True)
+        assert progress.review_correct_streak == expected
+
+    assert progress.mastered_at is not None
+    reset = repository.record_review_result("q1", is_correct=False)
+    assert reset.review_correct_streak == 0
+    assert reset.mastered_at is None
+
+
+def test_vocabulary_keeps_phrase_unique_and_allows_readding_after_removal(
+    tmp_path: Path,
+) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+    first = repository.upsert_vocabulary(
+        term="  Take   Part In ",
+        source_question_id="q1",
+        sentence="We take part in it.",
+        translation="我们参与其中。",
+        reason="wrong",
+    )
+    second = repository.upsert_vocabulary(
+        term="take part in",
+        source_question_id="q2",
+        sentence="They take part in class.",
+        translation="他们参与课堂。",
+        reason="revealed",
+    )
+
+    assert first.entry_id == second.entry_id
+    assert second.term == "take part in"
+    assert second.encounter_count == 2
+    repository.remove_vocabulary(second.entry_id)
+    third = repository.upsert_vocabulary(
+        term="take part in",
+        source_question_id="q2",
+        sentence="They take part in class.",
+        translation="他们参与课堂。",
+        reason="wrong",
+    )
+    assert third.encounter_count == 1
+
+
+def test_daily_activity_accumulates_first_results_and_duration(tmp_path: Path) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+
+    repository.record_daily_activity(
+        "2026-07-24",
+        completed_delta=1,
+        correct_delta=1,
+        duration_delta=12,
+    )
+    activity = repository.record_daily_activity(
+        "2026-07-24",
+        completed_delta=1,
+        correct_delta=0,
+        duration_delta=8,
+    )
+
+    assert activity.completed_count == 2
+    assert activity.correct_count == 1
+    assert activity.duration_seconds == 20
+    assert repository.list_daily_activity(
+        start_date="2026-07-24",
+        end_date="2026-07-24",
+    ) == [activity]
+
+
+def test_session_history_filters_by_practice_type_and_uses_stable_order(
+    tmp_path: Path,
+) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+    repository.save_session(
+        "quantitative",
+        mode="quantitative",
+        state={"practice_type": "quantitative"},
+    )
+    repository.save_session(
+        "review",
+        mode="quantitative",
+        state={"practice_type": "wrong_review"},
+    )
+
+    sessions = repository.list_sessions(practice_type="wrong_review", limit=10)
+
+    assert [session.session_id for session in sessions] == ["review"]
+    assert sessions[0].practice_type == "wrong_review"
 
 
 def test_settings_round_trip_json_values_across_repository_instances(tmp_path: Path) -> None:

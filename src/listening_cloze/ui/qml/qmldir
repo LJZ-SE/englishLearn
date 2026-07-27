@@ -1,11 +1,23 @@
 module ListeningCloze
+singleton AppTheme 1.0 AppTheme.qml
+AppIcon 1.0 AppIcon.qml
+AppSidebar 1.0 AppSidebar.qml
 ChoiceChip 1.0 ChoiceChip.qml
+DashboardCard 1.0 DashboardCard.qml
+DashboardSceneSelector 1.0 DashboardSceneSelector.qml
+FeedbackMascot 1.0 FeedbackMascot.qml
 HomePage 1.0 HomePage.qml
+LearningTrend 1.0 LearningTrend.qml
+LearningHistoryPage 1.0 LearningHistoryPage.qml
+MetricCard 1.0 MetricCard.qml
 PracticePage 1.0 PracticePage.qml
 PrimaryButton 1.0 PrimaryButton.qml
 RepairPage 1.0 RepairPage.qml
 SceneSelector 1.0 SceneSelector.qml
 SettingsPage 1.0 SettingsPage.qml
+StatisticsPage 1.0 StatisticsPage.qml
 SummaryPage 1.0 SummaryPage.qml
+VocabularyPage 1.0 VocabularyPage.qml
 WaveMascot 1.0 WaveMascot.qml
 Waveform 1.0 Waveform.qml
+WrongBookPage 1.0 WrongBookPage.qml

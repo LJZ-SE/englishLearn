@@ -16,6 +16,7 @@ ASSET_MANIFEST = ROOT / "tools" / "assets" / "supertonic3_assets.json"
 PYINSTALLER_SPEC = ROOT / "packaging" / "listening_cloze.spec"
 INNO_SETUP = ROOT / "packaging" / "listening_cloze.iss"
 REMOTE_BUILD = ROOT / "packaging" / "windows_build.py"
+QML_ASSETS = ROOT / "src" / "listening_cloze" / "ui" / "qml" / "assets"
 
 MODEL_REVISION = "724fb5abbf5502583fb520898d45929e62f02c0b"
 OFFICIAL_ONNX_HASHES = {
@@ -70,6 +71,12 @@ def test_workflow_builds_and_uploads_a_verified_installer() -> None:
         "-Wait",
         "-PassThru",
         ".ExitCode",
+        "qml/assets/app-logo.png",
+        "qml/assets/MaterialIcons-Regular.ttf",
+        "qml/assets/mascot-idle-headphones.png",
+        "qml/assets/mascot-correct.png",
+        "qml/assets/mascot-incorrect.png",
+        "qml/assets/sidebar-mascot.png",
     )
     for fragment in required_fragments:
         assert fragment in workflow
@@ -121,6 +128,23 @@ def test_pyinstaller_spec_collects_runtime_data_and_native_dependencies() -> Non
     assert '"PySide6.QtMultimedia"' in spec
     assert "console=False" in spec
     assert "exclude_binaries=True" in spec
+
+
+def test_selected_ui_assets_are_real_packaged_files() -> None:
+    for name in (
+        "app-logo.png",
+        "mascot-idle-headphones.png",
+        "sidebar-mascot.png",
+        "mascot-correct.png",
+        "mascot-incorrect.png",
+    ):
+        assert (QML_ASSETS / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+    font = (QML_ASSETS / "MaterialIcons-Regular.ttf").read_bytes()
+    assert font.startswith(b"\x00\x01\x00\x00")
+    assert "Apache License" in (
+        QML_ASSETS / "LICENSE.material-icons"
+    ).read_text(encoding="utf-8")
 
 
 def test_inno_setup_builds_unsigned_installer_and_preserves_data_by_default() -> None:

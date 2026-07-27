@@ -1,6 +1,7 @@
 import random
 import sqlite3
 import wave
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtTest import QSignalSpy
@@ -101,6 +102,9 @@ def test_controller_exposes_multi_blank_question_and_preserves_first_result(
     assert controller.sentenceSuffix == " today."
     assert controller.blankCount == 3
     assert controller.progressText == "第 1 / 1 题"
+    controller.addCurrentToVocabulary()
+    assert controller.currentVocabularySaved
+    assert controller.completedCount == 0
 
     controller.submitAnswers(["take", "part", "on"])
     assert controller.feedbackState == "incorrect"
@@ -656,6 +660,7 @@ def test_controller_persists_settings_resume_progress_and_audio_skip(tmp_path: P
     first.setPlaybackRate(0.8)
     first.setVolume(0.55)
     first.setAnimationsEnabled(False)
+    first.setDailyQuestionGoal(50)
     first.startQuantitative("daily", "easy", 5)
     first.submitAnswers(["wrong"])
 
@@ -670,6 +675,7 @@ def test_controller_persists_settings_resume_progress_and_audio_skip(tmp_path: P
     assert second.playbackRate == 0.8
     assert second.volume == 0.55
     assert not second.animationsEnabled
+    assert second.dailyQuestionGoal == 50
     second.resumeLatest()
     assert second.currentPage == "practice"
     assert second.progressStates[0] == "wrong"
@@ -930,6 +936,68 @@ def test_endless_summary_exposes_adaptive_session_metrics(tmp_path: Path) -> Non
     assert controller.highestDifficultyLabel == "简单"
     assert controller.endingDifficultyLabel == "简单"
     assert controller.longestStreak == 1
+
+
+def test_controller_pauses_timing_on_home_settings_background_and_shutdown(
+    tmp_path: Path,
+) -> None:
+    current_time = [100.0]
+    current_wall_time = [datetime(2026, 7, 24, 9, 0, 0)]
+    users = UserRepository(tmp_path / "user.db")
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "listen")]),
+        users,
+        rng=random.Random(28),
+        clock=lambda: current_time[0],
+        local_now=lambda: current_wall_time[0],
+    )
+    controller = PracticeController(engine)
+    controller.startQuantitative("daily", "easy", 1)
+
+    current_time[0] += 5
+    current_wall_time[0] += timedelta(seconds=5)
+    controller.goHome()
+    assert not engine.is_timing_active
+
+    current_time[0] += 20
+    current_wall_time[0] += timedelta(seconds=20)
+    controller.resumeLatest()
+    assert engine.is_timing_active
+
+    current_time[0] += 4
+    current_wall_time[0] += timedelta(seconds=4)
+    controller.openSettings()
+    assert not engine.is_timing_active
+    controller.closeSettings()
+    assert engine.is_timing_active
+
+    current_time[0] += 3
+    current_wall_time[0] += timedelta(seconds=3)
+    controller.setApplicationActive(False)
+    assert not engine.is_timing_active
+    controller.setApplicationActive(True)
+    assert engine.is_timing_active
+
+    current_time[0] += 2
+    current_wall_time[0] += timedelta(seconds=2)
+    controller.shutdown()
+    session = users.load_unfinished_session()
+    assert session is not None
+    assert session.duration_seconds == 14
+
+
+def test_controller_reports_skipped_missing_review_questions(tmp_path: Path) -> None:
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "listen")]),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(30),
+    )
+    controller = PracticeController(engine)
+
+    controller.startWrongReview(["missing", "q1"])
+
+    assert controller.currentPage == "practice"
+    assert controller.feedbackText == "已跳过 1 道当前题库中不存在的历史题。"
 
 
 def _scene_catalog() -> list[SceneMetadata]:

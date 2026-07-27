@@ -7,21 +7,38 @@ Item {
     property real progress: 0
     property bool animated: false
     property var levels: []
-    readonly property int barCount: levels.length > 0 ? levels.length : 72
+    readonly property real barSpacing: 4
+    readonly property int barCount:
+        Math.max(1, Math.floor((width + barSpacing) / 6))
 
     Row {
         anchors.fill: parent
-        spacing: 3
+        spacing: waveform.barSpacing
         Repeater {
             model: waveform.barCount
             Rectangle {
                 required property int index
-                width: Math.max(2, (waveform.width - (waveform.barCount - 1) * 3)
-                                      / waveform.barCount)
+                readonly property int sourceIndex:
+                    Math.min(
+                        waveform.levels.length - 1,
+                        Math.floor(index * waveform.levels.length
+                                   / waveform.barCount)
+                    )
+                width: Math.max(
+                    2,
+                    (waveform.width
+                     - (waveform.barCount - 1) * waveform.barSpacing)
+                    / waveform.barCount
+                )
                 height: waveform.levels.length > 0
-                    ? 6 + waveform.levels[index] * 48
-                    : 6 + Math.abs(Math.sin(index * 0.59)) * 30
-                      + Math.abs(Math.cos(index * 0.21)) * 16
+                    ? 6 + Math.pow(waveform.levels[sourceIndex], 1.65) * 72
+                    : 6 + Math.pow(
+                          Math.abs(
+                              Math.sin(index * 0.43)
+                              * Math.cos(index * 0.17)
+                          ),
+                          1.6
+                      ) * 70
                 radius: width / 2
                 anchors.verticalCenter: parent.verticalCenter
                 color: (index + 0.5) / waveform.barCount < waveform.progress

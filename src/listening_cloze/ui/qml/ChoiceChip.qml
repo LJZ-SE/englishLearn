@@ -8,6 +8,10 @@ Control {
     property color accent: "#0A6DF0"
     signal clicked
 
+    function click() {
+        clicked()
+    }
+
     implicitWidth: label.implicitWidth + 34
     implicitHeight: 38
     clip: true
@@ -23,9 +27,9 @@ Control {
         id: label
         text: control.text
         color: control.selected ? control.accent : "#566174"
-        font.family: "Segoe UI"
+        font.family: AppTheme.fontFamily
         font.pixelSize: 15
-        font.weight: control.selected ? Font.DemiBold : Font.Normal
+        font.weight: control.selected ? Font.Medium : Font.Normal
         elide: Text.ElideRight
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

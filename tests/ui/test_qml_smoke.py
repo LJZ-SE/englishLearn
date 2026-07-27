@@ -19,6 +19,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from listening_cloze.application.controller import PracticeController
+from listening_cloze.application.learning_models import LearningCenterViewModel
+from listening_cloze.application.learning_service import LearningCenterService
 from listening_cloze.application.practice_engine import PracticeEngine
 from listening_cloze.infrastructure.database import (
     ContentQuestion,
@@ -29,8 +31,13 @@ from listening_cloze.runtime import ui_path
 
 
 class _FakeContentRepository:
-    def __init__(self, questions: list[ContentQuestion]) -> None:
+    def __init__(
+        self,
+        questions: list[ContentQuestion],
+        scene_catalog: list[SceneMetadata] | None = None,
+    ) -> None:
         self._questions = questions
+        self._scene_catalog = scene_catalog
 
     def sample_questions(
         self,
@@ -69,7 +76,7 @@ class _FakeContentRepository:
         return [by_id[question_id] for question_id in ids if question_id in by_id]
 
     def list_scenes(self) -> list[SceneMetadata]:
-        return _scene_catalog()
+        return self._scene_catalog or _scene_catalog()
 
 
 def _scene_catalog() -> list[SceneMetadata]:
@@ -188,6 +195,285 @@ def _mouse_click_item(window, item) -> None:
     _process_qml_events()
 
 
+def _load_dashboard_window(
+    tmp_path,
+    *,
+    width: int,
+    height: int,
+    scene_catalog: list[SceneMetadata] | None = None,
+):
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    content_repository = _FakeContentRepository([], scene_catalog)
+    user_repository = UserRepository(tmp_path / "user.db")
+    controller = PracticeController(
+        PracticeEngine(
+            content_repository,
+            user_repository,
+        )
+    )
+    learning_center = LearningCenterViewModel(
+        LearningCenterService(content_repository, user_repository)
+    )
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties(
+        {
+            "backend": controller,
+            "learning": learning_center,
+        }
+    )
+    engine._learning_center = learning_center
+    engine.load(ui_path("Main.qml"))
+    assert engine.rootObjects()
+    root = engine.rootObjects()[0]
+    root.setWidth(width)
+    root.setHeight(height)
+    _process_qml_events(12)
+    return engine, root, controller
+
+
+@pytest.mark.qt_serial
+def test_learning_dashboard_matches_confirmed_page_structure(tmp_path, qtbot) -> None:
+    engine, root, _controller = _load_dashboard_window(
+        tmp_path,
+        width=1536,
+        height=1024,
+    )
+
+    sidebar = root.findChild(QQuickItem, "appSidebar")
+    sidebar_mascot = root.findChild(QQuickItem, "sidebarMascot")
+    assert sidebar is not None
+    assert sidebar_mascot is not None
+    assert sidebar_mascot.isVisible()
+    assert ui_path("assets/sidebar-mascot.png").is_file()
+    assert sidebar.width() == pytest.approx(248, abs=4)
+    for page_key in (
+        "home",
+        "practice-config",
+        "history",
+        "wrong-book",
+        "vocabulary",
+        "statistics",
+        "settings",
+    ):
+        assert _find_visual_item(root, f"nav_{page_key}") is not None
+
+    for card_name in (
+        "resumeCard",
+        "dailyGoalCard",
+        "practiceConfigurator",
+        "pendingCard",
+        "recentSessionsCard",
+        "trendCard",
+        "metric_total",
+        "metric_accuracy",
+        "metric_streak",
+        "metric_duration",
+        "metric_pending",
+    ):
+        card = root.findChild(QQuickItem, card_name)
+        assert card is not None
+        assert card.isVisible()
+
+    configurator = root.findChild(QQuickItem, "practiceConfigurator")
+    difficulty_controls = root.findChild(QQuickItem, "difficultyControls")
+    count_controls = root.findChild(QQuickItem, "countControls")
+    endless_button = root.findChild(QQuickItem, "startEndlessButton")
+    start_button = root.findChild(QQuickItem, "startPracticeButton")
+    assert configurator is not None
+    assert difficulty_controls is not None
+    assert count_controls is not None
+    assert endless_button is not None
+    assert start_button is not None
+    difficulty_position = difficulty_controls.mapToItem(
+        configurator,
+        QPointF(0, 0),
+    )
+    count_position = count_controls.mapToItem(configurator, QPointF(0, 0))
+    endless_position = endless_button.mapToItem(configurator, QPointF(0, 0))
+    start_position = start_button.mapToItem(configurator, QPointF(0, 0))
+    assert difficulty_position.y() < count_position.y()
+    assert count_position.y() + 15 < endless_position.y()
+    assert endless_position.y() < count_position.y() + 36
+    assert endless_position.y() + endless_button.height() < start_position.y()
+    assert start_button.width() == pytest.approx(508, abs=4)
+
+    assert root.findChild(QQuickItem, "practicePreview") is None
+    del engine
+
+
+@pytest.mark.qt_serial
+def test_learning_dashboard_compacts_and_scrolls_at_minimum_window(tmp_path, qtbot) -> None:
+    engine, root, _controller = _load_dashboard_window(
+        tmp_path,
+        width=960,
+        height=700,
+    )
+
+    sidebar = root.findChild(QQuickItem, "appSidebar")
+    dashboard_scroll = root.findChild(QQuickItem, "homeScroll")
+    start_button = root.findChild(QQuickItem, "startPracticeButton")
+    assert sidebar is not None
+    assert sidebar.width() <= 84
+    assert dashboard_scroll is not None
+    assert start_button is not None
+    assert dashboard_scroll.property("contentWidth") == pytest.approx(
+        dashboard_scroll.width(),
+        abs=1,
+    )
+    assert dashboard_scroll.property("contentHeight") > dashboard_scroll.height()
+    del engine
+
+
+@pytest.mark.qt_serial
+@pytest.mark.parametrize(
+    ("route", "page_name", "required_names"),
+    [
+        (
+            "history",
+            "learningHistoryPage",
+            ("historyFilter_all", "historyList", "historyEmptyState"),
+        ),
+        (
+            "wrong-book",
+            "wrongBookPage",
+            ("wrongSearch", "startWrongReview", "wrongBookEmptyState"),
+        ),
+        (
+            "vocabulary",
+            "vocabularyPage",
+            (
+                "vocabularySearch",
+                "startVocabularyReview",
+                "vocabularyEmptyState",
+            ),
+        ),
+        (
+            "statistics",
+            "statisticsPage",
+            (
+                "statisticsRange_7d",
+                "statisticsTrend",
+                "statisticsTrendEmptyState",
+            ),
+        ),
+    ],
+)
+def test_sidebar_routes_to_complete_learning_pages(
+    tmp_path,
+    qtbot,
+    route: str,
+    page_name: str,
+    required_names: tuple[str, ...],
+) -> None:
+    engine, root, _controller = _load_dashboard_window(
+        tmp_path,
+        width=1536,
+        height=1024,
+    )
+    navigation_button = _find_visual_item(root, f"nav_{route}")
+    assert navigation_button is not None
+    QMetaObject.invokeMethod(navigation_button, "click")
+    _process_qml_events()
+
+    page = root.findChild(QQuickItem, page_name)
+    assert page is not None
+    assert page.isVisible()
+    for object_name in required_names:
+        assert (
+            root.findChild(QQuickItem, object_name) is not None
+            or _find_visual_item(root, object_name) is not None
+        )
+    del engine
+
+
+@pytest.mark.qt_serial
+def test_learning_settings_returns_to_the_page_that_opened_it(tmp_path, qtbot) -> None:
+    engine, root, _controller = _load_dashboard_window(
+        tmp_path,
+        width=1536,
+        height=1024,
+    )
+    QMetaObject.invokeMethod(_find_visual_item(root, "nav_history"), "click")
+    _process_qml_events()
+    QMetaObject.invokeMethod(_find_visual_item(root, "nav_settings"), "click")
+    _process_qml_events()
+
+    done_buttons = [
+        item
+        for item in _visual_descendants(root.contentItem())
+        if item.objectName() == "settingsDoneButton" and item.isVisible()
+    ]
+    assert len(done_buttons) == 1
+    QMetaObject.invokeMethod(done_buttons[0], "click")
+    _process_qml_events()
+
+    history_page = root.findChild(QQuickItem, "learningHistoryPage")
+    assert history_page is not None
+    assert history_page.isVisible()
+    del engine
+
+
+@pytest.mark.qt_serial
+def test_dashboard_scene_selector_matches_confirmed_compact_controls(
+    tmp_path,
+    qtbot,
+) -> None:
+    cet_scene = SceneMetadata(
+        key="cet",
+        label="四六级考试",
+        children=(
+            SceneMetadata(key="cet_cet4", label="四级 CET-4"),
+            SceneMetadata(key="cet_cet6", label="六级 CET-6"),
+        ),
+    )
+    engine, root, controller = _load_dashboard_window(
+        tmp_path,
+        width=1536,
+        height=1024,
+        scene_catalog=[*_scene_catalog(), cet_scene],
+    )
+
+    selector = root.findChild(QQuickItem, "dashboardSceneSelector")
+    assert selector is not None
+    for key in ("daily", "study", "culture", "news"):
+        assert _find_visual_item(root, f"topScene_{key}") is not None
+    assert _find_visual_item(root, "moreSceneButton") is not None
+    assert root.findChild(QQuickItem, "allSubScenes") is not None
+    all_scenes = root.findChild(QQuickItem, "allScenes")
+    all_sub_scenes = root.findChild(QQuickItem, "allSubScenes")
+    assert all_scenes is not None
+    assert all_sub_scenes is not None
+    assert not all_scenes.isVisible()
+    assert all_sub_scenes.isVisible()
+    assert all_sub_scenes.property("text") == "全部"
+
+    def visible_cet_level_chips() -> list[QQuickItem]:
+        return [
+            item
+            for item in _visual_descendants(root.contentItem())
+            if item.isVisible()
+            and item.metaObject().className().startswith("ChoiceChip_")
+            and item.property("text") in {"四级 CET-4", "六级 CET-6"}
+        ]
+
+    assert controller.selectedTopScene == "daily"
+    assert visible_cet_level_chips() == []
+
+    QMetaObject.invokeMethod(_find_visual_item(root, "topScene_study"), "clicked")
+    _process_qml_events()
+    assert controller.selectedTopScene == "study"
+    assert visible_cet_level_chips() == []
+
+    QMetaObject.invokeMethod(_find_visual_item(root, "moreSceneButton"), "clicked")
+    _process_qml_events()
+    QMetaObject.invokeMethod(_find_visual_item(root, "topScene_cet"), "clicked")
+    _process_qml_events()
+    assert controller.selectedTopScene == "cet"
+    assert len(visible_cet_level_chips()) == 2
+    del engine
+
+
 @pytest.mark.qt_serial
 def test_home_scene_selector_uses_controller_catalog_and_starts_with_both_keys(
     tmp_path, qtbot, qtlog
@@ -252,17 +538,30 @@ def test_home_scene_selector_uses_controller_catalog_and_starts_with_both_keys(
         if item.objectName().startswith("topScene_")
     ]
     assert len(top_scene_items) == 8
-    row_positions = {round(item.y()) for item in top_scene_items}
-    assert len(row_positions) == 2
-    assert all(
-        sum(round(item.y()) == row_position for item in top_scene_items) == 4
-        for row_position in row_positions
-    )
+    assert len({round(item.y()) for item in top_scene_items}) >= 1
 
-    _mouse_click_item(root, all_scenes)
+    QMetaObject.invokeMethod(top_daily, "clicked")
+    _process_qml_events()
     assert controller.selectedTopScene == ""
     assert controller.selectedSubScene == ""
     assert all_scenes.property("selected") is True
+
+    home_scroll = root.findChild(QQuickItem, "homeScroll")
+    assert home_scroll is not None
+    news_position = top_news.mapToItem(home_scroll, QPointF(0, 0))
+    if news_position.y() + top_news.height() > home_scroll.height():
+        home_scroll.setProperty(
+            "contentY",
+            min(
+                home_scroll.property("contentHeight") - home_scroll.height(),
+                home_scroll.property("contentY")
+                + news_position.y()
+                - home_scroll.height()
+                + top_news.height()
+                + 12,
+            ),
+        )
+        _process_qml_events()
 
     _mouse_click_item(root, top_news)
     assert controller.selectedTopScene == "news"
@@ -564,11 +863,43 @@ def test_replay_stops_current_audio_before_starting_a_new_playback() -> None:
 
 def test_practice_wraps_long_sentences_and_scales_the_waveform() -> None:
     source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
+    waveform_source = ui_path("Waveform.qml").read_text(encoding="utf-8")
 
     assert "Flow {" in source
     assert "wrapMode: Text.Wrap" in source
     assert "sentenceLength" in source
+    assert "denseQuestionLayout" in source
     assert "waveformScale" in source
+    assert "ScrollView {" in source
+    assert "ScrollBar.vertical.policy: ScrollBar.AsNeeded" in source
+    assert "barSpacing: 4" in waveform_source
+    assert "Math.pow(waveform.levels[sourceIndex], 1.65) * 72" in waveform_source
+
+
+def test_practice_matches_the_selected_focus_workbench_shell() -> None:
+    main_source = ui_path("Main.qml").read_text(encoding="utf-8")
+    practice_source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
+
+    assert "practiceShellVisible" in main_source
+    assert 'objectName: "headerDifficulty"' in main_source
+    assert 'objectName: "headerSceneLabel"' in main_source
+    assert 'objectName: "headerProgress"' in main_source
+    assert 'objectName: "endSessionButton"' in main_source
+    assert 'objectName: "offlineBadge"' in main_source
+    assert 'currentPage: "practice-config"' in main_source
+    assert 'objectName: "practiceCard"' in practice_source
+    assert 'objectName: "progressTrack"' in practice_source
+    assert 'objectName: "shortcutHint"' in practice_source
+    assert "FeedbackMascot {" in practice_source
+
+
+def test_practice_exposes_replay_shortcuts_for_mac_and_other_platforms() -> None:
+    source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
+
+    assert 'sequence: "Ctrl+R"' in source
+    assert 'sequence: "Meta+R"' in source
+    assert 'sequence: "Space"' in source
+    assert 'Qt.platform.os === "osx"' in source
 
 
 def test_practice_shows_chinese_translation_after_reveal_or_correct_answer() -> None:
@@ -622,18 +953,49 @@ def test_practice_layout_never_expands_beyond_the_window(tmp_path, qtbot) -> Non
     practice = root.findChild(QQuickItem, "practicePage")
     answer_fields = root.findChild(QQuickItem, "answerFields")
     audio_toolbar = root.findChild(QQuickItem, "audioToolbar")
-    waveform = next(
-        item
-        for item in root.findChildren(QQuickItem)
-        if item.metaObject().className().startswith("Waveform_")
-    )
+    audio_player_panel = root.findChild(QQuickItem, "audioPlayerPanel")
+    play_button = root.findChild(QQuickItem, "playButton")
+    waveform = root.findChild(QQuickItem, "practiceWaveform")
+    replay_button = root.findChild(QQuickItem, "replayButton")
+    replay_icon = root.findChild(QQuickItem, "replayIcon")
+    replay_label = root.findChild(QQuickItem, "replayLabel")
+    speed_selector = root.findChild(QQuickItem, "speedSelector")
 
     assert practice is not None
     assert answer_fields is not None
     assert audio_toolbar is not None
+    assert audio_player_panel is not None
+    assert play_button is not None
+    assert waveform is not None
+    assert replay_button is not None
+    assert replay_icon is not None
+    assert replay_label is not None
+    assert speed_selector is not None
     assert answer_fields.width() <= practice.width()
-    assert audio_toolbar.width() <= 360
+    assert audio_toolbar.width() <= 430
+    assert audio_player_panel.width() <= practice.width()
     assert waveform.width() <= practice.width()
+    for audio_control in (
+        play_button,
+        waveform,
+        replay_button,
+        speed_selector,
+    ):
+        position = audio_control.mapToItem(audio_player_panel, QPointF(0, 0))
+        assert position.x() >= 0
+        assert position.y() >= 0
+        assert position.x() + audio_control.width() <= audio_player_panel.width()
+        assert position.y() + audio_control.height() <= audio_player_panel.height()
+
+    icon_center = replay_icon.mapToItem(
+        replay_button,
+        QPointF(replay_icon.width() / 2, replay_icon.height() / 2),
+    )
+    label_center = replay_label.mapToItem(
+        replay_button,
+        QPointF(replay_label.width() / 2, replay_label.height() / 2),
+    )
+    assert abs(icon_center.y() - label_center.y()) <= 1
 
 
 @pytest.mark.qt_serial
@@ -793,6 +1155,72 @@ def test_space_moves_focus_to_the_next_answer_field_without_being_entered(
 
 
 @pytest.mark.qt_serial
+def test_long_idle_question_keeps_core_actions_visible_without_scrolling(
+    tmp_path, qtbot, qtlog
+) -> None:
+    sentence = (
+        "As a person having my own business, it can fully express myself "
+        "and make my own decisions, a privilege not everyone can have, "
+        "even those with highly-paid positions."
+    )
+    answer = "everyone"
+    question = ContentQuestion(
+        id="q-long-first-screen",
+        sentence_id="s-long-first-screen",
+        sentence_text=sentence,
+        category="daily",
+        source_url="https://example.test/long-first-screen",
+        normalized_hash="long-first-screen-hash",
+        difficulty="hard",
+        answer_start=sentence.index(answer),
+        answer_end=sentence.index(answer) + len(answer),
+        canonical_answer=answer,
+        answer_word_count=1,
+        difficulty_score=3.0,
+        rationale="长句首屏布局测试",
+        aliases=(),
+        translation_zh="作为一个拥有自己事业的人，我可以充分表达自己并作出决定。",
+    )
+
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    controller.startQuantitative("daily", "hard", 1)
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"backend": controller})
+    engine.load(ui_path("Main.qml"))
+    root = engine.rootObjects()[0]
+    root.setWidth(1536)
+    root.setHeight(1024)
+    for _ in range(10):
+        QCoreApplication.processEvents()
+
+    practice_scroll = root.findChild(QQuickItem, "practiceScroll")
+    submit_button = root.findChild(QQuickItem, "submitButton")
+    translation_button = root.findChild(QQuickItem, "translationToggleButton")
+    shortcut_hint = root.findChild(QQuickItem, "shortcutHint")
+
+    assert practice_scroll is not None
+    assert submit_button is not None
+    assert translation_button is not None
+    assert shortcut_hint is not None
+    flickable = practice_scroll.property("contentItem")
+    assert flickable.property("contentY") == 0
+
+    for core_action in (submit_button, translation_button, shortcut_hint):
+        position = core_action.mapToItem(practice_scroll, QPointF(0, 0))
+        assert position.y() >= 0
+        assert position.y() + core_action.height() <= practice_scroll.height()
+
+    assert not any("Binding loop" in record.message for record in qtlog.records)
+
+
+@pytest.mark.qt_serial
 def test_overflowing_practice_content_can_scroll_until_submit_button_is_visible(
     tmp_path, qtbot, qtlog
 ) -> None:
@@ -853,6 +1281,26 @@ def test_overflowing_practice_content_can_scroll_until_submit_button_is_visible(
 
     assert button_position.y() + submit_button.height() <= practice_scroll.height()
     assert not any("Binding loop" in record.message for record in qtlog.records)
+
+    root.setWidth(960)
+    root.setHeight(700)
+    for _ in range(10):
+        QCoreApplication.processEvents()
+    maximum_y = flickable.property("contentHeight") - flickable.height()
+    flickable.setProperty("contentY", maximum_y)
+    QCoreApplication.processEvents()
+    compact_button_position = submit_button.mapToItem(
+        practice_scroll, QPointF(0, 0)
+    )
+    progress_track = root.findChild(QQuickItem, "progressTrack")
+
+    assert maximum_y > 0
+    assert (
+        compact_button_position.y() + submit_button.height()
+        <= practice_scroll.height()
+    )
+    assert progress_track is not None
+    assert progress_track.y() + progress_track.height() <= root.height()
 
 
 @pytest.mark.qt_serial

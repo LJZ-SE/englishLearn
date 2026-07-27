@@ -63,6 +63,7 @@ class PracticeController(QObject):
         self._current_page = "home"
         self._settings_return_page = "home"
         self._repair_issues: list[str] = []
+        self._resource_status = "checking"
         self._feedback_state = "idle"
         self._feedback_text = "准备好后，播放句子开始练习。"
         self._feedback_animation = "idle"
@@ -215,6 +216,11 @@ class PracticeController(QObject):
     def animationsEnabled(self) -> bool:
         return self._animations_enabled
 
+    @Property(int, notify=stateChanged)
+    def dailyQuestionGoal(self) -> int:
+        goal = int(self._engine.get_setting("daily_goal", 30))
+        return goal if goal in {10, 20, 30, 50} else 30
+
     @Property(bool, notify=stateChanged)
     def hasResume(self) -> bool:
         return self._engine.has_unfinished_session
@@ -288,6 +294,10 @@ class PracticeController(QObject):
     def currentQuestionId(self) -> str:
         return self._engine.current.question.id if self._engine.items else ""
 
+    @Property(bool, notify=stateChanged)
+    def currentVocabularySaved(self) -> bool:
+        return self._engine.current_in_vocabulary
+
     @Property(str, notify=stateChanged)
     def audioStatus(self) -> str:
         return self._audio_status
@@ -312,10 +322,19 @@ class PracticeController(QObject):
     def repairIssues(self) -> list[str]:
         return list(self._repair_issues)
 
+    @Property(str, notify=stateChanged)
+    def resourceStatus(self) -> str:
+        return self._resource_status
+
     def setStartupIssues(self, issues: list[str]) -> None:
         self._repair_issues.extend(issue for issue in issues if issue not in self._repair_issues)
         if self._repair_issues:
             self._current_page = "repair"
+            self._resource_status = "error"
+        self.stateChanged.emit()
+
+    def setResourceReady(self) -> None:
+        self._resource_status = "ready"
         self.stateChanged.emit()
 
     def attachTts(self, service: TtsPrefetchService) -> None:
@@ -323,6 +342,7 @@ class PracticeController(QObject):
             self._tts.stop()
         self._tts = service
         self._tts.start()
+        self.setResourceReady()
 
     def handleTtsReady(self, item: PrefetchItem, path: Path) -> None:
         self._ttsReady.emit(item, str(path.resolve()))
@@ -388,6 +408,7 @@ class PracticeController(QObject):
             and self._engine.items
             and self._engine.has_unfinished_session
         ):
+            self._engine.resume_timing()
             self._current_page = "practice"
             self._sync_scene_from_engine()
             self.stateChanged.emit()
@@ -396,10 +417,27 @@ class PracticeController(QObject):
         if self._engine.resume_latest():
             self._begin_practice_page()
 
+    @Slot(str)
+    def resumeSession(self, session_id: str) -> None:
+        if self._engine.resume_session(session_id):
+            self._begin_practice_page()
+
     @Slot()
     def reviewWrongQuestions(self) -> None:
         self._engine.start_review()
         self._begin_practice_page()
+
+    @Slot("QVariantList")
+    def startWrongReview(self, question_ids: list[str]) -> None:
+        self._engine.start_wrong_review(question_ids)
+        self._begin_practice_page()
+        self._show_skipped_review_message()
+
+    @Slot("QVariantList")
+    def startVocabularyReview(self, question_ids: list[str]) -> None:
+        self._engine.start_vocabulary_review(question_ids)
+        self._begin_practice_page()
+        self._show_skipped_review_message()
 
     @Slot("QVariantList")
     def submitAnswers(self, inputs: list[str]) -> None:
@@ -416,6 +454,11 @@ class PracticeController(QObject):
         self._feedback_text = f"答案是：{answer}"
         self._feedback_animation = "droop"
         self.answerRevealed.emit(answer.split())
+        self.stateChanged.emit()
+
+    @Slot()
+    def addCurrentToVocabulary(self) -> None:
+        self._engine.add_current_to_vocabulary()
         self.stateChanged.emit()
 
     @Slot()
@@ -475,8 +518,17 @@ class PracticeController(QObject):
         self._engine.set_setting("animations_enabled", enabled)
         self.stateChanged.emit()
 
+    @Slot(int)
+    def setDailyQuestionGoal(self, goal: int) -> None:
+        if goal not in {10, 20, 30, 50}:
+            raise ValueError("每日目标只支持 10、20、30 或 50 题")
+        self._engine.set_setting("daily_goal", goal)
+        self.stateChanged.emit()
+
     @Slot()
     def goHome(self) -> None:
+        if self._current_page == "practice":
+            self._engine.pause_timing()
         self._current_page = "home"
         self.stateChanged.emit()
         self.sceneLabelChanged.emit()
@@ -485,12 +537,16 @@ class PracticeController(QObject):
     def openSettings(self) -> None:
         if self._current_page != "settings":
             self._settings_return_page = self._current_page
+        if self._current_page == "practice":
+            self._engine.pause_timing()
         self._current_page = "settings"
         self.stateChanged.emit()
 
     @Slot()
     def closeSettings(self) -> None:
         self._current_page = self._settings_return_page
+        if self._current_page == "practice":
+            self._engine.resume_timing()
         self.stateChanged.emit()
 
     @Slot()
@@ -531,8 +587,16 @@ class PracticeController(QObject):
 
     @Slot()
     def shutdown(self) -> None:
+        self._engine.pause_timing()
         if self._tts is not None:
             self._tts.stop()
+
+    @Slot(bool)
+    def setApplicationActive(self, active: bool) -> None:
+        if active and self._current_page == "practice":
+            self._engine.resume_timing()
+        else:
+            self._engine.pause_timing()
 
     def _load_scene_catalog(self) -> list[dict[str, object]]:
         try:
@@ -669,6 +733,7 @@ class PracticeController(QObject):
         self._remember_scene_if_selectable(self._active_scene)
 
     def _begin_practice_page(self) -> None:
+        self._engine.resume_timing()
         self._current_page = "practice"
         self._sync_scene_from_engine()
         self._feedback_state = "idle"
@@ -691,6 +756,13 @@ class PracticeController(QObject):
             self.audioRequested.emit(question_id, self._playback_rate)
             return
         self._play_when_ready = True
+
+    def _show_skipped_review_message(self) -> None:
+        skipped = self._engine.last_review_skipped_count
+        if not skipped:
+            return
+        self._feedback_text = f"已跳过 {skipped} 道当前题库中不存在的历史题。"
+        self.stateChanged.emit()
 
     def _schedule_audio(self) -> None:
         if self._tts is None or not self._engine.items:
