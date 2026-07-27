@@ -246,7 +246,7 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: page.compactContent ? 164
                                                 : page.denseQuestionLayout
-                                                  ? 198 : 214
+                                                  ? 182 : 214
                         spacing: page.compactContent ? 14 : 22
 
                         Rectangle {
@@ -255,7 +255,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: page.compactContent ? 164
                                                     : page.denseQuestionLayout
-                                                      ? 188 : 204
+                                                      ? 172 : 204
                             radius: 14
                             color: "#F7FBFF"
                             border.width: 1
@@ -477,7 +477,8 @@ Item {
                             objectName: "mascotCoach"
                             visible: practiceScroll.availableWidth >= 920
                             Layout.preferredWidth: visible ? 184 : 0
-                            Layout.preferredHeight: 200
+                            Layout.preferredHeight:
+                                page.denseQuestionLayout ? 184 : 200
                             Layout.alignment: Qt.AlignVCenter
                             Layout.rightMargin: 12
                             spacing: -8
@@ -509,8 +510,10 @@ Item {
                             FeedbackMascot {
                                 objectName: "mascot"
                                 Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 174
-                                Layout.preferredHeight: 150
+                                Layout.preferredWidth:
+                                    page.denseQuestionLayout ? 158 : 174
+                                Layout.preferredHeight:
+                                    page.denseQuestionLayout ? 134 : 150
                                 mood: page.visualCorrect ? "correct"
                                       : page.visualWrong ? "incorrect"
                                       : page.state

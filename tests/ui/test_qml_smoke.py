@@ -1215,7 +1215,10 @@ def test_long_idle_question_keeps_core_actions_visible_without_scrolling(
     for core_action in (submit_button, translation_button, shortcut_hint):
         position = core_action.mapToItem(practice_scroll, QPointF(0, 0))
         assert position.y() >= 0
-        assert position.y() + core_action.height() <= practice_scroll.height()
+        assert (
+            position.y() + core_action.height()
+            <= practice_scroll.height() - 12
+        )
 
     assert not any("Binding loop" in record.message for record in qtlog.records)
 
