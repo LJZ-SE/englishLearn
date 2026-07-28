@@ -22,6 +22,7 @@ ApplicationWindow {
         pageName === "home" || (pageName === "settings" && learningPage === "settings")
     readonly property bool standaloneHeaderVisible:
         !learningShellVisible && !practiceShellVisible
+    readonly property bool laptopLayout: height < 840
 
     function navigateLearningPage(pageKey) {
         if (pageKey === "practice-config") {
@@ -232,6 +233,7 @@ ApplicationWindow {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             compact: appWindow.width < AppTheme.compactBreakpoint
+            shortHeight: appWindow.laptopLayout
             currentPage: appWindow.learningPage
             resourceStatus: appWindow.backend ? appWindow.backend.resourceStatus : "checking"
             onNavigate: function(pageKey) { appWindow.navigateLearningPage(pageKey) }
@@ -242,7 +244,7 @@ ApplicationWindow {
             anchors.left: appSidebar.right
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 60
+            height: appWindow.laptopLayout ? 52 : 60
             color: AppTheme.background
 
             Row {
@@ -380,9 +382,11 @@ ApplicationWindow {
 
         AppSidebar {
             id: practiceSidebar
+            objectName: "practiceSidebar"
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             compact: appWindow.width < AppTheme.compactBreakpoint
+            shortHeight: appWindow.laptopLayout
             currentPage: "practice-config"
             resourceStatus: appWindow.backend
                             ? appWindow.backend.resourceStatus : "checking"
@@ -397,14 +401,14 @@ ApplicationWindow {
             anchors.left: practiceSidebar.right
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 88
+            height: appWindow.laptopLayout ? 72 : 88
             color: AppTheme.background
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 24
-                anchors.rightMargin: 24
-                spacing: 14
+                anchors.leftMargin: appWindow.laptopLayout ? 18 : 24
+                anchors.rightMargin: appWindow.laptopLayout ? 18 : 24
+                spacing: appWindow.laptopLayout ? 10 : 14
 
                 Button {
                     id: practiceBackHomeButton
@@ -514,6 +518,7 @@ ApplicationWindow {
                 Rectangle {
                     objectName: "offlineBadge"
                     visible: appWindow.width >= AppTheme.compactBreakpoint
+                             && !appWindow.laptopLayout
                     Layout.preferredWidth: 132
                     Layout.preferredHeight: 40
                     radius: 10
@@ -554,6 +559,7 @@ ApplicationWindow {
             anchors.top: practiceUtilityBar.bottom
             anchors.bottom: parent.bottom
             controller: appWindow.backend
+            laptopLayout: appWindow.laptopLayout
         }
     }
 

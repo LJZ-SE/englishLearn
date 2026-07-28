@@ -796,6 +796,90 @@ def test_compact_practice_header_keeps_essential_controls_inside_window(
     assert abs(icon_center.y() - label_center.y()) <= 1
 
 
+@pytest.mark.qt_serial
+def test_windows_11_laptop_layout_keeps_answered_practice_in_view(
+    tmp_path, qtbot, qtlog
+) -> None:
+    sentence = (
+        "Research shows that animals process and appreciate far more of the "
+        "intricacies in their world than humans have ever understood."
+    )
+    answer = "ever"
+    question = ContentQuestion(
+        id="q-windows-laptop",
+        sentence_id="s-windows-laptop",
+        sentence_text=sentence,
+        category="daily",
+        source_url="https://example.test/windows-laptop",
+        normalized_hash="windows-laptop-hash",
+        difficulty="hard",
+        answer_start=sentence.index(answer),
+        answer_end=sentence.index(answer) + len(answer),
+        canonical_answer=answer,
+        answer_word_count=1,
+        difficulty_score=3.0,
+        rationale="Windows 11 短屏适配测试",
+        aliases=(),
+        translation_zh="研究表明，动物理解世界复杂性的程度远超人类此前的认知。",
+    )
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    controller.startQuantitative("daily", "hard", 1)
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"backend": controller})
+    engine.load(ui_path("Main.qml"))
+    root = engine.rootObjects()[0]
+    root.setWidth(1366)
+    root.setHeight(700)
+    controller.submitAnswers([answer])
+    _process_qml_events(12)
+
+    practice_sidebar = root.findChild(QQuickItem, "practiceSidebar")
+    sidebar_mascot = practice_sidebar.findChild(QQuickItem, "sidebarMascot")
+    resource_card = practice_sidebar.findChild(QQuickItem, "sidebarResourceCard")
+    utility_bar = root.findChild(QQuickItem, "practiceUtilityBar")
+    practice_scroll = root.findChild(QQuickItem, "practiceScroll")
+    progress_track = root.findChild(QQuickItem, "progressTrack")
+    assert root.property("laptopLayout") is True
+    assert practice_sidebar is not None
+    assert sidebar_mascot is not None
+    assert resource_card is not None
+    assert utility_bar is not None
+    assert practice_scroll is not None
+    assert progress_track is not None
+    assert practice_sidebar.width() == pytest.approx(248, abs=2)
+    assert sidebar_mascot.isVisible() is False
+    assert resource_card.isVisible() is False
+    assert utility_bar.height() == pytest.approx(72, abs=1)
+    assert progress_track.height() == pytest.approx(88, abs=1)
+
+    flickable = practice_scroll.property("contentItem")
+    assert flickable.property("contentY") == 0
+    for object_name in (
+        "audioPlayerPanel",
+        "answerFields",
+        "translationPanel",
+        "submitButton",
+    ):
+        item = root.findChild(QQuickItem, object_name)
+        assert item is not None
+        position = item.mapToItem(practice_scroll, QPointF(0, 0))
+        assert position.y() >= 0
+        assert position.y() + item.height() <= practice_scroll.height() - 4
+
+    progress_position = progress_track.mapToItem(
+        root.contentItem(), QPointF(0, 0)
+    )
+    assert progress_position.y() + progress_track.height() <= root.height()
+    assert not any("Binding loop" in record.message for record in qtlog.records)
+
+
 def test_main_qml_uses_empty_scene_placeholder_without_backend() -> None:
     source = ui_path("Main.qml").read_text(encoding="utf-8")
 

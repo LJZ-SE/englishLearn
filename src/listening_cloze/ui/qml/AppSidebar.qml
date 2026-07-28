@@ -7,6 +7,7 @@ Rectangle {
     property string currentPage: "home"
     property string resourceStatus: "checking"
     property bool compact: false
+    property bool shortHeight: false
     signal navigate(string pageKey)
 
     width: compact ? AppTheme.compactSidebarWidth : AppTheme.sidebarWidth
@@ -17,12 +18,12 @@ Rectangle {
     Row {
         id: brand
         x: compact ? 17 : 28
-        y: 30
+        y: sidebar.shortHeight ? 18 : 30
         spacing: 14
 
         Image {
-            width: 48
-            height: 48
+            width: sidebar.shortHeight ? 42 : 48
+            height: width
             source: "assets/app-logo.png"
             fillMode: Image.PreserveAspectFit
             smooth: true
@@ -52,12 +53,12 @@ Rectangle {
     Column {
         id: navigation
         anchors.top: brand.bottom
-        anchors.topMargin: 44
+        anchors.topMargin: sidebar.shortHeight ? 22 : 44
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.leftMargin: compact ? 10 : 14
         anchors.rightMargin: compact ? 10 : 14
-        spacing: 8
+        spacing: sidebar.shortHeight ? 4 : 8
 
         Repeater {
             model: [
@@ -75,7 +76,7 @@ Rectangle {
                 required property var modelData
                 objectName: "nav_" + modelData.key
                 width: navigation.width
-                height: 46
+                height: sidebar.shortHeight ? 40 : 46
                 hoverEnabled: true
 
                 background: Rectangle {
@@ -116,7 +117,8 @@ Rectangle {
     }
 
     DashboardCard {
-        visible: !sidebar.compact
+        objectName: "sidebarResourceCard"
+        visible: !sidebar.compact && !sidebar.shortHeight
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: mascot.top
@@ -176,7 +178,7 @@ Rectangle {
     Item {
         id: mascot
         objectName: "sidebarMascot"
-        visible: !sidebar.compact
+        visible: !sidebar.compact && !sidebar.shortHeight
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 110
