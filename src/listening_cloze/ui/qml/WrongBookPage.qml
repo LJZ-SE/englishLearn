@@ -7,11 +7,17 @@ Item {
     property var controller
     property var learning
     property string sceneFilter: "all"
+    readonly property bool compact: width < 1100
 
     Flickable {
+        id: wrongBookScroll
+        objectName: "wrongBookScroll"
         anchors.fill: parent
         contentWidth: width
-        contentHeight: content.height + AppTheme.pageMargin
+        contentHeight: Math.max(
+            height,
+            content.height + AppTheme.pageMargin
+        )
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -20,14 +26,17 @@ Item {
             id: content
             x: AppTheme.pageMargin
             width: Math.max(0, parent.width - AppTheme.pageMargin * 2)
-            height: 850
+            height: Math.max(
+                850,
+                wrongCards.y + wrongCards.height
+            )
 
             Text {
                 id: title
                 text: "错题本"
                 color: AppTheme.textPrimary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 28
+                font.pixelSize: page.compact ? 24 : 28
                 font.weight: Font.DemiBold
             }
             Text {
@@ -37,7 +46,7 @@ Item {
                 text: "连续三次在错题复习中答对后自动掌握；答错会重新从 0 开始。"
                 color: AppTheme.textSecondary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 14
+                font.pixelSize: page.compact ? 13 : 14
             }
 
             TextField {
@@ -45,8 +54,8 @@ Item {
                 objectName: "wrongSearch"
                 anchors.right: parent.right
                 anchors.top: parent.top
-                width: 290
-                height: 42
+                width: page.compact ? 260 : 290
+                height: page.compact ? 38 : 42
                 placeholderText: "搜索句子、答案或场景"
                 selectByMouse: true
                 background: Rectangle {
@@ -89,8 +98,8 @@ Item {
                 objectName: "startWrongReview"
                 anchors.right: parent.right
                 anchors.verticalCenter: filters.verticalCenter
-                width: 160
-                height: 42
+                width: page.compact ? 150 : 160
+                height: page.compact ? 38 : 42
                 text: "开始专项复习"
                 enabled: Boolean(
                     page.controller && page.learning
@@ -103,6 +112,7 @@ Item {
             }
 
             Column {
+                id: wrongCards
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: filters.bottom

@@ -6,11 +6,18 @@ Item {
     objectName: "vocabularyPage"
     property var controller
     property var learning
+    property var dictionary
+    readonly property bool compact: width < 1100
 
     Flickable {
+        id: vocabularyScroll
+        objectName: "vocabularyScroll"
         anchors.fill: parent
         contentWidth: width
-        contentHeight: content.height + AppTheme.pageMargin
+        contentHeight: Math.max(
+            height,
+            content.height + AppTheme.pageMargin
+        )
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -19,14 +26,17 @@ Item {
             id: content
             x: AppTheme.pageMargin
             width: Math.max(0, parent.width - AppTheme.pageMargin * 2)
-            height: 850
+            height: Math.max(
+                850,
+                vocabularyGrid.y + vocabularyGrid.height
+            )
 
             Text {
                 id: title
                 text: "词汇本"
                 color: AppTheme.textPrimary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 28
+                font.pixelSize: page.compact ? 24 : 28
                 font.weight: Font.DemiBold
             }
             Text {
@@ -36,7 +46,7 @@ Item {
                 text: "答错或查看答案会自动收录；多词答案始终作为完整短语保存。"
                 color: AppTheme.textSecondary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 14
+                font.pixelSize: page.compact ? 13 : 14
             }
 
             TextField {
@@ -44,8 +54,8 @@ Item {
                 objectName: "vocabularySearch"
                 anchors.right: parent.right
                 anchors.top: parent.top
-                width: 290
-                height: 42
+                width: page.compact ? 260 : 290
+                height: page.compact ? 38 : 42
                 placeholderText: "搜索单词、短语或来源句"
                 selectByMouse: true
                 background: Rectangle {
@@ -88,8 +98,8 @@ Item {
                 objectName: "startVocabularyReview"
                 anchors.right: parent.right
                 anchors.verticalCenter: summary.verticalCenter
-                width: 170
-                height: 42
+                width: page.compact ? 160 : 170
+                height: page.compact ? 38 : 42
                 text: "开始词汇听写"
                 enabled: Boolean(
                     page.controller && page.learning
@@ -104,6 +114,7 @@ Item {
             }
 
             Grid {
+                id: vocabularyGrid
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: summary.bottom
@@ -144,6 +155,18 @@ Item {
                             onClicked: if (page.learning)
                                            page.learning.removeVocabulary(
                                                vocabularyCard.modelData.entryId)
+                        }
+                        Button {
+                            objectName: "vocabularyDictionaryButton"
+                            anchors.right: removeButton.left
+                            anchors.rightMargin: 4
+                            anchors.top: parent.top
+                            text: "查看释义"
+                            flat: true
+                            font.pixelSize: 12
+                            onClicked: if (page.dictionary)
+                                           page.dictionary.lookup(
+                                               vocabularyCard.modelData.term)
                         }
                         Text {
                             anchors.left: parent.left

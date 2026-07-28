@@ -47,6 +47,7 @@ class PracticeController(QObject):
     sceneSelectionChanged = Signal()
     sceneLabelChanged = Signal()
     answerRevealed = Signal(list)
+    dictionaryRequested = Signal(str)
     audioRequested = Signal(str, float)
     _ttsReady = Signal(object, str)
     _ttsFailed = Signal(object, str)
@@ -460,6 +461,12 @@ class PracticeController(QObject):
     def addCurrentToVocabulary(self) -> None:
         self._engine.add_current_to_vocabulary()
         self.stateChanged.emit()
+
+    @Slot()
+    def requestCurrentDictionary(self) -> None:
+        if not self._engine.items or not self._engine.can_advance:
+            return
+        self.dictionaryRequested.emit(self._engine.current.question.canonical_answer)
 
     @Slot()
     def nextQuestion(self) -> None:

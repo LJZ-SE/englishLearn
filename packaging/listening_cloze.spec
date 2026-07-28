@@ -26,6 +26,10 @@ datas = [
         "listening_cloze/data",
     ),
     (
+        str(project_root / "src/listening_cloze/data/ecdict"),
+        "listening_cloze/data/ecdict",
+    ),
+    (
         str(project_root / "src/listening_cloze/data/quality-report.json"),
         "listening_cloze/data",
     ),

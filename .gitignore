@@ -25,3 +25,6 @@ work/content-library/quality-report.json
 work/content-library/sources.json
 work/content-library/translation-report.json
 work/content-library/release-backup/
+downloads/
+midscene_run/
+outputs/

@@ -6,6 +6,7 @@ Item {
     objectName: "statisticsPage"
     property var learning
     property string selectedRange: "7d"
+    readonly property bool compact: width < 1100
     readonly property var statisticsData: learning ? learning.statistics : ({
         trend: [],
         summary: {
@@ -18,6 +19,8 @@ Item {
     })
 
     Flickable {
+        id: statisticsScroll
+        objectName: "statisticsScroll"
         anchors.fill: parent
         contentWidth: width
         contentHeight: content.height + AppTheme.pageMargin
@@ -29,14 +32,14 @@ Item {
             id: content
             x: AppTheme.pageMargin
             width: Math.max(0, parent.width - AppTheme.pageMargin * 2)
-            height: 880
+            height: page.compact ? 820 : 880
 
             Text {
                 id: title
                 text: "统计分析"
                 color: AppTheme.textPrimary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 28
+                font.pixelSize: page.compact ? 24 : 28
                 font.weight: Font.DemiBold
             }
             Text {
@@ -46,7 +49,7 @@ Item {
                 text: "从完成量、正确率、连续学习和场景分布了解长期进步。"
                 color: AppTheme.textSecondary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 14
+                font.pixelSize: page.compact ? 13 : 14
             }
 
             Row {
@@ -83,7 +86,7 @@ Item {
 
                 MetricCard {
                     width: (metrics.width - 48) / 5
-                    height: 154
+                    height: page.compact ? 136 : 154
                     iconText: "▤"
                     iconColor: AppTheme.primary
                     title: "累计完成题次"
@@ -92,7 +95,7 @@ Item {
                 }
                 MetricCard {
                     width: (metrics.width - 48) / 5
-                    height: 154
+                    height: page.compact ? 136 : 154
                     iconText: "✓"
                     iconColor: AppTheme.success
                     title: "第一次结果正确率"
@@ -101,7 +104,7 @@ Item {
                 }
                 MetricCard {
                     width: (metrics.width - 48) / 5
-                    height: 154
+                    height: page.compact ? 136 : 154
                     iconText: "♨"
                     iconColor: AppTheme.warning
                     title: "连续学习"
@@ -112,7 +115,7 @@ Item {
                 }
                 MetricCard {
                     width: (metrics.width - 48) / 5
-                    height: 154
+                    height: page.compact ? 136 : 154
                     iconText: "◷"
                     iconColor: "#1D9BF0"
                     title: "总学习时长"
@@ -122,7 +125,7 @@ Item {
                 }
                 MetricCard {
                     width: (metrics.width - 48) / 5
-                    height: 154
+                    height: page.compact ? 136 : 154
                     iconText: "×"
                     iconColor: AppTheme.error
                     title: "待掌握"
@@ -137,7 +140,7 @@ Item {
                 anchors.right: parent.right
                 anchors.top: metrics.bottom
                 anchors.topMargin: 16
-                height: 280
+                height: page.compact ? 240 : 280
                 contentPadding: 22
 
                 Text {
@@ -176,7 +179,7 @@ Item {
                 anchors.right: parent.right
                 anchors.top: trendCard.bottom
                 anchors.topMargin: 16
-                height: 260
+                height: page.compact ? 240 : 260
                 spacing: 16
 
                 DashboardCard {

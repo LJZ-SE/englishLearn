@@ -5,12 +5,12 @@ Button {
     id: control
     property bool secondary: false
 
-    implicitWidth: 188
-    implicitHeight: 54
+    implicitWidth: 172
+    implicitHeight: 46
     hoverEnabled: true
 
     background: Rectangle {
-        radius: 12
+        radius: 10
         color: control.secondary
                ? (control.hovered ? "#EDF4FF" : "transparent")
                : (control.down ? "#0758C4" : control.hovered ? "#1680FF" : "#0A6DF0")
@@ -23,7 +23,7 @@ Button {
         text: control.text
         color: control.secondary ? "#0A6DF0" : "white"
         font.family: AppTheme.fontFamily
-        font.pixelSize: 18
+        font.pixelSize: 16
         font.weight: Font.Medium
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

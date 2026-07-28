@@ -12,12 +12,12 @@ Control {
         clicked()
     }
 
-    implicitWidth: label.implicitWidth + 34
-    implicitHeight: 38
+    implicitWidth: label.implicitWidth + 28
+    implicitHeight: 34
     clip: true
 
     background: Rectangle {
-        radius: 12
+        radius: 10
         color: control.selected ? Qt.alpha(control.accent, 0.12) : "#F2F5F8"
         border.width: control.selected ? 1 : 0
         border.color: Qt.alpha(control.accent, 0.34)
@@ -28,7 +28,7 @@ Control {
         text: control.text
         color: control.selected ? control.accent : "#566174"
         font.family: AppTheme.fontFamily
-        font.pixelSize: 15
+        font.pixelSize: 14
         font.weight: control.selected ? Font.Medium : Font.Normal
         elide: Text.ElideRight
         horizontalAlignment: Text.AlignHCenter

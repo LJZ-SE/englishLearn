@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import (
+    Q_ARG,
     QCoreApplication,
     QEvent,
     QMetaObject,
@@ -19,6 +20,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from listening_cloze.application.controller import PracticeController
+from listening_cloze.application.dictionary_models import DictionaryViewModel
 from listening_cloze.application.learning_models import LearningCenterViewModel
 from listening_cloze.application.learning_service import LearningCenterService
 from listening_cloze.application.practice_engine import PracticeEngine
@@ -27,6 +29,7 @@ from listening_cloze.infrastructure.database import (
     SceneMetadata,
     UserRepository,
 )
+from listening_cloze.infrastructure.dictionary import DictionaryEntry
 from listening_cloze.runtime import ui_path
 
 
@@ -182,6 +185,18 @@ def _find_visual_item(root, object_name: str):
     )
 
 
+def _find_visible_visual_item(root, object_name: str):
+    visual_root = root if hasattr(root, "childItems") else root.contentItem()
+    return next(
+        (
+            item
+            for item in _visual_descendants(visual_root)
+            if item.objectName() == object_name and item.isVisible()
+        ),
+        None,
+    )
+
+
 def _mouse_click_item(window, item) -> None:
     center = item.mapToItem(
         window.contentItem(), QPointF(item.width() / 2, item.height() / 2)
@@ -253,6 +268,7 @@ def test_learning_dashboard_matches_confirmed_page_structure(tmp_path, qtbot) ->
         "history",
         "wrong-book",
         "vocabulary",
+        "dictionary",
         "statistics",
         "settings",
     ):
@@ -326,6 +342,85 @@ def test_learning_dashboard_compacts_and_scrolls_at_minimum_window(tmp_path, qtb
 
 
 @pytest.mark.qt_serial
+@pytest.mark.parametrize(("width", "height"), [(1366, 768), (1093, 600)])
+def test_all_learning_pages_fit_windows_small_screen_width(
+    tmp_path, qtbot, qtlog, width: int, height: int
+) -> None:
+    engine, root, _controller = _load_dashboard_window(
+        tmp_path,
+        width=width,
+        height=height,
+    )
+    sidebar = root.findChild(QQuickItem, "appSidebar")
+    assert sidebar is not None
+    assert sidebar.width() == pytest.approx(64, abs=2)
+
+    route_specs = (
+        (
+            "history",
+            "learningHistoryPage",
+            "historyScroll",
+            ("historyFilter_all", "historyList"),
+        ),
+        (
+            "wrong-book",
+            "wrongBookPage",
+            "wrongBookScroll",
+            ("wrongSearch", "startWrongReview"),
+        ),
+        (
+            "vocabulary",
+            "vocabularyPage",
+            "vocabularyScroll",
+            ("vocabularySearch", "startVocabularyReview"),
+        ),
+        (
+            "dictionary",
+            "dictionaryPage",
+            "dictionaryPageScroll",
+            ("dictionaryPageSearch", "dictionaryPageLookupButton"),
+        ),
+        (
+            "statistics",
+            "statisticsPage",
+            "statisticsScroll",
+            ("statisticsRange_7d", "statisticsRange_30d"),
+        ),
+        (
+            "settings",
+            "settingsPage",
+            "settingsScroll",
+            ("settingsCard", "settingsDoneButton"),
+        ),
+    )
+    for route, page_name, scroll_name, required_names in route_specs:
+        navigation_button = _find_visual_item(root, f"nav_{route}")
+        assert navigation_button is not None
+        QMetaObject.invokeMethod(navigation_button, "click")
+        _process_qml_events(8)
+
+        page = _find_visible_visual_item(root, page_name)
+        scroll = _find_visible_visual_item(root, scroll_name)
+        assert page is not None
+        assert scroll is not None
+        scroll_position = scroll.mapToItem(page, QPointF(0, 0))
+        assert scroll_position.x() >= -1
+        assert scroll_position.x() + scroll.width() <= page.width() + 1
+        assert scroll.property("contentWidth") <= scroll.width() + 1
+        assert scroll.property("contentHeight") >= min(1, scroll.height())
+
+        for object_name in required_names:
+            item = _find_visible_visual_item(root, object_name)
+            assert item is not None
+            position = item.mapToItem(page, QPointF(0, 0))
+            assert position.x() >= -1
+            assert position.x() + item.width() <= page.width() + 1
+
+    assert not any("Binding loop" in record.message for record in qtlog.records)
+    del engine
+
+
+@pytest.mark.qt_serial
 @pytest.mark.parametrize(
     ("route", "page_name", "required_names"),
     [
@@ -346,6 +441,14 @@ def test_learning_dashboard_compacts_and_scrolls_at_minimum_window(tmp_path, qtb
                 "vocabularySearch",
                 "startVocabularyReview",
                 "vocabularyEmptyState",
+            ),
+        ),
+        (
+            "dictionary",
+            "dictionaryPage",
+            (
+                "dictionaryPageSearch",
+                "dictionaryPageLookupButton",
             ),
         ),
         (
@@ -797,7 +900,7 @@ def test_compact_practice_header_keeps_essential_controls_inside_window(
 
 
 @pytest.mark.qt_serial
-def test_windows_11_laptop_layout_keeps_answered_practice_in_view(
+def test_windows_11_small_screen_layout_keeps_answered_practice_in_view(
     tmp_path, qtbot, qtlog
 ) -> None:
     sentence = (
@@ -836,7 +939,7 @@ def test_windows_11_laptop_layout_keeps_answered_practice_in_view(
     engine.load(ui_path("Main.qml"))
     root = engine.rootObjects()[0]
     root.setWidth(1366)
-    root.setHeight(700)
+    root.setHeight(768)
     controller.submitAnswers([answer])
     _process_qml_events(12)
 
@@ -853,11 +956,12 @@ def test_windows_11_laptop_layout_keeps_answered_practice_in_view(
     assert utility_bar is not None
     assert practice_scroll is not None
     assert progress_track is not None
-    assert practice_sidebar.width() == pytest.approx(248, abs=2)
+    assert root.property("compactNavigation") is True
+    assert practice_sidebar.width() == pytest.approx(64, abs=2)
     assert sidebar_mascot.isVisible() is False
     assert resource_card.isVisible() is False
-    assert utility_bar.height() == pytest.approx(72, abs=1)
-    assert progress_track.height() == pytest.approx(88, abs=1)
+    assert utility_bar.height() == pytest.approx(58, abs=1)
+    assert progress_track.height() == pytest.approx(76, abs=1)
 
     flickable = practice_scroll.property("contentItem")
     assert flickable.property("contentY") == 0
@@ -880,10 +984,366 @@ def test_windows_11_laptop_layout_keeps_answered_practice_in_view(
     assert not any("Binding loop" in record.message for record in qtlog.records)
 
 
+@pytest.mark.qt_serial
+def test_windows_125_percent_logical_viewport_keeps_idle_actions_visible(
+    tmp_path, qtbot, qtlog
+) -> None:
+    sentence = (
+        "Before we collectively tear our hair out, how are we supposed to "
+        "find our way in a landscape this confusing?"
+    )
+    answer = "supposed to"
+    question = ContentQuestion(
+        id="q-windows-scaled",
+        sentence_id="s-windows-scaled",
+        sentence_text=sentence,
+        category="daily",
+        source_url="https://example.test/windows-scaled",
+        normalized_hash="windows-scaled-hash",
+        difficulty="hard",
+        answer_start=sentence.index(answer),
+        answer_end=sentence.index(answer) + len(answer),
+        canonical_answer=answer,
+        answer_word_count=2,
+        difficulty_score=3.0,
+        rationale="Windows 125% 缩放等效视口测试",
+        aliases=(),
+        translation_zh="在我们集体抓狂之前，究竟该如何在如此混乱的环境中找到方向？",
+    )
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    controller.startQuantitative("daily", "hard", 1)
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"backend": controller})
+    engine.load(ui_path("Main.qml"))
+    root = engine.rootObjects()[0]
+    root.setWidth(1093)
+    root.setHeight(600)
+    _process_qml_events(12)
+
+    sidebar = root.findChild(QQuickItem, "practiceSidebar")
+    utility_bar = root.findChild(QQuickItem, "practiceUtilityBar")
+    practice_scroll = root.findChild(QQuickItem, "practiceScroll")
+    progress_track = root.findChild(QQuickItem, "progressTrack")
+    assert root.minimumHeight() <= 600
+    assert root.property("compactNavigation") is True
+    assert sidebar is not None
+    assert sidebar.width() == pytest.approx(64, abs=2)
+    assert utility_bar is not None
+    assert utility_bar.height() == pytest.approx(52, abs=1)
+    assert practice_scroll is not None
+    assert progress_track is not None
+    assert progress_track.height() == pytest.approx(68, abs=1)
+
+    flickable = practice_scroll.property("contentItem")
+    assert flickable.property("contentY") == 0
+    for object_name in (
+        "audioPlayerPanel",
+        "answerFields",
+        "submitButton",
+        "translationToggleButton",
+    ):
+        item = root.findChild(QQuickItem, object_name)
+        assert item is not None
+        position = item.mapToItem(practice_scroll, QPointF(0, 0))
+        assert position.x() >= 0
+        assert position.x() + item.width() <= practice_scroll.width()
+        assert position.y() >= 0
+        assert position.y() + item.height() <= practice_scroll.height() - 2
+
+    progress_position = progress_track.mapToItem(
+        root.contentItem(), QPointF(0, 0)
+    )
+    assert progress_position.y() + progress_track.height() <= root.height()
+    assert not any("Binding loop" in record.message for record in qtlog.records)
+
+
+@pytest.mark.qt_serial
+def test_summary_and_repair_pages_fit_windows_scaled_viewport(
+    tmp_path, qtbot, qtlog
+) -> None:
+    sentence = "We finished the listening exercise."
+    answer = "finished"
+    question = ContentQuestion(
+        id="q-small-summary",
+        sentence_id="s-small-summary",
+        sentence_text=sentence,
+        category="daily",
+        source_url="https://example.test/small-summary",
+        normalized_hash="small-summary-hash",
+        difficulty="easy",
+        answer_start=sentence.index(answer),
+        answer_end=sentence.index(answer) + len(answer),
+        canonical_answer=answer,
+        answer_word_count=1,
+        difficulty_score=1.0,
+        rationale="Windows 小屏结算页测试",
+        aliases=(),
+    )
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    controller = PracticeController(
+        PracticeEngine(
+            _FakeContentRepository([question]),
+            UserRepository(tmp_path / "user.db"),
+        )
+    )
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"backend": controller})
+    engine.load(ui_path("Main.qml"))
+    root = engine.rootObjects()[0]
+    root.setWidth(1093)
+    root.setHeight(600)
+
+    controller.startQuantitative("daily", "easy", 1)
+    controller.submitAnswers([answer])
+    controller.nextQuestion()
+    _process_qml_events(12)
+
+    standalone_header = _find_visible_visual_item(root, "standaloneHeader")
+    summary_page = _find_visible_visual_item(root, "summaryPage")
+    summary_scroll = _find_visible_visual_item(root, "summaryScroll")
+    assert standalone_header is not None
+    assert standalone_header.height() == pytest.approx(60, abs=1)
+    assert summary_page is not None
+    assert summary_scroll is not None
+    summary_hero = _find_visible_visual_item(root, "summaryHero")
+    summary_mascot_slot = _find_visible_visual_item(root, "summaryMascotSlot")
+    summary_title = _find_visible_visual_item(root, "summaryTitle")
+    summary_subtitle = _find_visible_visual_item(root, "summarySubtitle")
+    assert summary_hero is not None
+    assert summary_mascot_slot is not None
+    assert summary_title is not None
+    assert summary_subtitle is not None
+    for object_name in ("summaryMetrics", "summaryActions"):
+        item = _find_visible_visual_item(root, object_name)
+        assert item is not None
+        position = item.mapToItem(summary_scroll, QPointF(0, 0))
+        assert position.x() >= 0
+        assert position.x() + item.width() <= summary_scroll.width() + 1
+        assert position.y() >= 0
+        assert position.y() + item.height() <= summary_scroll.height() + 1
+
+    def assert_summary_hero_regions_do_not_overlap() -> None:
+        mascot_bottom = summary_mascot_slot.mapToItem(
+            summary_hero,
+            QPointF(0, summary_mascot_slot.height()),
+        ).y()
+        title_top = summary_title.mapToItem(
+            summary_hero,
+            QPointF(0, 0),
+        ).y()
+        title_bottom = summary_title.mapToItem(
+            summary_hero,
+            QPointF(0, summary_title.height()),
+        ).y()
+        subtitle_top = summary_subtitle.mapToItem(
+            summary_hero,
+            QPointF(0, 0),
+        ).y()
+        subtitle_bottom = summary_subtitle.mapToItem(
+            summary_hero,
+            QPointF(0, summary_subtitle.height()),
+        ).y()
+        assert title_top - mascot_bottom >= 4
+        assert subtitle_top - title_bottom >= 3
+        assert subtitle_bottom <= summary_hero.height() + 1
+
+    assert_summary_hero_regions_do_not_overlap()
+    root.setWidth(2048)
+    root.setHeight(1152)
+    _process_qml_events(12)
+    assert root.property("compactNavigation") is False
+    assert_summary_hero_regions_do_not_overlap()
+
+    root.setWidth(1093)
+    root.setHeight(600)
+    controller.setStartupIssues(
+        [
+            "题库数量异常：应为 30000 个原句 / 90000 道题",
+            "缺少 Supertonic 离线模型资源：onnx/duration_predictor.onnx",
+        ]
+    )
+    _process_qml_events(12)
+    repair_page = _find_visible_visual_item(root, "repairPage")
+    repair_card = _find_visible_visual_item(root, "repairCard")
+    repair_list = _find_visible_visual_item(root, "repairIssuesList")
+    assert repair_page is not None
+    assert repair_card is not None
+    assert repair_list is not None
+    card_position = repair_card.mapToItem(repair_page, QPointF(0, 0))
+    assert card_position.x() >= 0
+    assert card_position.x() + repair_card.width() <= repair_page.width() + 1
+    assert card_position.y() >= 0
+    assert card_position.y() + repair_card.height() <= repair_page.height() + 1
+    assert not any("Binding loop" in record.message for record in qtlog.records)
+
+
 def test_main_qml_uses_empty_scene_placeholder_without_backend() -> None:
     source = ui_path("Main.qml").read_text(encoding="utf-8")
 
     assert 'appWindow.backend ? appWindow.backend.sceneLabel : ""' in source
+
+
+@pytest.mark.qt_serial
+def test_main_qml_displays_offline_dictionary_drawer(qtbot, qtlog) -> None:
+    class FakeDictionary:
+        def lookup(self, term: str, *, limit: int = 12):
+            return (
+                DictionaryEntry(
+                    word=term,
+                    phonetic="lisn",
+                    definition="give attention to sound",
+                    translation="听；倾听",
+                    pos="v:100",
+                    collins=4,
+                    oxford=True,
+                    tags=("cet4",),
+                    bnc=900,
+                    frq=700,
+                    exchange="p:listened",
+                    detail="",
+                    audio="",
+                ),
+            )
+
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    dictionary = DictionaryViewModel(FakeDictionary())
+    dictionary.lookup("listen")
+    engine = QQmlApplicationEngine()
+    engine.setInitialProperties({"dictionary": dictionary})
+    engine.load(ui_path("Main.qml"))
+    assert engine.rootObjects()
+    root = engine.rootObjects()[0]
+    _process_qml_events(12)
+
+    drawer = root.findChild(QQuickItem, "dictionaryDrawer")
+    entry = _find_visual_item(root, "dictionaryEntryCard")
+    lookup_input = _find_visual_item(root, "dictionaryLookupInput")
+    assert drawer is not None
+    assert drawer.isVisible()
+    assert entry is not None
+    assert entry.isVisible()
+    assert lookup_input is not None
+    assert lookup_input.property("color").name().upper() == "#10213D"
+    assert not any("Unable to assign" in record.message for record in qtlog.records)
+
+
+@pytest.mark.qt_serial
+def test_selectable_sentence_text_queries_selected_phrase(qtbot, qtlog) -> None:
+    class PhraseDictionary:
+        def lookup(self, term: str, *, limit: int = 12):
+            return (
+                DictionaryEntry(
+                    word=term,
+                    phonetic="",
+                    definition="",
+                    translation="有点儿",
+                    pos="",
+                    collins=0,
+                    oxford=False,
+                    tags=(),
+                    bnc=0,
+                    frq=0,
+                    exchange="",
+                    detail="",
+                    audio="",
+                ),
+            )
+
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    dictionary = DictionaryViewModel(PhraseDictionary())
+    engine = QQmlApplicationEngine()
+    component = QQmlComponent(
+        engine,
+        QUrl.fromLocalFile(str(ui_path("SelectableDictionaryText.qml"))),
+    )
+    item = component.createWithInitialProperties(
+        {
+            "dictionary": dictionary,
+            "text": "It is kind of difficult.",
+        }
+    )
+    assert item is not None, component.errors()
+    window = QQuickWindow()
+    window.setWidth(420)
+    window.setHeight(90)
+    item.setParentItem(window.contentItem())
+    item.setWidth(400)
+    item.setHeight(70)
+    window.show()
+    _process_qml_events()
+    QMetaObject.invokeMethod(
+        item,
+        "select",
+        Qt.DirectConnection,
+        Q_ARG(int, 6),
+        Q_ARG(int, 13),
+    )
+    _process_qml_events()
+
+    assert item.property("selectedText") == "kind of"
+    selection_menu = item.findChild(QObject, "dictionarySelectionMenu")
+    assert selection_menu is not None
+    QTest.mouseClick(
+        window,
+        Qt.RightButton,
+        Qt.NoModifier,
+        QPoint(160, 24),
+    )
+    _process_qml_events()
+    assert selection_menu.property("visible") is True
+    assert QMetaObject.invokeMethod(item, "lookupSelection")
+    _process_qml_events()
+    assert dictionary.query == "kind of"
+    assert dictionary.visible
+    assert dictionary.entries[0]["translation"] == "有点儿"
+    assert not any("Unable to assign" in record.message for record in qtlog.records)
+    window.close()
+    item.deleteLater()
+
+
+def test_practice_exposes_dictionary_context_menu_for_answer_fields() -> None:
+    source = ui_path("PracticePage.qml").read_text(encoding="utf-8")
+
+    assert "SelectableDictionaryText {" in source
+    assert 'objectName: "sentencePrefixText"' in source
+    assert 'objectName: "sentenceSuffixText"' in source
+    assert "DictionaryContextMenu {" in source
+    assert 'objectName: "answerDictionaryMenu"' in source
+    assert "page.lookupDictionarySelection(" in source
+    assert "answerField.selectedText" in source
+
+
+def test_dictionary_context_menu_matches_application_visual_style() -> None:
+    source = ui_path("DictionaryContextMenu.qml").read_text(encoding="utf-8")
+
+    assert 'color: "#FFFFFF"' in source
+    assert "popupType: Popup.Item" in source
+    assert "radius: 12" in source
+    assert "border.color: AppTheme.border" in source
+    assert 'name: "translate"' in source
+    assert "color: menuItem.highlighted" in source
+    assert "scale: down ? 0.96 : 1.0" in source
+    assert "NumberAnimation { duration: 80 }" in source
+
+
+def test_dictionary_search_fields_use_explicit_high_contrast_text_colors() -> None:
+    for filename in ("DictionaryDrawer.qml", "DictionaryPage.qml"):
+        source = ui_path(filename).read_text(encoding="utf-8")
+
+        assert "color: AppTheme.textPrimary" in source
+        assert 'placeholderTextColor: "#94A3B8"' in source
+        assert 'selectionColor: "#B9DBFF"' in source
+        assert "selectedTextColor: AppTheme.textPrimary" in source
 
 
 @pytest.mark.qt_serial
@@ -1014,22 +1474,28 @@ def test_practice_shows_chinese_translation_after_reveal_or_correct_answer() -> 
 
 @pytest.mark.qt_serial
 def test_practice_layout_never_expands_beyond_the_window(tmp_path, qtbot) -> None:
+    sentence = (
+        "As a person having my own business, I can fully express myself and "
+        "make my own decisions, a privilege not everyone can have, even those "
+        "with highly-paid positions."
+    )
+    answer = "everyone"
     question = ContentQuestion(
         id="q-layout",
         sentence_id="s-layout",
-        sentence_text="We wanted to talk about Tom.",
+        sentence_text=sentence,
         category="daily",
         source_url="https://example.test/layout",
         normalized_hash="layout-hash",
         difficulty="hard",
-        answer_start=13,
-        answer_end=23,
-        canonical_answer="talk about",
-        answer_word_count=2,
+        answer_start=sentence.index(answer),
+        answer_end=sentence.index(answer) + len(answer),
+        canonical_answer=answer,
+        answer_word_count=1,
         difficulty_score=3.0,
         rationale="布局回归测试",
         aliases=(),
-        translation_zh="我们想谈谈汤姆。",
+        translation_zh="作为企业经营者，我能充分表达自己并作出自己的决定。",
     )
 
     application = QApplication.instance() or QApplication([])
@@ -1054,6 +1520,10 @@ def test_practice_layout_never_expands_beyond_the_window(tmp_path, qtbot) -> Non
     answer_fields = root.findChild(QQuickItem, "answerFields")
     audio_toolbar = root.findChild(QQuickItem, "audioToolbar")
     audio_player_panel = root.findChild(QQuickItem, "audioPlayerPanel")
+    audio_playback_cluster = root.findChild(
+        QQuickItem,
+        "audioPlaybackCluster",
+    )
     play_button = root.findChild(QQuickItem, "playButton")
     waveform = root.findChild(QQuickItem, "practiceWaveform")
     replay_button = root.findChild(QQuickItem, "replayButton")
@@ -1065,6 +1535,7 @@ def test_practice_layout_never_expands_beyond_the_window(tmp_path, qtbot) -> Non
     assert answer_fields is not None
     assert audio_toolbar is not None
     assert audio_player_panel is not None
+    assert audio_playback_cluster is not None
     assert play_button is not None
     assert waveform is not None
     assert replay_button is not None
@@ -1075,6 +1546,27 @@ def test_practice_layout_never_expands_beyond_the_window(tmp_path, qtbot) -> Non
     assert audio_toolbar.width() <= 430
     assert audio_player_panel.width() <= practice.width()
     assert waveform.width() <= practice.width()
+    cluster_position = audio_playback_cluster.mapToItem(
+        audio_player_panel,
+        QPointF(0, 0),
+    )
+    left_gutter = cluster_position.x()
+    right_gutter = (
+        audio_player_panel.width()
+        - cluster_position.x()
+        - audio_playback_cluster.width()
+    )
+    assert abs(left_gutter - right_gutter) <= 1
+    assert audio_playback_cluster.width() <= 760
+    waveform_position = waveform.mapToItem(
+        audio_playback_cluster,
+        QPointF(0, 0),
+    )
+    toolbar_position = audio_toolbar.mapToItem(
+        audio_playback_cluster,
+        QPointF(0, 0),
+    )
+    assert waveform_position.x() + waveform.width() < toolbar_position.x()
     for audio_control in (
         play_button,
         waveform,
@@ -1375,11 +1867,13 @@ def test_overflowing_practice_content_can_scroll_until_submit_button_is_visible(
     assert practice_scroll is not None
     assert submit_button is not None
     flickable = practice_scroll.property("contentItem")
-    assert flickable.property("contentHeight") > flickable.height()
-
-    maximum_y = flickable.property("contentHeight") - flickable.height()
-    flickable.setProperty("contentY", maximum_y)
-    QCoreApplication.processEvents()
+    maximum_y = max(
+        0,
+        flickable.property("contentHeight") - flickable.height(),
+    )
+    if maximum_y > 0:
+        flickable.setProperty("contentY", maximum_y)
+        QCoreApplication.processEvents()
     button_position = submit_button.mapToItem(practice_scroll, QPointF(0, 0))
 
     assert button_position.y() + submit_button.height() <= practice_scroll.height()

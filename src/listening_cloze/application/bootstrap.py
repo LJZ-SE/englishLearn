@@ -8,11 +8,13 @@ from PySide6.QtQml import QQmlApplicationEngine
 
 from listening_cloze.application.asset_health import check_bundled_assets
 from listening_cloze.application.controller import PracticeController
+from listening_cloze.application.dictionary_models import DictionaryViewModel
 from listening_cloze.application.learning_models import LearningCenterViewModel
 from listening_cloze.application.learning_service import LearningCenterService
 from listening_cloze.application.practice_engine import PracticeEngine
 from listening_cloze.infrastructure.audio_cache import AudioCache, AudioProfile
 from listening_cloze.infrastructure.database import ContentRepository, UserRepository
+from listening_cloze.infrastructure.dictionary import DictionaryRepository
 from listening_cloze.infrastructure.paths import AppPaths, get_app_paths
 from listening_cloze.infrastructure.supertonic_backend import SupertonicBackend
 from listening_cloze.infrastructure.tts_service import TtsPrefetchService
@@ -25,6 +27,8 @@ class ControllerResources:
     content_path: Path
     model_path: Path
     learning_center: LearningCenterViewModel
+    dictionary_path: Path
+    dictionary: DictionaryViewModel
 
 
 def create_default_controller(
@@ -32,11 +36,13 @@ def create_default_controller(
     user_data_root: str | Path | None = None,
     content_database: str | Path | None = None,
     model_directory: str | Path | None = None,
+    dictionary_database: str | Path | None = None,
 ) -> PracticeController:
     controller, resources = create_runtime_controller(
         user_data_root=user_data_root,
         content_database=content_database,
         model_directory=model_directory,
+        dictionary_database=dictionary_database,
     )
     activate_runtime_resources(
         controller,
@@ -51,6 +57,7 @@ def create_runtime_controller(
     user_data_root: str | Path | None = None,
     content_database: str | Path | None = None,
     model_directory: str | Path | None = None,
+    dictionary_database: str | Path | None = None,
 ) -> tuple[PracticeController, ControllerResources]:
     paths = get_app_paths(root=user_data_root)
     paths.ensure_directories()
@@ -58,6 +65,11 @@ def create_runtime_controller(
         Path(content_database) if content_database is not None else data_path("content.db")
     )
     model_path = Path(model_directory) if model_directory is not None else data_path("supertonic-3")
+    dictionary_path = (
+        Path(dictionary_database)
+        if dictionary_database is not None
+        else data_path("ecdict/dictionary.db")
+    )
     content_repository = ContentRepository(content_path)
     user_repository = UserRepository(paths.user_db, backups_dir=paths.backups)
     engine = PracticeEngine(
@@ -68,16 +80,23 @@ def create_runtime_controller(
     learning_center = LearningCenterViewModel(
         LearningCenterService(content_repository, user_repository)
     )
+    dictionary = DictionaryViewModel(DictionaryRepository(dictionary_path))
     return controller, ControllerResources(
         paths,
         content_path,
         model_path,
         learning_center,
+        dictionary_path,
+        dictionary,
     )
 
 
 def check_runtime_resources(resources: ControllerResources) -> list[str]:
-    return check_bundled_assets(resources.content_path, resources.model_path)
+    return check_bundled_assets(
+        resources.content_path,
+        resources.model_path,
+        resources.dictionary_path,
+    )
 
 
 def activate_runtime_resources(
@@ -114,12 +133,14 @@ def activate_runtime_resources(
 def load_qml_engine(
     controller: PracticeController,
     learning_center: LearningCenterViewModel | None = None,
+    dictionary: DictionaryViewModel | None = None,
 ) -> QQmlApplicationEngine:
     engine = QQmlApplicationEngine()
     engine.setInitialProperties(
         {
             "backend": controller,
             "learning": learning_center,
+            "dictionary": dictionary,
         }
     )
     engine.load(ui_path("Main.qml"))

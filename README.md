@@ -10,11 +10,16 @@
 uv sync --locked --all-groups
 uv run python tools/assets/fetch_supertonic3.py \
   --destination src/listening_cloze/data/supertonic-3
+uv run python tools/assets/fetch_ecdict.py
 uv run python tools/run_tests.py
 uv run python tools/run_app.py
 ```
 
 模型固定为 Supertonic 3 revision `724fb5abbf5502583fb520898d45929e62f02c0b`，下载器会校验全部 17 个资产的 SHA-256。模型约 393 MB，不提交 Git；应用运行时不会联网或自动下载。
+
+离线词典固定为 ECDICT revision `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`。
+仓库内的 `data/ecdict/dictionary.db` 保留完整 770,611 条词典数据和全部原始字段，
+应用运行时只按需查询，不会将完整词典加载到内存。
 
 ## 内容管线
 
@@ -57,6 +62,7 @@ uv run listening-cloze-content status content-work.db
 - 首次答错后再次答对会欢呼，但本题成绩仍为错误。
 - 本地 F3 女声 TTS、完整句子缓存、当前题及后两题后台预生成。
 - SQLite 学习记录、未完成会话恢复、设置持久化、升级前备份和启动资产修复页。
+- 完整 ECDICT 离线英汉词典；可从左侧导航直接搜索，答题时也可选中单词或短语后右键查询音标、英汉释义、词形变化、考试标签和词频。
 - 音频失败自动重试，失败后可重新生成或无损跳过本题。
 
 ## Windows 安装包
@@ -70,4 +76,5 @@ uv run python packaging/windows_build.py latest --ref main --destination outputs
 
 工作流会重新下载并校验模型、运行全量测试、生成 PyInstaller onedir 应用、执行真实离线 TTS 冒烟检查，再用 Inno Setup 生成 `ListeningClozeSetup.exe`、`SHA256SUMS.txt` 和 `build-manifest.json`。
 
-题库逐条归属和第三方许可见 `src/listening_cloze/data/sources.json` 与 `THIRD_PARTY_NOTICES.md`。
+题库逐条归属和第三方许可见 `src/listening_cloze/data/sources.json`、
+`src/listening_cloze/data/ecdict/LICENSE` 与 `THIRD_PARTY_NOTICES.md`。

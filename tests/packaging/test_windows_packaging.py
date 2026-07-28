@@ -77,6 +77,9 @@ def test_workflow_builds_and_uploads_a_verified_installer() -> None:
         "qml/assets/mascot-correct.png",
         "qml/assets/mascot-incorrect.png",
         "qml/assets/sidebar-mascot.png",
+        "data/ecdict/dictionary.db",
+        "data/ecdict/LICENSE",
+        "data/ecdict/asset-manifest.json",
     )
     for fragment in required_fragments:
         assert fragment in workflow
@@ -117,6 +120,7 @@ def test_pyinstaller_spec_collects_runtime_data_and_native_dependencies() -> Non
     assert "src/listening_cloze/__main__.py" in spec
     assert "src/listening_cloze/ui/qml" in spec
     assert "src/listening_cloze/data/content.db" in spec
+    assert "src/listening_cloze/data/ecdict" in spec
     assert "src/listening_cloze/data/sources.json" in spec
     assert "THIRD_PARTY_NOTICES.md" in spec
     assert "src/listening_cloze/data/supertonic-3" in spec

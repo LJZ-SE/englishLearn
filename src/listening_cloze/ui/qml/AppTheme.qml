@@ -17,7 +17,7 @@ QtObject {
     readonly property color warning: "#FF7A1A"
     readonly property color purple: "#9857F5"
     readonly property int sidebarWidth: 248
-    readonly property int compactSidebarWidth: 80
+    readonly property int compactSidebarWidth: 64
     readonly property int compactBreakpoint: 1120
     readonly property int pageMargin: 24
     readonly property int cardGap: 16

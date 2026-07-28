@@ -19,6 +19,22 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--width", type=int, default=1536)
     parser.add_argument("--height", type=int, default=1024)
+    parser.add_argument(
+        "--page",
+        choices=(
+            "home",
+            "history",
+            "wrong-book",
+            "vocabulary",
+            "dictionary",
+            "statistics",
+            "settings",
+            "summary",
+            "repair",
+        ),
+        default="home",
+        help="要截取的学习中心页面",
+    )
     return parser.parse_args()
 
 
@@ -59,6 +75,23 @@ def main() -> int:
         window = engine.rootObjects()[0]
         window.setWidth(arguments.width)
         window.setHeight(arguments.height)
+        if arguments.page == "settings":
+            window.setProperty("learningPage", "settings")
+            controller.openSettings()
+        elif arguments.page == "summary":
+            controller.startQuantitative("daily", "easy", 1)
+            controller.revealAnswer()
+            controller.nextQuestion()
+        elif arguments.page == "repair":
+            controller.setStartupIssues(
+                [
+                    "题库数量异常：应为 30000 个原句 / 90000 道题",
+                    "缺少 Supertonic 离线模型资源：onnx/duration_predictor.onnx",
+                ]
+            )
+        else:
+            window.setProperty("learningPage", arguments.page)
+        learning_center.refresh()
         for _ in range(24):
             QCoreApplication.processEvents()
         QTest.qWait(500)

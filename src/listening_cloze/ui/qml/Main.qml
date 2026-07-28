@@ -6,14 +6,15 @@ ApplicationWindow {
     id: appWindow
     width: 1536
     height: 1024
-    minimumWidth: 960
-    minimumHeight: 700
+    minimumWidth: 900
+    minimumHeight: 600
     visible: true
     title: "听写填空"
     color: AppTheme.background
 
     property var backend: null
     property var learning: null
+    property var dictionary: null
     property string learningPage: "home"
     property string learningSettingsReturnPage: "home"
     readonly property string pageName: backend ? backend.currentPage : "home"
@@ -23,6 +24,9 @@ ApplicationWindow {
     readonly property bool standaloneHeaderVisible:
         !learningShellVisible && !practiceShellVisible
     readonly property bool laptopLayout: height < 840
+    readonly property bool compactNavigation:
+        width < AppTheme.compactBreakpoint
+        || (width <= 1366 && height < 900)
 
     function navigateLearningPage(pageKey) {
         if (pageKey === "practice-config") {
@@ -69,6 +73,10 @@ ApplicationWindow {
             if (appWindow.learning && appWindow.backend.currentPage === "home")
                 appWindow.learning.refresh()
         }
+        function onDictionaryRequested(term) {
+            if (appWindow.dictionary)
+                appWindow.dictionary.lookup(term)
+        }
     }
 
     background: Rectangle {
@@ -79,7 +87,9 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: appWindow.standaloneHeaderVisible ? 88 : 0
+        objectName: "standaloneHeader"
+        height: appWindow.standaloneHeaderVisible
+                ? (appWindow.laptopLayout ? 60 : 88) : 0
         visible: height > 0
         color: Qt.rgba(1, 1, 1, 0.96)
         border.color: AppTheme.border
@@ -87,14 +97,14 @@ ApplicationWindow {
         RowLayout {
             objectName: "headerRow"
             anchors.fill: parent
-            anchors.leftMargin: 34
-            anchors.rightMargin: 34
-            spacing: 18
+            anchors.leftMargin: appWindow.laptopLayout ? 20 : 34
+            anchors.rightMargin: appWindow.laptopLayout ? 20 : 34
+            spacing: appWindow.laptopLayout ? 12 : 18
 
             Image {
                 objectName: "headerLogo"
-                width: 46
-                height: 46
+                width: appWindow.laptopLayout ? 36 : 46
+                height: width
                 source: "assets/app-logo.png"
                 fillMode: Image.PreserveAspectFit
                 smooth: true
@@ -105,7 +115,7 @@ ApplicationWindow {
                 text: "听写填空"
                 color: AppTheme.textPrimary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 25
+                font.pixelSize: appWindow.laptopLayout ? 21 : 25
                 font.weight: Font.DemiBold
             }
             Button {
@@ -232,7 +242,7 @@ ApplicationWindow {
             id: appSidebar
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            compact: appWindow.width < AppTheme.compactBreakpoint
+            compact: appWindow.compactNavigation
             shortHeight: appWindow.laptopLayout
             currentPage: appWindow.learningPage
             resourceStatus: appWindow.backend ? appWindow.backend.resourceStatus : "checking"
@@ -244,7 +254,7 @@ ApplicationWindow {
             anchors.left: appSidebar.right
             anchors.right: parent.right
             anchors.top: parent.top
-            height: appWindow.laptopLayout ? 52 : 60
+            height: appWindow.laptopLayout ? 48 : 60
             color: AppTheme.background
 
             Row {
@@ -331,6 +341,13 @@ ApplicationWindow {
                 visible: appWindow.learningPage === "vocabulary"
                 learning: appWindow.learning
                 controller: appWindow.backend
+                dictionary: appWindow.dictionary
+            }
+
+            DictionaryPage {
+                anchors.fill: parent
+                visible: appWindow.learningPage === "dictionary"
+                dictionary: appWindow.dictionary
             }
 
             StatisticsPage {
@@ -385,7 +402,7 @@ ApplicationWindow {
             objectName: "practiceSidebar"
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            compact: appWindow.width < AppTheme.compactBreakpoint
+            compact: appWindow.compactNavigation
             shortHeight: appWindow.laptopLayout
             currentPage: "practice-config"
             resourceStatus: appWindow.backend
@@ -401,20 +418,21 @@ ApplicationWindow {
             anchors.left: practiceSidebar.right
             anchors.right: parent.right
             anchors.top: parent.top
-            height: appWindow.laptopLayout ? 72 : 88
+            height: appWindow.height < 680 ? 52
+                    : appWindow.laptopLayout ? 58 : 88
             color: AppTheme.background
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: appWindow.laptopLayout ? 18 : 24
-                anchors.rightMargin: appWindow.laptopLayout ? 18 : 24
-                spacing: appWindow.laptopLayout ? 10 : 14
+                anchors.leftMargin: appWindow.laptopLayout ? 14 : 24
+                anchors.rightMargin: appWindow.laptopLayout ? 14 : 24
+                spacing: appWindow.laptopLayout ? 8 : 14
 
                 Button {
                     id: practiceBackHomeButton
                     objectName: "backHomeButton"
-                    Layout.preferredWidth: 104
-                    Layout.preferredHeight: 40
+                    Layout.preferredWidth: appWindow.laptopLayout ? 96 : 104
+                    Layout.preferredHeight: appWindow.laptopLayout ? 36 : 40
                     hoverEnabled: true
                     flat: true
                     background: Rectangle {
@@ -472,8 +490,8 @@ ApplicationWindow {
                 Button {
                     id: practiceEndSessionButton
                     objectName: "endSessionButton"
-                    Layout.preferredWidth: 104
-                    Layout.preferredHeight: 40
+                    Layout.preferredWidth: appWindow.laptopLayout ? 96 : 104
+                    Layout.preferredHeight: appWindow.laptopLayout ? 36 : 40
                     hoverEnabled: true
                     background: Rectangle {
                         radius: 10
@@ -497,8 +515,8 @@ ApplicationWindow {
                 Button {
                     id: practiceSettingsButton
                     objectName: "settingsButton"
-                    Layout.preferredWidth: 42
-                    Layout.preferredHeight: 40
+                    Layout.preferredWidth: appWindow.laptopLayout ? 38 : 42
+                    Layout.preferredHeight: appWindow.laptopLayout ? 36 : 40
                     hoverEnabled: true
                     flat: true
                     background: Rectangle {
@@ -517,7 +535,7 @@ ApplicationWindow {
 
                 Rectangle {
                     objectName: "offlineBadge"
-                    visible: appWindow.width >= AppTheme.compactBreakpoint
+                    visible: !appWindow.compactNavigation
                              && !appWindow.laptopLayout
                     Layout.preferredWidth: 132
                     Layout.preferredHeight: 40
@@ -559,6 +577,7 @@ ApplicationWindow {
             anchors.top: practiceUtilityBar.bottom
             anchors.bottom: parent.bottom
             controller: appWindow.backend
+            dictionary: appWindow.dictionary
             laptopLayout: appWindow.laptopLayout
         }
     }
@@ -575,5 +594,10 @@ ApplicationWindow {
         SummaryPage { controller: appWindow.backend }
         SettingsPage { controller: appWindow.backend }
         RepairPage { controller: appWindow.backend }
+    }
+
+    DictionaryDrawer {
+        anchors.fill: parent
+        viewModel: appWindow.dictionary
     }
 }

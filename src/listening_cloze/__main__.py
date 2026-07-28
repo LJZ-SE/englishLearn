@@ -58,6 +58,7 @@ def _run(smoke_test: bool) -> int:
     engine = load_qml_engine(
         controller,
         resources.learning_center if resources is not None else None,
+        resources.dictionary if resources is not None else None,
     )
     root_window = engine.rootObjects()[0]
     root_window.show()

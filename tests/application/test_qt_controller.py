@@ -121,6 +121,27 @@ def test_controller_exposes_multi_blank_question_and_preserves_first_result(
     assert controller.currentPage == "summary"
 
 
+def test_controller_only_requests_dictionary_after_answer_is_available(
+    tmp_path: Path,
+) -> None:
+    engine = PracticeEngine(
+        FakeContentRepository([_question("q1", "take part in")]),
+        UserRepository(tmp_path / "user.db"),
+        rng=random.Random(101),
+    )
+    controller = PracticeController(engine)
+    requested = QSignalSpy(controller.dictionaryRequested)
+    controller.startQuantitative("daily", "easy", 1)
+
+    controller.requestCurrentDictionary()
+    assert requested.count() == 0
+
+    controller.revealAnswer()
+    controller.requestCurrentDictionary()
+    assert requested.count() == 1
+    assert requested.at(0) == ["take part in"]
+
+
 def test_controller_category_label_uses_database_scene_label(tmp_path: Path) -> None:
     question = _question(
         "travel-question",

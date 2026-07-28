@@ -8,6 +8,7 @@ Item {
     objectName: "practicePage"
 
     property var controller
+    property var dictionary
     property bool laptopLayout: false
     readonly property int blankCount: controller ? controller.blankCount : 2
     readonly property string state: controller ? controller.feedbackState : "idle"
@@ -28,9 +29,10 @@ Item {
         sentenceLength > 120 ? 990 : sentenceLength > 86 ? 1040 : 1000
     readonly property real waveformScale:
         sentenceLength > 130 ? 0.58 : sentenceLength > 90 ? 0.72 : 1
-    readonly property int waveformPreferredWidth:
-        Math.max(220, Math.round((page.width - 560) * waveformScale))
+    readonly property int audioPlaybackClusterMaximumWidth:
+        Math.max(760, Math.round(1180 * waveformScale))
     readonly property bool compactContent: width < 900
+    readonly property bool shortViewport: height < 620
     readonly property bool denseQuestionLayout:
         sentenceLength > 86 || height < 760 || laptopLayout
 
@@ -105,6 +107,22 @@ Item {
     function clearAnswers() {
         for (let index = 0; index < answerRepeater.count; index++)
             answerRepeater.itemAt(index).text = ""
+    }
+
+    function normalizeDictionarySelection(value) {
+        return value
+            .replace(/\s+/g, " ")
+            .trim()
+            .replace(/^[^A-Za-z0-9'-]+|[^A-Za-z0-9'-]+$/g, "")
+            .trim()
+    }
+
+    function lookupDictionarySelection(value) {
+        const term = normalizeDictionarySelection(value)
+        if (term.length === 0 || !page.dictionary)
+            return false
+        page.dictionary.lookup(term)
+        return true
     }
 
     function refreshInputFocus() {
@@ -220,7 +238,8 @@ Item {
                 objectName: "practiceScroll"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: page.laptopLayout ? 20
+                padding: page.shortViewport ? 14
+                         : page.laptopLayout ? 16
                          : page.compactContent ? 24
                          : page.denseQuestionLayout ? 32 : 40
                 clip: true
@@ -232,7 +251,8 @@ Item {
                 ColumnLayout {
                     id: practiceContent
                     width: practiceScroll.availableWidth
-                    spacing: page.laptopLayout ? 8
+                    spacing: page.shortViewport ? 6
+                             : page.laptopLayout ? 8
                              : page.compactContent ? 14
                              : page.denseQuestionLayout ? 12 : 20
 
@@ -240,7 +260,8 @@ Item {
                         text: "听音频，补全句子"
                         color: AppTheme.textPrimary
                         font.family: AppTheme.fontFamily
-                        font.pixelSize: page.laptopLayout ? 22 : 26
+                        font.pixelSize: page.shortViewport ? 20
+                                        : page.laptopLayout ? 22 : 26
                         font.weight: Font.DemiBold
                     }
 
@@ -248,18 +269,21 @@ Item {
                         id: audioHero
                         objectName: "audioHero"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: page.laptopLayout ? 138
+                        Layout.preferredHeight: page.shortViewport ? 118
+                                                : page.laptopLayout ? 126
                                                 : page.compactContent ? 164
                                                 : page.denseQuestionLayout
                                                   ? 172 : 214
-                        spacing: page.laptopLayout ? 12
+                        spacing: page.shortViewport ? 8
+                                 : page.laptopLayout ? 12
                                  : page.compactContent ? 14 : 22
 
                         Rectangle {
                             id: audioPlayerPanel
                             objectName: "audioPlayerPanel"
                             Layout.fillWidth: true
-                            Layout.preferredHeight: page.laptopLayout ? 138
+                            Layout.preferredHeight: page.shortViewport ? 118
+                                                    : page.laptopLayout ? 126
                                                     : page.compactContent ? 164
                                                     : page.denseQuestionLayout
                                                       ? 172 : 204
@@ -269,23 +293,32 @@ Item {
                             border.color: "#BEDCFA"
 
                             RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: page.laptopLayout ? 14
-                                                    : page.compactContent ? 18 : 24
-                                anchors.rightMargin: page.laptopLayout ? 14
-                                                     : page.compactContent ? 18 : 24
-                                anchors.topMargin: page.laptopLayout ? 10
-                                                   : page.compactContent ? 14 : 18
-                                anchors.bottomMargin: page.laptopLayout ? 10
-                                                      : page.compactContent ? 14 : 18
-                                spacing: page.laptopLayout ? 14
+                                id: audioPlaybackCluster
+                                objectName: "audioPlaybackCluster"
+                                anchors.centerIn: parent
+                                width: Math.min(
+                                    parent.width - (
+                                        page.shortViewport ? 20
+                                        : page.laptopLayout ? 24
+                                        : page.compactContent ? 36 : 48
+                                    ),
+                                    page.audioPlaybackClusterMaximumWidth
+                                )
+                                height: parent.height - (
+                                    page.shortViewport ? 16
+                                    : page.laptopLayout ? 16
+                                    : page.compactContent ? 28 : 36
+                                )
+                                spacing: page.shortViewport ? 10
+                                         : page.laptopLayout ? 12
                                          : page.compactContent ? 16 : 20
 
                                 Button {
                                     id: playButton
                                     objectName: "playButton"
                                     Layout.preferredWidth:
-                                        page.laptopLayout ? 68
+                                        page.shortViewport ? 60
+                                        : page.laptopLayout ? 64
                                         : page.compactContent ? 72 : 88
                                     Layout.preferredHeight: width
                                     Layout.alignment: Qt.AlignVCenter
@@ -314,65 +347,72 @@ Item {
                                                 : page.playing
                                                   ? "pause" : "play_arrow"
                                         iconColor: "white"
-                                        iconSize: page.playing ? 32 : 38
+                                        iconSize: page.shortViewport
+                                                  ? (page.playing ? 26 : 32)
+                                                  : page.playing ? 32 : 38
                                     }
                                     onClicked: if (page.controller)
                                                    page.controller.play()
                                 }
 
-                                ColumnLayout {
-                                    id: audioTrackColumn
+                                Item {
+                                    id: waveformLane
+                                    objectName: "waveformLane"
                                     Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    spacing: page.laptopLayout ? 6
-                                             : page.compactContent ? 8 : 12
+                                    Layout.preferredHeight:
+                                        page.shortViewport ? 64
+                                        : page.laptopLayout ? 72
+                                        : page.compactContent ? 90 : 110
+                                    Layout.maximumHeight:
+                                        page.shortViewport ? 64
+                                        : page.laptopLayout ? 72
+                                        : page.compactContent ? 90 : 110
+                                    Layout.alignment: Qt.AlignVCenter
 
-                                    Item {
-                                        id: waveformLane
-                                        objectName: "waveformLane"
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight:
-                                            page.laptopLayout ? 50
-                                            : page.compactContent ? 66 : 74
-
-                                        Waveform {
-                                            objectName: "practiceWaveform"
-                                            anchors.left: parent.left
-                                            anchors.verticalCenter:
-                                                parent.verticalCenter
-                                            width: Math.min(
-                                                parent.width,
-                                                page.waveformPreferredWidth
-                                            )
-                                            height: parent.height
-                                            animated: page.playing
-                                            levels: page.controller
-                                                    ? page.controller.waveformLevels
-                                                    : []
-                                            progress: page.playbackProgress
-                                        }
+                                    Waveform {
+                                        objectName: "practiceWaveform"
+                                        anchors.fill: parent
+                                        animated: page.playing
+                                        levels: page.controller
+                                                ? page.controller.waveformLevels
+                                                : []
+                                        progress: page.playbackProgress
                                     }
+                                }
 
-                                    RowLayout {
-                                        id: audioToolbar
-                                        objectName: "audioToolbar"
-                                        Layout.preferredWidth: Math.min(
-                                            430,
-                                            audioTrackColumn.width
-                                        )
-                                        Layout.maximumWidth: 430
-                                        Layout.preferredHeight:
-                                            page.laptopLayout ? 38 : 42
-                                        spacing: page.laptopLayout ? 8 : 12
+                                Rectangle {
+                                    id: audioToolbar
+                                    objectName: "audioToolbar"
+                                    Layout.preferredWidth:
+                                        page.shortViewport ? 224
+                                        : page.laptopLayout ? 236
+                                        : page.compactContent ? 248 : 260
+                                    Layout.maximumWidth: 260
+                                    Layout.preferredHeight:
+                                        page.shortViewport ? 86
+                                        : page.laptopLayout ? 90
+                                        : page.compactContent ? 98 : 104
+                                    Layout.alignment: Qt.AlignVCenter
+                                    radius: 12
+                                    color: "#FFFFFF"
+                                    border.width: 1
+                                    border.color: "#D7E6F6"
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins:
+                                            page.shortViewport ? 6 : 8
+                                        spacing:
+                                            page.shortViewport ? 6 : 8
 
                                         Button {
                                             id: replayButton
                                             objectName: "replayButton"
-                                            Layout.preferredWidth:
-                                                page.laptopLayout ? 104
-                                                : page.compactContent ? 108 : 118
+                                            Layout.fillWidth: true
                                             Layout.preferredHeight:
-                                                page.laptopLayout ? 38 : 42
+                                                page.shortViewport ? 34
+                                                : page.laptopLayout ? 36
+                                                : page.compactContent ? 38 : 40
                                             hoverEnabled: true
                                             scale: down ? 0.96 : 1
                                             Behavior on scale {
@@ -417,11 +457,11 @@ Item {
                                         Rectangle {
                                             id: speedSelector
                                             objectName: "speedSelector"
-                                            Layout.preferredWidth:
-                                                page.compactContent ? 236 : 300
-                                            Layout.maximumWidth: 300
+                                            Layout.fillWidth: true
                                             Layout.preferredHeight:
-                                                page.laptopLayout ? 38 : 42
+                                                page.shortViewport ? 34
+                                                : page.laptopLayout ? 36
+                                                : page.compactContent ? 38 : 40
                                             radius: 9
                                             color: AppTheme.softFill
                                             border.width: 1
@@ -590,7 +630,8 @@ Item {
                     }
 
                     Item {
-                        Layout.preferredHeight: page.laptopLayout ? 0
+                        Layout.preferredHeight: page.shortViewport ? 0
+                                                : page.laptopLayout ? 0
                                                 : page.compactContent ? 8
                                                 : page.denseQuestionLayout
                                                   ? 4 : 17
@@ -611,20 +652,24 @@ Item {
                             height: childrenRect.height
                             spacing: 12
 
-                            Text {
+                            SelectableDictionaryText {
+                                objectName: "sentencePrefixText"
                                 width: Math.min(implicitWidth, sentenceFlow.width)
-                                height: Math.max(page.laptopLayout ? 64 : 72,
+                                height: Math.max(page.shortViewport ? 54
+                                                 : page.laptopLayout ? 60 : 72,
                                                  implicitHeight)
                                 text: page.controller
                                       ? page.controller.sentencePrefix
                                       : "I've always "
                                 color: "#101A2D"
                                 font.family: AppTheme.fontFamily
-                                font.pixelSize: page.laptopLayout ? 24
+                                font.pixelSize: page.shortViewport ? 22
+                                                : page.laptopLayout ? 23
                                                 : page.compactContent ? 25 : 28
                                 font.weight: Font.DemiBold
                                 wrapMode: Text.Wrap
                                 verticalAlignment: Text.AlignVCenter
+                                dictionary: page.dictionary
                             }
 
                             Repeater {
@@ -636,15 +681,18 @@ Item {
                                     required property int index
                                     objectName: "answerInput" + index
                                     width: page.answerFieldWidth
-                                    height: page.laptopLayout ? 64 : 72
+                                    height: page.shortViewport ? 54
+                                            : page.laptopLayout ? 60 : 72
                                     horizontalAlignment: TextInput.AlignHCenter
                                     verticalAlignment: TextInput.AlignVCenter
                                     font.family: AppTheme.fontFamily
-                                    font.pixelSize: page.laptopLayout ? 21 : 23
+                                    font.pixelSize: page.shortViewport ? 19
+                                                    : page.laptopLayout ? 20 : 23
                                     color: "#111827"
                                     readOnly: page.visualCorrect
                                               || page.state === "revealed"
                                     selectByMouse: true
+                                    persistentSelection: true
 
                                     background: Rectangle {
                                         radius: 10
@@ -702,29 +750,61 @@ Item {
                                     }
                                     Keys.onReturnPressed: page.submitOrAdvance()
                                     Keys.onEnterPressed: page.submitOrAdvance()
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.RightButton
+                                        cursorShape: Qt.IBeamCursor
+                                        onClicked: {
+                                            if (page.normalizeDictionarySelection(
+                                                    answerField.selectedText
+                                                ).length > 0)
+                                                answerDictionaryMenu.popup(
+                                                    mouse.x,
+                                                    mouse.y
+                                                )
+                                        }
+                                    }
+
+                                    DictionaryContextMenu {
+                                        id: answerDictionaryMenu
+                                        objectName: "answerDictionaryMenu"
+                                        selectedTerm:
+                                            page.normalizeDictionarySelection(
+                                                answerField.selectedText
+                                            )
+                                        lookupEnabled: Boolean(page.dictionary)
+                                        onLookupRequested: term =>
+                                            page.lookupDictionarySelection(term)
+                                    }
                                 }
                             }
 
-                            Text {
+                            SelectableDictionaryText {
+                                objectName: "sentenceSuffixText"
                                 width: Math.min(implicitWidth, sentenceFlow.width)
-                                height: Math.max(page.laptopLayout ? 64 : 72,
+                                height: Math.max(page.shortViewport ? 54
+                                                 : page.laptopLayout ? 60 : 72,
                                                  implicitHeight)
                                 text: page.controller
                                       ? page.controller.sentenceSuffix
                                       : " to master an eastern language."
                                 color: "#101A2D"
                                 font.family: AppTheme.fontFamily
-                                font.pixelSize: page.laptopLayout ? 24
+                                font.pixelSize: page.shortViewport ? 22
+                                                : page.laptopLayout ? 23
                                                 : page.compactContent ? 25 : 28
                                 font.weight: Font.DemiBold
                                 wrapMode: Text.Wrap
                                 verticalAlignment: Text.AlignVCenter
+                                dictionary: page.dictionary
                             }
                         }
                     }
 
                     Item {
-                        Layout.preferredHeight: page.laptopLayout ? 4
+                        Layout.preferredHeight: page.shortViewport ? 0
+                                                : page.laptopLayout ? 4
                                                 : page.compactContent ? 8
                                                 : page.denseQuestionLayout
                                                   ? 14 : 64
@@ -733,7 +813,8 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.preferredHeight: feedbackMessage.text.length > 0
-                                                ? (page.laptopLayout ? 26 : 30)
+                                                ? (page.shortViewport ? 24
+                                                   : page.laptopLayout ? 26 : 30)
                                                 : 0
                         visible: Layout.preferredHeight > 0
                         spacing: 8
@@ -757,7 +838,8 @@ Item {
                             color: page.visualWrong ? "#E83C32"
                                                    : AppTheme.success
                             font.family: AppTheme.fontFamily
-                            font.pixelSize: page.laptopLayout ? 14 : 16
+                            font.pixelSize: page.shortViewport ? 13
+                                            : page.laptopLayout ? 14 : 16
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -767,7 +849,8 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: visible
                                                 ? translationText.implicitHeight
-                                                  + (page.laptopLayout ? 20 : 28)
+                                                  + (page.shortViewport ? 16
+                                                     : page.laptopLayout ? 20 : 28)
                                                 : 0
                         visible: (page.translationPreviewVisible || page.visualCorrect
                                   || page.state === "revealed")
@@ -781,27 +864,32 @@ Item {
                         Text {
                             id: translationText
                             anchors.fill: parent
-                            anchors.margins: page.laptopLayout ? 10 : 14
+                            anchors.margins: page.shortViewport ? 8
+                                             : page.laptopLayout ? 10 : 14
                             text: "中文翻译："
                                   + (page.controller
                                      ? page.controller.sentenceTranslation : "")
                             color: "#31536F"
                             font.family: AppTheme.fontFamily
-                            font.pixelSize: page.laptopLayout ? 14 : 16
+                            font.pixelSize: page.shortViewport ? 13
+                                            : page.laptopLayout ? 14 : 16
                             wrapMode: Text.Wrap
                         }
                     }
 
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredHeight: page.laptopLayout ? 48 : 56
-                        spacing: page.laptopLayout ? 18 : 24
+                        Layout.preferredHeight: page.shortViewport ? 44
+                                                : page.laptopLayout ? 48 : 56
+                        spacing: page.shortViewport ? 12
+                                 : page.laptopLayout ? 18 : 24
 
                         PrimaryButton {
                             id: submitButton
                             objectName: "submitButton"
                             Layout.preferredWidth: 218
-                            Layout.preferredHeight: page.laptopLayout ? 48 : 56
+                            Layout.preferredHeight: page.shortViewport ? 44
+                                                    : page.laptopLayout ? 48 : 56
                             text: page.controller && page.controller.canAdvance
                                   ? "下一题" : "检查答案"
                             onClicked: page.submitOrAdvance()
@@ -811,7 +899,8 @@ Item {
                             id: translationToggleButton
                             objectName: "translationToggleButton"
                             Layout.preferredWidth: 196
-                            Layout.preferredHeight: page.laptopLayout ? 48 : 56
+                            Layout.preferredHeight: page.shortViewport ? 44
+                                                    : page.laptopLayout ? 48 : 56
                             text: page.translationPreviewVisible
                                   ? "隐藏中文" : "显示中文"
                             secondary: true
@@ -826,7 +915,8 @@ Item {
                             id: revealAnswerButton
                             objectName: "revealAnswerButton"
                             Layout.preferredWidth: 112
-                            Layout.preferredHeight: page.laptopLayout ? 44 : 48
+                            Layout.preferredHeight: page.shortViewport ? 40
+                                                    : page.laptopLayout ? 44 : 48
                             text: "查看答案"
                             flat: true
                             enabled: !page.answered
@@ -867,17 +957,38 @@ Item {
                             onClicked: if (page.controller)
                                 page.controller.addCurrentToVocabulary()
                         }
+
+                        Button {
+                            id: currentDictionaryButton
+                            objectName: "currentDictionaryButton"
+                            Layout.preferredWidth: 112
+                            Layout.preferredHeight: page.laptopLayout ? 44 : 48
+                            visible: page.answered
+                            flat: true
+                            contentItem: Text {
+                                text: "查看释义"
+                                color: AppTheme.primary
+                                font.family: AppTheme.fontFamily
+                                font.pixelSize: 15
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: if (page.controller)
+                                           page.controller.requestCurrentDictionary()
+                        }
                     }
 
                     Row {
                         objectName: "shortcutHint"
                         Layout.alignment: Qt.AlignHCenter
-                        height: page.laptopLayout ? 26 : 30
+                        height: page.shortViewport ? 24
+                                : page.laptopLayout ? 26 : 30
                         spacing: 8
 
                         Rectangle {
                             width: page.answerInputFocused ? 50 : 62
-                            height: page.laptopLayout ? 26 : 30
+                            height: page.shortViewport ? 24
+                                    : page.laptopLayout ? 26 : 30
                             radius: 6
                             color: "white"
                             border.width: 1
@@ -890,31 +1001,37 @@ Item {
                                       : "Space"
                                 color: "#5E7090"
                                 font.family: AppTheme.fontFamily
-                                font.pixelSize: page.laptopLayout ? 12 : 13
+                                font.pixelSize: page.shortViewport ? 11
+                                                : page.laptopLayout ? 12 : 13
                             }
                         }
 
                         Text {
-                            height: page.laptopLayout ? 26 : 30
+                            height: page.shortViewport ? 24
+                                    : page.laptopLayout ? 26 : 30
                             text: "重听音频"
                             color: "#71819A"
                             font.family: AppTheme.fontFamily
-                            font.pixelSize: page.laptopLayout ? 12 : 13
+                            font.pixelSize: page.shortViewport ? 11
+                                            : page.laptopLayout ? 12 : 13
                             verticalAlignment: Text.AlignVCenter
                         }
 
                         Text {
-                            height: page.laptopLayout ? 26 : 30
+                            height: page.shortViewport ? 24
+                                    : page.laptopLayout ? 26 : 30
                             text: "·"
                             color: "#71819A"
                             font.family: AppTheme.fontFamily
-                            font.pixelSize: page.laptopLayout ? 12 : 13
+                            font.pixelSize: page.shortViewport ? 11
+                                            : page.laptopLayout ? 12 : 13
                             verticalAlignment: Text.AlignVCenter
                         }
 
                         Rectangle {
                             width: 58
-                            height: page.laptopLayout ? 26 : 30
+                            height: page.shortViewport ? 24
+                                    : page.laptopLayout ? 26 : 30
                             radius: 6
                             color: "white"
                             border.width: 1
@@ -924,17 +1041,20 @@ Item {
                                 text: "Enter"
                                 color: "#5E7090"
                                 font.family: AppTheme.fontFamily
-                                font.pixelSize: page.laptopLayout ? 12 : 13
+                                font.pixelSize: page.shortViewport ? 11
+                                                : page.laptopLayout ? 12 : 13
                             }
                         }
 
                         Text {
-                            height: page.laptopLayout ? 26 : 30
+                            height: page.shortViewport ? 24
+                                    : page.laptopLayout ? 26 : 30
                             text: page.controller && page.controller.canAdvance
                                   ? "进入下一题" : "检查答案"
                             color: "#71819A"
                             font.family: AppTheme.fontFamily
-                            font.pixelSize: page.laptopLayout ? 12 : 13
+                            font.pixelSize: page.shortViewport ? 11
+                                            : page.laptopLayout ? 12 : 13
                             verticalAlignment: Text.AlignVCenter
                         }
                     }
@@ -951,19 +1071,22 @@ Item {
                 id: progressTrack
                 objectName: "progressTrack"
                 Layout.fillWidth: true
-                Layout.preferredHeight: page.laptopLayout ? 88 : 130
+                Layout.preferredHeight: page.shortViewport ? 68
+                                        : page.laptopLayout ? 76 : 130
 
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: page.compactContent ? 20 : 24
                     anchors.rightMargin: page.compactContent ? 20 : 24
-                    spacing: page.laptopLayout ? 14 : 20
+                    spacing: page.shortViewport ? 10
+                             : page.laptopLayout ? 14 : 20
 
                     Text {
                         text: "题目进度"
                         color: "#40516A"
                         font.family: AppTheme.fontFamily
-                        font.pixelSize: page.laptopLayout ? 13 : 14
+                        font.pixelSize: page.shortViewport ? 12
+                                        : page.laptopLayout ? 13 : 14
                         font.weight: Font.Medium
                     }
 
@@ -974,7 +1097,8 @@ Item {
 
                     Row {
                         spacing: page.compactContent ? 8
-                                 : page.laptopLayout ? 20 : 30
+                                 : page.shortViewport ? 12
+                                 : page.laptopLayout ? 18 : 30
 
                         Repeater {
                             model: page.controller
@@ -986,7 +1110,8 @@ Item {
                                 spacing: 4
 
                                 Rectangle {
-                                    width: page.laptopLayout ? 32 : 36
+                                    width: page.shortViewport ? 28
+                                           : page.laptopLayout ? 32 : 36
                                     height: width
                                     radius: 18
                                     color: modelData === "current"
@@ -1014,7 +1139,8 @@ Item {
                                                    : "#63748E"
                                         font.family: AppTheme.fontFamily
                                         font.pixelSize:
-                                            page.laptopLayout ? 13 : 14
+                                            page.shortViewport ? 12
+                                            : page.laptopLayout ? 13 : 14
                                         font.weight: Font.Medium
                                     }
                                 }
@@ -1022,12 +1148,14 @@ Item {
                                 AppIcon {
                                     anchors.horizontalCenter:
                                         parent.horizontalCenter
-                                    width: page.laptopLayout ? 14 : 16
+                                    width: page.shortViewport ? 12
+                                           : page.laptopLayout ? 14 : 16
                                     height: width
                                     visible: modelData === "correct"
                                     name: "check"
                                     iconColor: AppTheme.success
-                                    iconSize: page.laptopLayout ? 13 : 15
+                                    iconSize: page.shortViewport ? 11
+                                              : page.laptopLayout ? 13 : 15
                                 }
                             }
                         }
@@ -1045,7 +1173,8 @@ Item {
                               + " 待掌握"
                         color: "#40516A"
                         font.family: AppTheme.fontFamily
-                        font.pixelSize: page.laptopLayout ? 14 : 15
+                        font.pixelSize: page.shortViewport ? 12
+                                        : page.laptopLayout ? 14 : 15
                     }
                 }
             }

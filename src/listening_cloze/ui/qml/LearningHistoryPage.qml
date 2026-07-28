@@ -7,8 +7,11 @@ Item {
     property var controller
     property var learning
     property string selectedFilter: "all"
+    readonly property bool compactTable: width < 1100
 
     Flickable {
+        id: historyScroll
+        objectName: "historyScroll"
         anchors.fill: parent
         contentWidth: width
         contentHeight: content.height + AppTheme.pageMargin
@@ -29,7 +32,7 @@ Item {
                 text: "学习记录"
                 color: AppTheme.textPrimary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 28
+                font.pixelSize: page.compactTable ? 24 : 28
                 font.weight: Font.DemiBold
             }
             Text {
@@ -39,7 +42,7 @@ Item {
                 text: "查看每次练习的进度、正确率和学习时长，可继续未完成任务。"
                 color: AppTheme.textSecondary
                 font.family: AppTheme.fontFamily
-                font.pixelSize: 14
+                font.pixelSize: page.compactTable ? 13 : 14
             }
 
             Row {
@@ -80,8 +83,10 @@ Item {
 
                 Row {
                     id: tableHeader
+                    objectName: "historyTableHeader"
                     width: parent.width
-                    height: 42
+                    height: page.compactTable ? 0 : 42
+                    visible: !page.compactTable
                     spacing: 10
                     Repeater {
                         model: [
@@ -118,12 +123,13 @@ Item {
                         id: historyRow
                         required property var modelData
                         width: historyList.width
-                        height: 104
+                        height: page.compactTable ? 96 : 104
                         radius: 12
                         color: "#F9FBFE"
                         border.color: AppTheme.border
 
                         Row {
+                            visible: !page.compactTable
                             anchors.fill: parent
                             anchors.margins: 16
                             spacing: 10
@@ -168,7 +174,57 @@ Item {
                             }
                         }
 
+                        Column {
+                            objectName: "historyCompactRow"
+                            visible: page.compactTable
+                            anchors.left: parent.left
+                            anchors.right: continueButton.visible
+                                           ? continueButton.left : parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 16
+                            anchors.rightMargin: 16
+                            anchors.topMargin: 10
+                            anchors.bottomMargin: 10
+                            spacing: 4
+
+                            Text {
+                                width: parent.width
+                                text: historyRow.modelData.sceneLabel
+                                color: AppTheme.textPrimary
+                                font.family: AppTheme.fontFamily
+                                font.pixelSize: 15
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: historyRow.modelData.modeLabel
+                                      + " · "
+                                      + historyRow.modelData.difficultyLabel
+                                      + " · 进度 " + historyRow.modelData.progress
+                                      + " · 正确率 " + historyRow.modelData.accuracy
+                                color: AppTheme.textSecondary
+                                font.family: AppTheme.fontFamily
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: historyRow.modelData.duration
+                                      + " · " + historyRow.modelData.date
+                                      + (historyRow.modelData.completed
+                                         ? " · 已完成" : " · 未完成")
+                                color: historyRow.modelData.completed
+                                       ? AppTheme.success : AppTheme.warning
+                                font.family: AppTheme.fontFamily
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                        }
+
                         PrimaryButton {
+                            id: continueButton
                             visible: !historyRow.modelData.completed
                             anchors.right: parent.right
                             anchors.rightMargin: 16

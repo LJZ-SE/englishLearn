@@ -17,12 +17,12 @@ Rectangle {
 
     Row {
         id: brand
-        x: compact ? 17 : 28
-        y: sidebar.shortHeight ? 18 : 30
+        x: compact ? 14 : 28
+        y: sidebar.shortHeight ? 14 : 30
         spacing: 14
 
         Image {
-            width: sidebar.shortHeight ? 42 : 48
+            width: sidebar.compact ? 36 : sidebar.shortHeight ? 40 : 48
             height: width
             source: "assets/app-logo.png"
             fillMode: Image.PreserveAspectFit
@@ -53,11 +53,11 @@ Rectangle {
     Column {
         id: navigation
         anchors.top: brand.bottom
-        anchors.topMargin: sidebar.shortHeight ? 22 : 44
+        anchors.topMargin: sidebar.shortHeight ? 18 : 44
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: compact ? 10 : 14
-        anchors.rightMargin: compact ? 10 : 14
+        anchors.leftMargin: compact ? 8 : 14
+        anchors.rightMargin: compact ? 8 : 14
         spacing: sidebar.shortHeight ? 4 : 8
 
         Repeater {
@@ -67,6 +67,7 @@ Rectangle {
                 { key: "history", label: "学习记录", icon: "description" },
                 { key: "wrong-book", label: "错题本", icon: "disabled_by_default" },
                 { key: "vocabulary", label: "词汇本", icon: "menu_book" },
+                { key: "dictionary", label: "离线词典", icon: "translate" },
                 { key: "statistics", label: "统计分析", icon: "bar_chart" },
                 { key: "settings", label: "设置", icon: "settings" }
             ]
@@ -76,11 +77,11 @@ Rectangle {
                 required property var modelData
                 objectName: "nav_" + modelData.key
                 width: navigation.width
-                height: sidebar.shortHeight ? 40 : 46
+                height: sidebar.shortHeight ? 36 : 46
                 hoverEnabled: true
 
                 background: Rectangle {
-                    radius: 10
+                    radius: 9
                     color: sidebar.currentPage === navigationButton.modelData.key
                            ? "#E7F2FF"
                            : navigationButton.hovered ? "#F0F6FC" : "transparent"
@@ -95,7 +96,7 @@ Rectangle {
                         name: navigationButton.modelData.icon
                         iconColor: sidebar.currentPage === navigationButton.modelData.key
                                    ? AppTheme.primary : "#365581"
-                        iconSize: 20
+                        iconSize: sidebar.compact ? 18 : 20
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {

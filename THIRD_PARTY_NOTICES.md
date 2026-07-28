@@ -10,6 +10,16 @@ Copyright (c) 2025 Supertone Inc. Licensed under the MIT License. The SDK source
 
 The bundled Supertonic 3 model and voice styles are distributed under the BigScience Open RAIL-M License. The complete license is installed with the model at `listening_cloze/data/supertonic-3/LICENSE`.
 
+## ECDICT
+
+The application bundles the complete ECDICT English-to-Chinese dictionary database from
+<https://github.com/skywind3000/ECDICT>, pinned to revision
+`bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`.
+
+ECDICT is distributed under the MIT License. The complete license is installed at
+`listening_cloze/data/ecdict/LICENSE`. The bundled SQLite database preserves all 770,611
+source rows and the original dictionary fields.
+
 ## Bundled language corpora
 
 The offline content library contains attributed or source-linked material from Tatoeba,

@@ -11,10 +11,15 @@ from listening_cloze.application.asset_health import (
 
 
 def test_missing_database_and_model_are_reported(tmp_path: Path) -> None:
-    issues = check_bundled_assets(tmp_path / "content.db", tmp_path / "supertonic-3")
+    issues = check_bundled_assets(
+        tmp_path / "content.db",
+        tmp_path / "supertonic-3",
+        tmp_path / "ecdict" / "dictionary.db",
+    )
 
     assert any("content.db" in issue for issue in issues)
     assert any("Supertonic" in issue for issue in issues)
+    assert any("ECDICT" in issue for issue in issues)
 
 
 def test_complete_database_and_required_model_files_pass_health_check(tmp_path: Path) -> None:
@@ -57,8 +62,40 @@ def test_complete_database_and_required_model_files_pass_health_check(tmp_path: 
         ),
         encoding="utf-8",
     )
+    dictionary_dir = tmp_path / "ecdict"
+    dictionary_dir.mkdir()
+    dictionary_db = dictionary_dir / "dictionary.db"
+    with sqlite3.connect(dictionary_db) as connection:
+        connection.execute("CREATE TABLE entries(word TEXT NOT NULL)")
+        connection.execute("INSERT INTO entries VALUES ('listen')")
+    (dictionary_dir / "LICENSE").write_text("MIT License", encoding="utf-8")
+    (dictionary_dir / "asset-manifest.json").write_text(
+        json.dumps(
+            {
+                "revision": "bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b",
+                "row_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    assert check_bundled_assets(content_db, model_dir) == []
+    assert (
+        check_bundled_assets(
+            content_db,
+            model_dir,
+            dictionary_db,
+            expected_dictionary_count=1,
+        )
+        == []
+    )
 
     (model_dir / "voice_styles/F3.json").write_bytes(b"damaged")
-    assert any("哈希" in issue for issue in check_bundled_assets(content_db, model_dir))
+    assert any(
+        "哈希" in issue
+        for issue in check_bundled_assets(
+            content_db,
+            model_dir,
+            dictionary_db,
+            expected_dictionary_count=1,
+        )
+    )

@@ -5,6 +5,9 @@ AppSidebar 1.0 AppSidebar.qml
 ChoiceChip 1.0 ChoiceChip.qml
 DashboardCard 1.0 DashboardCard.qml
 DashboardSceneSelector 1.0 DashboardSceneSelector.qml
+DictionaryContextMenu 1.0 DictionaryContextMenu.qml
+DictionaryPage 1.0 DictionaryPage.qml
+DictionaryDrawer 1.0 DictionaryDrawer.qml
 FeedbackMascot 1.0 FeedbackMascot.qml
 HomePage 1.0 HomePage.qml
 LearningTrend 1.0 LearningTrend.qml
@@ -14,6 +17,7 @@ PracticePage 1.0 PracticePage.qml
 PrimaryButton 1.0 PrimaryButton.qml
 RepairPage 1.0 RepairPage.qml
 SceneSelector 1.0 SceneSelector.qml
+SelectableDictionaryText 1.0 SelectableDictionaryText.qml
 SettingsPage 1.0 SettingsPage.qml
 StatisticsPage 1.0 StatisticsPage.qml
 SummaryPage 1.0 SummaryPage.qml

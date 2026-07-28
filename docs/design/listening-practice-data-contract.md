@@ -35,6 +35,7 @@
 | 音频 | `volume` | `float` | 播放音量 |
 | 动效 | `animationsEnabled` | `bool` | 本地设置 |
 | 词汇本 | `currentVocabularySaved` | `bool` | 当前答案是否已经收录 |
+| 离线词典 | `dictionaryRequested(term)` | `signal` | 答案可见后请求查询当前完整答案 |
 
 `stateChanged` 驱动常规字段刷新；`questionChanged` 表示题目上下文已经整体切换；`answerRevealed(values)` 只负责把标准答案逐词回填到现有输入框；`audioRequested(questionId, rate)` 表示当前题当前语速可以开始播放。
 
@@ -54,6 +55,8 @@
 | 音频重试 | `retryAudio()` | 重新调度当前题 TTS |
 | 跳过音频异常题 | `skipAudioQuestion()` | 以同场景、同难度的新题替换当前题 |
 | 加入词汇本 | `addCurrentToVocabulary()` | 以 `manual` 原因写入或合并词汇记录 |
+| 查看释义 | `requestCurrentDictionary()` | 仅在答案可见后发送查询信号，不修改成绩和学习记录 |
+| 选词查询 | `DictionaryViewModel.lookup(term)` | 对当前选中的单词或短语执行只读查询并打开词典抽屉 |
 
 “显示中文/隐藏中文”是纯页面命令，只切换 QML 的 `translationPreviewVisible`，不得调用控制器，不填答案，不修改题目状态，也不写数据库。
 
@@ -69,6 +72,7 @@
 8. 正确或查看答案后自动显示完整中文翻译；主动“显示中文”仅预览翻译。
 9. 句子过长时按单词和输入框整体换行；波形宽度按句长比例缩短；内容区必须可纵向滚动，核心按钮不能被不可滚动区域遮挡。
 10. 无尽模式从简单开始，当前难度连续答对 5 题升级，连续答错 5 题降级，其他情况难度不变；难度边界不越界。
+11. 可见英文句子允许鼠标选择单词或短语；仅在存在有效选区时显示“查看释义”右键菜单，查询不得修改答案或题目状态。
 
 ## 持久化映射
 
@@ -81,6 +85,7 @@
 | 单词/短语、来源题目、完整句子、翻译、收录原因 | 用户库 `vocabulary_entries` |
 | 音量、语速、动画、每日目标和最近场景选择 | 用户库 `settings` |
 | TTS 模型、音频和波形 | 本地离线资源目录及音频缓存目录 |
+| 音标、英汉释义、考试标签、词频和词形变化 | 完整 ECDICT `data/ecdict/dictionary.db` |
 
 ## 缺口审计结论
 

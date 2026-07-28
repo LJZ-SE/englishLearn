@@ -65,6 +65,9 @@ jobs:
             "dist/ListeningCloze/_internal/listening_cloze/ui/qml/assets/mascot-incorrect.png",
             "dist/ListeningCloze/_internal/listening_cloze/ui/qml/assets/sidebar-mascot.png",
             "dist/ListeningCloze/_internal/listening_cloze/data/content.db",
+            "dist/ListeningCloze/_internal/listening_cloze/data/ecdict/dictionary.db",
+            "dist/ListeningCloze/_internal/listening_cloze/data/ecdict/LICENSE",
+            "dist/ListeningCloze/_internal/listening_cloze/data/ecdict/asset-manifest.json",
             "dist/ListeningCloze/_internal/listening_cloze/data/supertonic-3/onnx/vocoder.onnx",
             "dist/ListeningCloze/_internal/listening_cloze/data/supertonic-3/voice_styles/F3.json"
           )

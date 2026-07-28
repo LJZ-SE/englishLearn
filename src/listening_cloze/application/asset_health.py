@@ -18,11 +18,16 @@ REQUIRED_MODEL_FILES = (
 MODEL_REVISION = "724fb5abbf5502583fb520898d45929e62f02c0b"
 EXPECTED_SENTENCE_COUNT = 36_000
 EXPECTED_QUESTION_COUNT = 108_000
+EXPECTED_DICTIONARY_COUNT = 770_611
+ECDICT_REVISION = "bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b"
 
 
 def check_bundled_assets(
     content_database: str | Path,
     model_directory: str | Path,
+    dictionary_database: str | Path | None = None,
+    *,
+    expected_dictionary_count: int = EXPECTED_DICTIONARY_COUNT,
 ) -> list[str]:
     content_path = Path(content_database)
     model_path = Path(model_directory)
@@ -86,6 +91,58 @@ def check_bundled_assets(
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
             issues.append(f"Supertonic 资产哈希清单无法读取：{error}")
 
+    if dictionary_database is not None:
+        issues.extend(
+            _check_dictionary_assets(
+                Path(dictionary_database),
+                expected_count=expected_dictionary_count,
+            )
+        )
+
+    return issues
+
+
+def _check_dictionary_assets(
+    database_path: Path,
+    *,
+    expected_count: int,
+) -> list[str]:
+    required = (
+        database_path,
+        database_path.parent / "LICENSE",
+        database_path.parent / "asset-manifest.json",
+    )
+    missing = [path.name for path in required if not path.is_file() or path.stat().st_size == 0]
+    if missing:
+        return ["缺少 ECDICT 离线词典资源：" + "、".join(missing)]
+
+    issues: list[str] = []
+    try:
+        with sqlite3.connect(
+            f"{database_path.resolve().as_uri()}?mode=ro",
+            uri=True,
+        ) as connection:
+            integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+            row_count = connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        if integrity != "ok":
+            issues.append("ECDICT dictionary.db 完整性校验失败")
+        if row_count != expected_count:
+            issues.append(
+                f"ECDICT 词条数量异常：应为 {expected_count}，实际为 {row_count}"
+            )
+    except sqlite3.Error as error:
+        issues.append(f"ECDICT dictionary.db 无法读取：{error}")
+
+    try:
+        manifest = json.loads(
+            (database_path.parent / "asset-manifest.json").read_text(encoding="utf-8")
+        )
+        if manifest.get("revision") != ECDICT_REVISION:
+            issues.append("ECDICT 词典版本与应用要求不一致")
+        if manifest.get("row_count") != expected_count:
+            issues.append("ECDICT 资产清单中的词条数量不一致")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        issues.append(f"ECDICT 资产清单无法读取：{error}")
     return issues
 
 
