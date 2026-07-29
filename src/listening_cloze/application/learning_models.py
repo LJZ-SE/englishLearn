@@ -161,8 +161,14 @@ class LearningCenterViewModel(QObject):
                     "term": item.term,
                     "sentence": item.sentence,
                     "translation": item.translation,
-                    "sourceQuestionId": item.source_question_id,
-                    "reason": VOCABULARY_REASON_LABELS[item.reason],
+                    "sourceQuestionId": item.source_question_id or "",
+                    "sourceKind": item.source_kind,
+                    "reviewable": bool(item.source_question_id),
+                    "reason": (
+                        "词典手动添加"
+                        if item.source_kind == "dictionary"
+                        else VOCABULARY_REASON_LABELS[item.reason]
+                    ),
                     "encounters": item.encounter_count,
                     "createdAt": _display_date(item.created_at),
                     "updatedAt": _display_date(item.updated_at),

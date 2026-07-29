@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 VALID_SESSION_MODES = frozenset({"quantitative", "endless"})
 VALID_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 MAX_RANDOM_KEY = (1 << 63) - 1
@@ -83,7 +83,8 @@ class VocabularyEntry:
     entry_id: str
     normalized_term: str
     term: str
-    source_question_id: str
+    source_question_id: str | None
+    source_kind: str
     sentence: str
     translation: str
     reason: str
@@ -616,10 +617,49 @@ def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+    connection.execute("ALTER TABLE vocabulary_entries RENAME TO vocabulary_entries_v3")
+    connection.execute(
+        """
+        CREATE TABLE vocabulary_entries (
+            entry_id TEXT PRIMARY KEY,
+            normalized_term TEXT NOT NULL UNIQUE,
+            term TEXT NOT NULL,
+            source_question_id TEXT,
+            source_kind TEXT NOT NULL
+                CHECK(source_kind IN ('question', 'dictionary')),
+            sentence TEXT NOT NULL,
+            translation TEXT NOT NULL,
+            reason TEXT NOT NULL CHECK(reason IN ('wrong', 'revealed', 'manual')),
+            encounter_count INTEGER NOT NULL DEFAULT 1 CHECK(encounter_count >= 1),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO vocabulary_entries(
+            entry_id, normalized_term, term, source_question_id, source_kind,
+            sentence, translation, reason, encounter_count, created_at, updated_at
+        )
+        SELECT
+            entry_id, normalized_term, term, source_question_id, 'question',
+            sentence, translation, reason, encounter_count, created_at, updated_at
+        FROM vocabulary_entries_v3
+        """
+    )
+    connection.execute("DROP TABLE vocabulary_entries_v3")
+    connection.execute(
+        "CREATE INDEX idx_vocabulary_updated ON vocabulary_entries(updated_at DESC, entry_id DESC)"
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _create_schema_v1,
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
+    3: _migrate_v3_to_v4,
 }
 
 
@@ -853,12 +893,13 @@ class UserRepository:
                 """
                 INSERT INTO vocabulary_entries(
                     entry_id, normalized_term, term, source_question_id,
-                    sentence, translation, reason, encounter_count,
+                    source_kind, sentence, translation, reason, encounter_count,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'question', ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(normalized_term) DO UPDATE SET
                     term = excluded.term,
                     source_question_id = excluded.source_question_id,
+                    source_kind = 'question',
                     sentence = excluded.sentence,
                     translation = excluded.translation,
                     reason = excluded.reason,
@@ -883,6 +924,41 @@ class UserRepository:
             ).fetchone()
         if row is None:
             raise RuntimeError("词汇写入后未能读取")
+        return _vocabulary_from_row(row)
+
+    def add_dictionary_vocabulary(self, *, term: str) -> VocabularyEntry:
+        normalized_term = _normalize_vocabulary_term(term)
+        display_term = " ".join(term.split())
+        if not normalized_term:
+            raise ValueError("词汇或短语不能为空")
+
+        now = _utc_now()
+        entry_id = uuid.uuid4().hex
+        with self._connection() as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO vocabulary_entries(
+                    entry_id, normalized_term, term, source_question_id,
+                    source_kind, sentence, translation, reason,
+                    encounter_count, created_at, updated_at
+                ) VALUES (?, ?, ?, NULL, 'dictionary', '', '', 'manual', 1, ?, ?)
+                ON CONFLICT(normalized_term) DO UPDATE SET
+                    term = excluded.term
+                """,
+                (
+                    entry_id,
+                    normalized_term,
+                    display_term,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM vocabulary_entries WHERE normalized_term = ?",
+                (normalized_term,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("词典词汇写入后未能读取")
         return _vocabulary_from_row(row)
 
     def remove_vocabulary(self, entry_id: str) -> None:
@@ -1291,6 +1367,7 @@ def _vocabulary_from_row(row: sqlite3.Row) -> VocabularyEntry:
         normalized_term=row["normalized_term"],
         term=row["term"],
         source_question_id=row["source_question_id"],
+        source_kind=row["source_kind"],
         sentence=row["sentence"],
         translation=row["translation"],
         reason=row["reason"],

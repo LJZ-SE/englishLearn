@@ -649,6 +649,76 @@ def test_vocabulary_keeps_phrase_unique_and_allows_readding_after_removal(
     assert third.encounter_count == 1
 
 
+def test_dictionary_vocabulary_is_idempotent_without_question_context(
+    tmp_path: Path,
+) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+
+    first = repository.add_dictionary_vocabulary(term="  Kind   Of ")
+    second = repository.add_dictionary_vocabulary(term="kind of")
+
+    assert first.entry_id == second.entry_id
+    assert second.term == "kind of"
+    assert second.source_kind == "dictionary"
+    assert second.source_question_id is None
+    assert second.sentence == ""
+    assert second.translation == ""
+    assert second.reason == "manual"
+    assert second.encounter_count == 1
+
+
+def test_question_encounter_promotes_dictionary_vocabulary_source(
+    tmp_path: Path,
+) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+    dictionary_entry = repository.add_dictionary_vocabulary(term="kind of")
+
+    question_entry = repository.upsert_vocabulary(
+        term="kind of",
+        source_question_id="q1",
+        sentence="It is kind of difficult.",
+        translation="这有点困难。",
+        reason="wrong",
+    )
+
+    assert question_entry.entry_id == dictionary_entry.entry_id
+    assert question_entry.source_kind == "question"
+    assert question_entry.source_question_id == "q1"
+    assert question_entry.sentence == "It is kind of difficult."
+    assert question_entry.translation == "这有点困难。"
+    assert question_entry.encounter_count == 2
+
+
+def test_vocabulary_schema_migration_marks_existing_entries_as_question_sources(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "user.db"
+    UserRepository(database, target_version=3)
+    with sqlite3.connect(database) as connection, connection:
+        connection.execute(
+            """
+            INSERT INTO vocabulary_entries(
+                entry_id, normalized_term, term, source_question_id,
+                sentence, translation, reason, encounter_count,
+                created_at, updated_at
+            ) VALUES (
+                'legacy-entry', 'listen', 'listen', 'q1',
+                'Please listen carefully.', '请仔细听。', 'wrong', 1,
+                '2026-07-28T10:00:00+00:00', '2026-07-28T10:00:00+00:00'
+            )
+            """
+        )
+
+    repository = UserRepository(database)
+    migrated = repository.list_vocabulary()[0]
+
+    assert repository.schema_version == CURRENT_SCHEMA_VERSION
+    assert CURRENT_SCHEMA_VERSION == 4
+    assert migrated.entry_id == "legacy-entry"
+    assert migrated.source_kind == "question"
+    assert migrated.source_question_id == "q1"
+
+
 def test_daily_activity_accumulates_first_results_and_duration(tmp_path: Path) -> None:
     repository = UserRepository(tmp_path / "user.db")
 

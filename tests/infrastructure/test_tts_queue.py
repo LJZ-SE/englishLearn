@@ -117,6 +117,66 @@ def test_current_question_retries_once_after_temporary_failure(tmp_path: Path) -
     assert errors == []
 
 
+def test_background_pronunciation_waits_behind_practice_window(tmp_path: Path) -> None:
+    backend = RecordingBackend()
+    ready: list[str] = []
+    pronunciation_ready: list[str] = []
+    service = TtsPrefetchService(
+        backend,
+        AudioCache(tmp_path),
+        AudioProfile.default(),
+        on_ready=lambda item, _path: ready.append(item.question_id),
+    )
+
+    service.schedule_background(
+        [PrefetchItem("dictionary:feature", "feature")],
+        on_ready=lambda item, _path: pronunciation_ready.append(item.question_id),
+    )
+    service.schedule(
+        [
+            PrefetchItem("q-1", "Sentence one."),
+            PrefetchItem("q-2", "Sentence two."),
+            PrefetchItem("q-3", "Sentence three."),
+        ]
+    )
+    service.start()
+    try:
+        _wait_until(lambda: len(backend.calls) == 4)
+    finally:
+        service.stop()
+
+    assert backend.calls == ["Sentence one.", "Sentence two.", "Sentence three.", "feature"]
+    assert ready == ["q-1", "q-2", "q-3"]
+    assert pronunciation_ready == ["dictionary:feature"]
+
+
+def test_rescheduling_practice_keeps_pending_background_pronunciation(
+    tmp_path: Path,
+) -> None:
+    backend = RecordingBackend()
+    pronunciation_ready: list[str] = []
+    service = TtsPrefetchService(
+        backend,
+        AudioCache(tmp_path),
+        AudioProfile.default(),
+    )
+
+    service.schedule_background(
+        [PrefetchItem("dictionary:kind-of", "kind of")],
+        on_ready=lambda item, _path: pronunciation_ready.append(item.question_id),
+    )
+    service.schedule([PrefetchItem("q-1", "First question.")])
+    service.schedule([PrefetchItem("q-2", "Second question.")])
+    service.start()
+    try:
+        _wait_until(lambda: len(backend.calls) == 2)
+    finally:
+        service.stop()
+
+    assert backend.calls == ["Second question.", "kind of"]
+    assert pronunciation_ready == ["dictionary:kind-of"]
+
+
 def test_prefetch_generates_and_caches_requested_playback_speed(tmp_path: Path) -> None:
     backend = SpeedRecordingBackend()
     ready: list[Path] = []

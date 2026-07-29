@@ -1346,6 +1346,23 @@ def test_dictionary_search_fields_use_explicit_high_contrast_text_colors() -> No
         assert "selectedTextColor: AppTheme.textPrimary" in source
 
 
+def test_dictionary_drawer_exposes_pronunciation_and_vocabulary_actions() -> None:
+    source = ui_path("DictionaryDrawer.qml").read_text(encoding="utf-8")
+
+    assert 'objectName: "dictionaryPronunciationButton"' in source
+    assert "drawer.viewModel.playPronunciation(" in source
+    assert 'objectName: "dictionarySaveButton"' in source
+    assert "drawer.viewModel.addToVocabulary(" in source
+    assert "entryCard.modelData.isSaved" in source
+
+
+def test_vocabulary_review_excludes_dictionary_only_entries() -> None:
+    source = ui_path("VocabularyPage.qml").read_text(encoding="utf-8")
+
+    assert "item.reviewable" in source
+    assert "词典手动添加" in source
+
+
 @pytest.mark.qt_serial
 def test_main_qml_loads_and_exposes_primary_practice_controls(qtbot, qtlog) -> None:
     application = QApplication.instance() or QApplication([])

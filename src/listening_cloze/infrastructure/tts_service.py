@@ -27,11 +27,19 @@ class _Task:
     profile: AudioProfile
     priority: int
     order: int
-    items: list[PrefetchItem] = field(default_factory=list)
+    lane: str
+    notifications: list[_Notification] = field(default_factory=list)
 
 
 ReadyCallback = Callable[[PrefetchItem, Path], None]
 ErrorCallback = Callable[[PrefetchItem, Exception], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _Notification:
+    item: PrefetchItem
+    on_ready: ReadyCallback
+    on_error: ErrorCallback
 
 
 class TtsPrefetchService:
@@ -78,42 +86,91 @@ class TtsPrefetchService:
             thread.join(timeout)
 
     def schedule(self, items: Sequence[PrefetchItem]) -> None:
-        ready_now: list[tuple[PrefetchItem, Path]] = []
+        self._schedule(
+            items[:3],
+            lane="practice",
+            priority_offset=0,
+            replace_practice=True,
+            on_ready=self._on_ready,
+            on_error=self._on_error,
+        )
+
+    def schedule_background(
+        self,
+        items: Sequence[PrefetchItem],
+        *,
+        on_ready: ReadyCallback | None = None,
+        on_error: ErrorCallback | None = None,
+    ) -> None:
+        """追加低优先级任务，不打断或替换当前练习题的预生成队列。"""
+        self._schedule(
+            items,
+            lane="background",
+            priority_offset=100,
+            replace_practice=False,
+            on_ready=on_ready or (lambda _item, _path: None),
+            on_error=on_error or (lambda _item, _error: None),
+        )
+
+    def _schedule(
+        self,
+        items: Sequence[PrefetchItem],
+        *,
+        lane: str,
+        priority_offset: int,
+        replace_practice: bool,
+        on_ready: ReadyCallback,
+        on_error: ErrorCallback,
+    ) -> None:
+        ready_now: list[tuple[_Notification, Path]] = []
         window = list(items[:3])
         requested_keys = {
             self._cache.cache_key(item.sentence, self._profile_for(item)) for item in window
         }
 
         with self._condition:
-            self._pending = {
-                key: task for key, task in self._pending.items() if key in requested_keys
-            }
+            if replace_practice:
+                self._pending = {
+                    key: task
+                    for key, task in self._pending.items()
+                    if task.lane != "practice" or key in requested_keys
+                }
             for priority, item in enumerate(window):
+                notification = _Notification(item, on_ready, on_error)
                 profile = self._profile_for(item)
                 cached_path = self._cache.valid_path(item.sentence, profile)
                 if cached_path is not None:
-                    ready_now.append((item, cached_path))
+                    ready_now.append((notification, cached_path))
                     continue
 
                 key = self._cache.cache_key(item.sentence, profile)
                 task = self._inflight.get(key) or self._pending.get(key)
+                task_priority = priority_offset + priority
                 if task is None:
                     task = _Task(
                         key=key,
                         sentence=item.sentence,
                         profile=profile,
-                        priority=priority,
+                        priority=task_priority,
                         order=self._next_order(),
+                        lane=lane,
                     )
                     self._pending[key] = task
                 else:
-                    task.priority = min(task.priority, priority)
-                if item not in task.items:
-                    task.items.append(item)
+                    task.priority = min(task.priority, task_priority)
+                    if lane == "practice":
+                        task.lane = "practice"
+                if not any(
+                    current.item == item
+                    and current.on_ready is on_ready
+                    and current.on_error is on_error
+                    for current in task.notifications
+                ):
+                    task.notifications.append(notification)
             self._condition.notify_all()
 
-        for item, path in ready_now:
-            self._notify_ready(item, path)
+        for notification, path in ready_now:
+            self._notify_ready(notification, path)
 
     def _profile_for(self, item: PrefetchItem) -> AudioProfile:
         return replace(self._profile, synthesis_speed=item.playback_rate)
@@ -142,7 +199,7 @@ class TtsPrefetchService:
 
     def _execute(self, task: _Task) -> None:
         target = self._cache.path_for(task.sentence, task.profile)
-        attempts = 2 if task.priority == 0 else 1
+        attempts = 2 if task.lane == "practice" and task.priority == 0 else 1
         last_error: Exception | None = None
         for _attempt in range(attempts):
             temporary = self._cache.temporary_path(target)
@@ -154,25 +211,25 @@ class TtsPrefetchService:
                     speed=task.profile.synthesis_speed,
                 )
                 self._cache.commit(temporary, target)
-                for item in tuple(task.items):
-                    self._notify_ready(item, target)
+                for notification in tuple(task.notifications):
+                    self._notify_ready(notification, target)
                 return
             except Exception as error:
                 temporary.unlink(missing_ok=True)
                 last_error = error
 
         assert last_error is not None
-        for item in tuple(task.items):
-            self._notify_error(item, last_error)
+        for notification in tuple(task.notifications):
+            self._notify_error(notification, last_error)
 
-    def _notify_ready(self, item: PrefetchItem, path: Path) -> None:
+    def _notify_ready(self, notification: _Notification, path: Path) -> None:
         try:
-            self._on_ready(item, path)
+            notification.on_ready(notification.item, path)
         except Exception:
             return
 
-    def _notify_error(self, item: PrefetchItem, error: Exception) -> None:
+    def _notify_error(self, notification: _Notification, error: Exception) -> None:
         try:
-            self._on_error(item, error)
+            notification.on_error(notification.item, error)
         except Exception:
             return

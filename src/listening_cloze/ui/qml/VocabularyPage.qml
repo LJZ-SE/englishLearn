@@ -8,6 +8,9 @@ Item {
     property var learning
     property var dictionary
     readonly property bool compact: width < 1100
+    readonly property var reviewableItems:
+        learning ? learning.vocabularyItems.filter(
+                       function(item) { return item.reviewable }) : []
 
     Flickable {
         id: vocabularyScroll
@@ -103,11 +106,11 @@ Item {
                 text: "开始词汇听写"
                 enabled: Boolean(
                     page.controller && page.learning
-                    && page.learning.vocabularyItems.length > 0
+                    && page.reviewableItems.length > 0
                 )
                 onClicked: if (page.controller && page.learning)
                                page.controller.startVocabularyReview(
-                                   page.learning.vocabularyItems.map(
+                                   page.reviewableItems.map(
                                        function(item) {
                                            return item.sourceQuestionId
                                        }))
@@ -173,7 +176,9 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.topMargin: 48
-                            text: modelData.sentence
+                            text: modelData.reviewable
+                                  ? modelData.sentence
+                                  : "词典手动添加 · 可在离线词典中查看释义和播放读音"
                             color: AppTheme.textPrimary
                             font.family: AppTheme.fontFamily
                             font.pixelSize: 14
@@ -185,6 +190,7 @@ Item {
                             anchors.top: parent.top
                             anchors.topMargin: 92
                             text: modelData.translation
+                            visible: modelData.reviewable
                             color: AppTheme.textSecondary
                             font.family: AppTheme.fontFamily
                             font.pixelSize: 13

@@ -207,6 +207,26 @@ def test_view_model_maps_real_service_data_and_refreshes_after_removal(
     assert model.vocabularyItems == []
 
 
+def test_dictionary_vocabulary_is_exposed_as_non_reviewable(
+    tmp_path: Path,
+) -> None:
+    service, users = _service(tmp_path, [_question("q1", "listen")])
+    users.add_dictionary_vocabulary(term="kind of")
+
+    vocabulary = service.vocabulary(search_text="")
+    model = LearningCenterViewModel(
+        service,
+        local_date=lambda: date(2026, 7, 24),
+    )
+
+    assert vocabulary[0].source_kind == "dictionary"
+    assert vocabulary[0].source_question_id is None
+    assert model.vocabularyItems[0]["sourceKind"] == "dictionary"
+    assert model.vocabularyItems[0]["sourceQuestionId"] == ""
+    assert model.vocabularyItems[0]["reviewable"] is False
+    assert model.vocabularyItems[0]["reason"] == "词典手动添加"
+
+
 def test_view_model_loads_session_history_in_pages(tmp_path: Path) -> None:
     service, users = _service(tmp_path, [_question("q1", "listen")])
     for index in range(25):

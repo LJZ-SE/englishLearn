@@ -1,13 +1,50 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtMultimedia
 
 Item {
     id: drawer
     objectName: "dictionaryDrawer"
     property var viewModel
+    property var controller
+    property string activePronunciationTerm: ""
+    property bool pronunciationPlayPending: false
     visible: Boolean(viewModel && viewModel.visible)
     z: 200
+
+    SoundEffect {
+        id: pronunciationSound
+        volume: drawer.controller ? drawer.controller.volume : 0.8
+
+        onStatusChanged: {
+            if (status === SoundEffect.Ready
+                    && drawer.pronunciationPlayPending) {
+                drawer.pronunciationPlayPending = false
+                play()
+            }
+        }
+        onPlayingChanged: {
+            if (drawer.viewModel && drawer.activePronunciationTerm.length > 0)
+                drawer.viewModel.setPronunciationPlaying(
+                    drawer.activePronunciationTerm, playing)
+        }
+    }
+
+    Connections {
+        target: drawer.viewModel
+        function onPlaybackRequested(term, source) {
+            pronunciationSound.stop()
+            drawer.pronunciationPlayPending = false
+            drawer.activePronunciationTerm = term
+            pronunciationSound.source = ""
+            pronunciationSound.source = source
+            if (pronunciationSound.status === SoundEffect.Ready)
+                pronunciationSound.play()
+            else
+                drawer.pronunciationPlayPending = true
+        }
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -193,22 +230,139 @@ Item {
                                         wrapMode: Text.Wrap
                                     }
 
+                                    Button {
+                                        id: saveButton
+                                        objectName: "dictionarySaveButton"
+                                        Layout.preferredWidth: 106
+                                        Layout.preferredHeight: 34
+                                        enabled: !entryCard.modelData.isSaved
+                                        hoverEnabled: true
+                                        background: Rectangle {
+                                            radius: 9
+                                            color: entryCard.modelData.isSaved
+                                                   ? "#EDF8F3"
+                                                   : saveButton.hovered
+                                                     ? AppTheme.primarySoft
+                                                     : "#FFFFFF"
+                                            border.width: 1
+                                            border.color: entryCard.modelData.isSaved
+                                                          ? "#A6DFC7"
+                                                          : "#A8D1FF"
+                                        }
+                                        contentItem: RowLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 5
+                                            AppIcon {
+                                                name: entryCard.modelData.isSaved
+                                                      ? "check" : "bookmark_add"
+                                                iconColor: entryCard.modelData.isSaved
+                                                           ? AppTheme.success
+                                                           : AppTheme.primary
+                                                iconSize: 15
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 16
+                                            }
+                                            Text {
+                                                text: entryCard.modelData.isSaved
+                                                      ? "已加入" : "加入词汇本"
+                                                color: entryCard.modelData.isSaved
+                                                       ? AppTheme.success
+                                                       : AppTheme.primary
+                                                font.family: AppTheme.fontFamily
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                        onClicked: if (drawer.viewModel)
+                                                       drawer.viewModel.addToVocabulary(
+                                                           entryCard.modelData.word)
+                                    }
+                                }
+
+                                RowLayout {
+                                    width: parent.width
+                                    spacing: 8
+
                                     Text {
+                                        text: entryCard.modelData.phonetic
+                                        visible: text.length > 0
+                                        color: "#53657E"
+                                        font.family: AppTheme.fontFamily
+                                        font.pixelSize: 14
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
                                         text: entryCard.modelData.posText
                                         visible: text.length > 0
                                         color: AppTheme.textSecondary
                                         font.family: AppTheme.fontFamily
                                         font.pixelSize: 13
                                     }
+
+                                    Button {
+                                        id: pronunciationButton
+                                        objectName: "dictionaryPronunciationButton"
+                                        Layout.preferredWidth: 102
+                                        Layout.preferredHeight: 32
+                                        hoverEnabled: true
+                                        background: Rectangle {
+                                            radius: 8
+                                            color: pronunciationButton.hovered
+                                                   ? AppTheme.primarySoft : "#FFFFFF"
+                                            border.width: 1
+                                            border.color: entryCard.modelData.pronunciationState
+                                                          === "error"
+                                                          ? "#F5B9B5" : "#A8D1FF"
+                                        }
+                                        contentItem: RowLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 5
+                                            AppIcon {
+                                                name: entryCard.modelData.pronunciationState
+                                                      === "generating"
+                                                      ? "hourglass_empty" : "volume_up"
+                                                iconColor: entryCard.modelData.pronunciationState
+                                                           === "error"
+                                                           ? AppTheme.error
+                                                           : AppTheme.primary
+                                                iconSize: 15
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 16
+                                            }
+                                            Text {
+                                                text: entryCard.modelData.pronunciationState
+                                                      === "generating" ? "生成中…"
+                                                      : entryCard.modelData.pronunciationState
+                                                        === "playing" ? "重新播放"
+                                                      : entryCard.modelData.pronunciationState
+                                                        === "error" ? "重试读音"
+                                                      : "播放读音"
+                                                color: entryCard.modelData.pronunciationState
+                                                       === "error"
+                                                       ? AppTheme.error
+                                                       : AppTheme.primary
+                                                font.family: AppTheme.fontFamily
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                        onClicked: if (drawer.viewModel)
+                                                       drawer.viewModel.playPronunciation(
+                                                           entryCard.modelData.word)
+                                    }
                                 }
 
                                 Text {
                                     width: parent.width
-                                    text: entryCard.modelData.phonetic
+                                    text: entryCard.modelData.saveError.length > 0
+                                          ? "加入失败：" + entryCard.modelData.saveError
+                                          : entryCard.modelData.pronunciationError.length > 0
+                                            ? "读音生成失败，可点击重试。"
+                                            : ""
                                     visible: text.length > 0
-                                    color: "#53657E"
+                                    color: AppTheme.error
                                     font.family: AppTheme.fontFamily
-                                    font.pixelSize: 14
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
                                 }
 
                                 Flow {

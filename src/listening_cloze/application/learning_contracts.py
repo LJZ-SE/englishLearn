@@ -128,17 +128,20 @@ class VocabularyItem:
     term: str
     sentence: str
     translation: str
-    source_question_id: str
+    source_question_id: str | None
     reason: VocabularyReason
     encounter_count: int
     created_at: str
     updated_at: str
+    source_kind: str = "question"
 
     def __post_init__(self) -> None:
         if not normalize_term(self.term):
             raise ValueError("词汇或短语不能为空")
         if self.encounter_count < 1:
             raise ValueError("词汇遇到次数必须至少为 1")
+        if self.source_kind not in {"question", "dictionary"}:
+            raise ValueError("词汇来源只支持题目或词典")
 
 
 @dataclass(frozen=True, slots=True)

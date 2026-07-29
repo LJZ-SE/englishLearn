@@ -599,5 +599,6 @@ ApplicationWindow {
     DictionaryDrawer {
         anchors.fill: parent
         viewModel: appWindow.dictionary
+        controller: appWindow.backend
     }
 }

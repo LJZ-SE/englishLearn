@@ -8,6 +8,9 @@ from PySide6.QtQml import QQmlApplicationEngine
 
 from listening_cloze.application.asset_health import check_bundled_assets
 from listening_cloze.application.controller import PracticeController
+from listening_cloze.application.dictionary_interactions import (
+    DictionaryInteractionService,
+)
 from listening_cloze.application.dictionary_models import DictionaryViewModel
 from listening_cloze.application.learning_models import LearningCenterViewModel
 from listening_cloze.application.learning_service import LearningCenterService
@@ -80,7 +83,10 @@ def create_runtime_controller(
     learning_center = LearningCenterViewModel(
         LearningCenterService(content_repository, user_repository)
     )
-    dictionary = DictionaryViewModel(DictionaryRepository(dictionary_path))
+    dictionary = DictionaryViewModel(
+        DictionaryRepository(dictionary_path),
+        interactions=DictionaryInteractionService(user_repository),
+    )
     return controller, ControllerResources(
         paths,
         content_path,
@@ -128,6 +134,7 @@ def activate_runtime_resources(
         on_error=controller.handleTtsError,
     )
     controller.attachTts(tts_service)
+    resources.dictionary.attachTts(tts_service)
 
 
 def load_qml_engine(

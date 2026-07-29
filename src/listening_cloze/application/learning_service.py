@@ -157,6 +157,7 @@ class LearningCenterService:
                 encounter_count=entry.encounter_count,
                 created_at=entry.created_at,
                 updated_at=entry.updated_at,
+                source_kind=entry.source_kind,
             )
             for entry in self._users.list_vocabulary(search_text=search_text)
         )
