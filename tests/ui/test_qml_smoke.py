@@ -1356,11 +1356,17 @@ def test_dictionary_drawer_exposes_pronunciation_and_vocabulary_actions() -> Non
     assert "entryCard.modelData.isSaved" in source
 
 
-def test_vocabulary_review_excludes_dictionary_only_entries() -> None:
+def test_vocabulary_dictation_includes_dictionary_and_question_entries() -> None:
     source = ui_path("VocabularyPage.qml").read_text(encoding="utf-8")
 
-    assert "item.reviewable" in source
+    reviewable_filter = (
+        "filter(\n"
+        "                       function(item) { return item.reviewable })"
+    )
+    assert reviewable_filter not in source
+    assert "sourceKind" in source
     assert "词典手动添加" in source
+    assert "startDictationRequested" in source
 
 
 @pytest.mark.qt_serial
@@ -1463,7 +1469,8 @@ def test_practice_matches_the_selected_focus_workbench_shell() -> None:
     assert 'objectName: "headerProgress"' in main_source
     assert 'objectName: "endSessionButton"' in main_source
     assert 'objectName: "offlineBadge"' in main_source
-    assert 'currentPage: "practice-config"' in main_source
+    assert 'currentPage: appWindow.vocabularyPracticeVisible' in main_source
+    assert '? "vocabulary" : "practice-config"' in main_source
     assert 'objectName: "practiceCard"' in practice_source
     assert 'objectName: "progressTrack"' in practice_source
     assert 'objectName: "shortcutHint"' in practice_source

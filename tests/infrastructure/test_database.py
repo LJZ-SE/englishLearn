@@ -1,4 +1,5 @@
 import json
+import random
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -713,10 +714,126 @@ def test_vocabulary_schema_migration_marks_existing_entries_as_question_sources(
     migrated = repository.list_vocabulary()[0]
 
     assert repository.schema_version == CURRENT_SCHEMA_VERSION
-    assert CURRENT_SCHEMA_VERSION == 4
+    assert CURRENT_SCHEMA_VERSION == 5
     assert migrated.entry_id == "legacy-entry"
     assert migrated.source_kind == "question"
     assert migrated.source_question_id == "q1"
+    assert migrated.independent_correct_streak == 0
+    assert migrated.mastered_at is None
+    assert migrated.last_practiced_at is None
+
+
+def test_vocabulary_dictation_migrates_v4_entries_without_losing_data(tmp_path: Path) -> None:
+    database = tmp_path / "user.db"
+    legacy = UserRepository(database, target_version=4)
+    saved = legacy.upsert_vocabulary(
+        term="take part in",
+        source_question_id="q1",
+        sentence="We take part in it.",
+        translation="我们参与其中。",
+        reason="wrong",
+    )
+
+    repository = UserRepository(database)
+
+    migrated = repository.get_vocabulary_entries([saved.entry_id])
+    assert repository.schema_version == 5
+    assert len(migrated) == 1
+    assert migrated[0].term == "take part in"
+    assert migrated[0].independent_correct_streak == 0
+    assert migrated[0].mastered_at is None
+    assert migrated[0].last_practiced_at is None
+
+
+def test_vocabulary_dictation_state_machine_is_entry_scoped(tmp_path: Path) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+    entry = repository.add_dictionary_vocabulary(term="colour")
+
+    for expected in range(1, 5):
+        progress = repository.record_vocabulary_dictation_outcome(
+            entry.entry_id,
+            outcome="independent_correct",
+        )
+        assert progress.independent_correct_streak == expected
+        assert progress.mastered_at is None
+
+    mastered = repository.record_vocabulary_dictation_outcome(
+        entry.entry_id,
+        outcome="independent_correct",
+    )
+    assert mastered.independent_correct_streak == 5
+    assert mastered.mastered_at is not None
+
+    hinted = repository.record_vocabulary_dictation_outcome(
+        entry.entry_id,
+        outcome="hint_correct",
+    )
+    assert hinted.independent_correct_streak == 5
+    assert hinted.mastered_at == mastered.mastered_at
+
+    reset = repository.record_vocabulary_dictation_outcome(
+        entry.entry_id,
+        outcome="wrong",
+    )
+    assert reset.independent_correct_streak == 0
+    assert reset.mastered_at is None
+    assert reset.last_practiced_at is not None
+
+    revealed = repository.record_vocabulary_dictation_outcome(
+        entry.entry_id,
+        outcome="revealed",
+    )
+    assert revealed.independent_correct_streak == 0
+    assert revealed.mastered_at is None
+
+
+def test_vocabulary_dictation_selection_is_unique_ranked_and_includes_dictionary_entries(
+    tmp_path: Path,
+) -> None:
+    repository = UserRepository(tmp_path / "user.db")
+    oldest = repository.add_dictionary_vocabulary(term="oldest")
+    newer = repository.add_dictionary_vocabulary(term="newer")
+    progressed = repository.add_dictionary_vocabulary(term="progressed")
+    mastered = repository.add_dictionary_vocabulary(term="mastered")
+    repository.record_vocabulary_dictation_outcome(
+        newer.entry_id,
+        outcome="hint_correct",
+    )
+    repository.record_vocabulary_dictation_outcome(
+        progressed.entry_id,
+        outcome="independent_correct",
+    )
+    for _ in range(5):
+        repository.record_vocabulary_dictation_outcome(
+            mastered.entry_id,
+            outcome="independent_correct",
+        )
+
+    pending = repository.select_vocabulary_dictation_entries(
+        source="pending",
+        count="all",
+        rng=random.Random(1),
+    )
+    assert [entry.entry_id for entry in pending] == [
+        oldest.entry_id,
+        newer.entry_id,
+        progressed.entry_id,
+    ]
+    assert len({entry.entry_id for entry in pending}) == len(pending)
+    assert len(
+        repository.select_vocabulary_dictation_entries(
+            source="pending",
+            count=10,
+            rng=random.Random(2),
+        )
+    ) == 3
+    assert [entry.entry_id for entry in repository.select_vocabulary_dictation_entries(
+        source="mastered", count=10, rng=random.Random(1)
+    )] == [mastered.entry_id]
+    assert repository.vocabulary_dictation_counts() == {"pending": 3, "mastered": 1}
+    assert [entry.entry_id for entry in repository.get_vocabulary_entries(
+        [progressed.entry_id, progressed.entry_id, oldest.entry_id, "missing"]
+    )] == [progressed.entry_id, oldest.entry_id]
 
 
 def test_daily_activity_accumulates_first_results_and_duration(tmp_path: Path) -> None:

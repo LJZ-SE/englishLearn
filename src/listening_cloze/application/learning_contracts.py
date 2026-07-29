@@ -134,6 +134,9 @@ class VocabularyItem:
     created_at: str
     updated_at: str
     source_kind: str = "question"
+    independent_correct_streak: int = 0
+    mastered_at: str | None = None
+    last_practiced_at: str | None = None
 
     def __post_init__(self) -> None:
         if not normalize_term(self.term):
@@ -142,6 +145,8 @@ class VocabularyItem:
             raise ValueError("词汇遇到次数必须至少为 1")
         if self.source_kind not in {"question", "dictionary"}:
             raise ValueError("词汇来源只支持题目或词典")
+        if not 0 <= self.independent_correct_streak <= 5:
+            raise ValueError("词汇连续独立答对次数必须在 0 到 5 之间")
 
 
 @dataclass(frozen=True, slots=True)

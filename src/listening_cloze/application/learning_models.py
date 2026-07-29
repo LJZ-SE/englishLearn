@@ -173,6 +173,10 @@ class LearningCenterViewModel(QObject):
                     "createdAt": _display_date(item.created_at),
                     "updatedAt": _display_date(item.updated_at),
                     "isPhrase": len(item.term.split()) > 1,
+                    "streak": item.independent_correct_streak,
+                    "mastered": item.mastered_at is not None,
+                    "masteredAt": _display_date(item.mastered_at or ""),
+                    "lastPracticedAt": _display_date(item.last_practiced_at or ""),
                 }
                 for item in self._service.vocabulary(
                     search_text=self._vocabulary_search

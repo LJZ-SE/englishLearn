@@ -82,6 +82,36 @@ def _dictionary_database(path: Path) -> Path:
                     "",
                     "",
                 ),
+                (
+                    "see",
+                    "si:",
+                    "notice with the eyes",
+                    "看见；看到",
+                    "v:100",
+                    3,
+                    1,
+                    "",
+                    200,
+                    100,
+                    "",
+                    "",
+                    "",
+                ),
+                (
+                    "sea",
+                    "  SI:  ",
+                    "a large body of salt water",
+                    "海；海洋",
+                    "n:100",
+                    3,
+                    1,
+                    "",
+                    200,
+                    100,
+                    "",
+                    "",
+                    "",
+                ),
             ),
         )
     return path
@@ -116,3 +146,15 @@ def test_dictionary_repository_rejects_empty_lookup(tmp_path: Path) -> None:
     repository = DictionaryRepository(_dictionary_database(tmp_path / "dictionary.db"))
 
     assert repository.lookup("   ") == ()
+
+
+def test_dictionary_repository_returns_homophones_by_normalized_phonetic(
+    tmp_path: Path,
+) -> None:
+    repository = DictionaryRepository(_dictionary_database(tmp_path / "dictionary.db"))
+
+    homophones = repository.lookup_homophones("see")
+
+    assert [entry.word for entry in homophones] == ["sea"]
+    assert homophones[0].translation == "海；海洋"
+    assert repository.lookup_homophones("missing") == ()

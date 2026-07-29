@@ -4,12 +4,15 @@ import sqlite3
 import wave
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from listening_cloze.application.practice_engine import (
     PracticeEngine,
     PracticeMode,
     SceneCatalogUnavailableError,
+)
+from listening_cloze.application.vocabulary_dictation import (
+    VocabularyDictationService,
 )
 from listening_cloze.domain.models import Difficulty, SceneSelection
 from listening_cloze.infrastructure.tts_service import PrefetchItem, TtsPrefetchService
@@ -49,6 +52,7 @@ class PracticeController(QObject):
     answerRevealed = Signal(list)
     dictionaryRequested = Signal(str)
     audioRequested = Signal(str, float)
+    vocabularyDictationExited = Signal()
     _ttsReady = Signal(object, str)
     _ttsFailed = Signal(object, str)
 
@@ -58,6 +62,7 @@ class PracticeController(QObject):
         parent: QObject | None = None,
         *,
         audio_cache_dir: str | Path | None = None,
+        vocabulary_dictation: VocabularyDictationService | None = None,
     ) -> None:
         super().__init__(parent)
         self._engine = engine
@@ -91,6 +96,13 @@ class PracticeController(QObject):
         self._waveform_levels: list[float] = []
         self._audio_duration_ms = 0
         self._play_when_ready = False
+        self._vocabulary_dictation = vocabulary_dictation
+        self._vocabulary_view_page = "config"
+        self._vocabulary_error = ""
+        self._vocabulary_audio_generation = 0
+        self._vocabulary_audio_pass = 0
+        self._vocabulary_requested_rate = 1.0
+        self._vocabulary_pending_repetitions = 0
         self._ttsReady.connect(self._apply_tts_ready)
         self._ttsFailed.connect(self._apply_tts_error)
 
@@ -327,6 +339,31 @@ class PracticeController(QObject):
     def resourceStatus(self) -> str:
         return self._resource_status
 
+    @Property("QVariantMap", notify=stateChanged)
+    def vocabularyDictationView(self) -> dict[str, object]:
+        if self._vocabulary_dictation is None:
+            return {
+                "page": "config",
+                "source": "new",
+                "selectedCount": 10,
+                "newCount": 0,
+                "masteredCount": 0,
+                "resumeAvailable": False,
+                "resumeRemaining": 0,
+                "audioState": "idle",
+                "autoPlayPass": 0,
+                "errorText": "词汇听写服务尚未加载",
+            }
+        view = (
+            self._vocabulary_dictation.config_view()
+            if self._vocabulary_view_page == "config"
+            else self._vocabulary_dictation.view(page=self._vocabulary_view_page)
+        )
+        view["audioState"] = self._audio_status
+        view["autoPlayPass"] = self._vocabulary_audio_pass
+        view["errorText"] = self._vocabulary_error
+        return view
+
     def setStartupIssues(self, issues: list[str]) -> None:
         self._repair_issues.extend(issue for issue in issues if issue not in self._repair_issues)
         if self._repair_issues:
@@ -440,6 +477,97 @@ class PracticeController(QObject):
         self._begin_practice_page()
         self._show_skipped_review_message()
 
+    @Slot(str, "QVariant")
+    def startVocabularyDictation(self, source: str, count: object) -> None:
+        service = self._require_vocabulary_dictation()
+        try:
+            resolved_count: int | str = (
+                "all" if str(count) == "all" else int(str(count))
+            )
+            service.start(source=source, count=resolved_count)
+        except (RuntimeError, ValueError) as error:
+            self._vocabulary_error = str(error)
+            self.stateChanged.emit()
+            return
+        self._begin_vocabulary_dictation()
+
+    @Slot()
+    def resumeVocabularyDictation(self) -> None:
+        service = self._require_vocabulary_dictation()
+        if not service.resume():
+            self._vocabulary_error = "没有可继续的词汇听写"
+            self.stateChanged.emit()
+            return
+        self._begin_vocabulary_dictation()
+
+    @Slot(str)
+    def submitVocabularyDictationAnswer(self, answer: str) -> None:
+        service = self._require_vocabulary_dictation()
+        try:
+            service.submit(answer)
+        except (RuntimeError, ValueError) as error:
+            self._vocabulary_error = str(error)
+        else:
+            self._vocabulary_error = ""
+        self.stateChanged.emit()
+
+    @Slot(int)
+    def requestVocabularyDictationHint(self, level: int) -> None:
+        service = self._require_vocabulary_dictation()
+        try:
+            service.request_hint(level)
+        except (RuntimeError, ValueError) as error:
+            self._vocabulary_error = str(error)
+        else:
+            self._vocabulary_error = ""
+            if level == 1:
+                self._request_vocabulary_playback(rate=0.8, repetitions=1)
+        self.stateChanged.emit()
+
+    @Slot(float)
+    def replayVocabularyDictation(self, rate: float = 1.0) -> None:
+        if rate not in {0.8, 1.0}:
+            return
+        self._request_vocabulary_playback(rate=rate, repetitions=1)
+
+    @Slot()
+    def nextVocabularyDictationItem(self) -> None:
+        service = self._require_vocabulary_dictation()
+        try:
+            has_next = service.next_item()
+        except RuntimeError as error:
+            self._vocabulary_error = str(error)
+            self.stateChanged.emit()
+            return
+        self._vocabulary_error = ""
+        if not has_next:
+            self._cancel_vocabulary_audio()
+            self._vocabulary_view_page = "summary"
+            self._current_page = "vocabulary-dictation-summary"
+            self.stateChanged.emit()
+            return
+        self._prepare_vocabulary_audio()
+        self.stateChanged.emit()
+        self._request_vocabulary_playback(rate=1.0, repetitions=2)
+
+    @Slot()
+    def finishVocabularyDictation(self) -> None:
+        service = self._require_vocabulary_dictation()
+        service.finish()
+        self._cancel_vocabulary_audio()
+        self._vocabulary_view_page = "config"
+        self._current_page = "home"
+        self.stateChanged.emit()
+        self.vocabularyDictationExited.emit()
+
+    @Slot()
+    def exitVocabularyDictation(self) -> None:
+        self._cancel_vocabulary_audio()
+        self._vocabulary_view_page = "config"
+        self._current_page = "home"
+        self.stateChanged.emit()
+        self.vocabularyDictationExited.emit()
+
     @Slot("QVariantList")
     def submitAnswers(self, inputs: list[str]) -> None:
         result = self._engine.submit(inputs)
@@ -536,6 +664,12 @@ class PracticeController(QObject):
     def goHome(self) -> None:
         if self._current_page == "practice":
             self._engine.pause_timing()
+        if self._current_page in {
+            "vocabulary-dictation",
+            "vocabulary-dictation-summary",
+        }:
+            self._cancel_vocabulary_audio()
+            self._vocabulary_view_page = "config"
         self._current_page = "home"
         self.stateChanged.emit()
         self.sceneLabelChanged.emit()
@@ -546,6 +680,8 @@ class PracticeController(QObject):
             self._settings_return_page = self._current_page
         if self._current_page == "practice":
             self._engine.pause_timing()
+        if self._current_page == "vocabulary-dictation":
+            self._cancel_vocabulary_audio()
         self._current_page = "settings"
         self.stateChanged.emit()
 
@@ -558,6 +694,13 @@ class PracticeController(QObject):
 
     @Slot()
     def endSession(self) -> None:
+        if self._current_page == "vocabulary-dictation":
+            self._require_vocabulary_dictation().finish()
+            self._cancel_vocabulary_audio()
+            self._vocabulary_view_page = "summary"
+            self._current_page = "vocabulary-dictation-summary"
+            self.stateChanged.emit()
+            return
         self._engine.end_session()
         self._current_page = "summary"
         self.stateChanged.emit()
@@ -594,6 +737,7 @@ class PracticeController(QObject):
 
     @Slot()
     def shutdown(self) -> None:
+        self._cancel_vocabulary_audio()
         self._engine.pause_timing()
         if self._tts is not None:
             self._tts.stop()
@@ -753,6 +897,157 @@ class PracticeController(QObject):
         self.questionChanged.emit()
         self._request_automatic_playback()
 
+    def _require_vocabulary_dictation(self) -> VocabularyDictationService:
+        if self._vocabulary_dictation is None:
+            raise RuntimeError("词汇听写服务尚未加载")
+        return self._vocabulary_dictation
+
+    def _begin_vocabulary_dictation(self) -> None:
+        self._vocabulary_error = ""
+        self._vocabulary_view_page = "practice"
+        self._current_page = "vocabulary-dictation"
+        self._prepare_vocabulary_audio()
+        self.stateChanged.emit()
+        self._request_vocabulary_playback(rate=1.0, repetitions=2)
+
+    def _prepare_vocabulary_audio(self) -> None:
+        self._cancel_vocabulary_audio()
+        self._audio_source = ""
+        self._audio_error = ""
+        self._waveform_levels = []
+        self._audio_duration_ms = 0
+        self._audio_status = "idle" if self._tts is None else "loading"
+        self._schedule_vocabulary_audio(rate=1.0)
+        self._set_vocabulary_audio_source(rate=1.0)
+
+    def _schedule_vocabulary_audio(self, *, rate: float) -> None:
+        service = self._vocabulary_dictation
+        if self._tts is None or service is None or not service.active:
+            return
+        entries = (
+            service.prefetch_entries
+            if rate == 1.0
+            else (service.current_entry,)
+        )
+        self._tts.schedule(
+            [
+                PrefetchItem(
+                    f"vocabulary:{entry.entry_id}",
+                    entry.term,
+                    playback_rate=rate,
+                )
+                for entry in entries
+            ]
+        )
+        if (service.current_audio_id, rate) not in self._ready_audio:
+            self._audio_status = "loading"
+
+    def _set_vocabulary_audio_source(self, *, rate: float) -> bool:
+        service = self._vocabulary_dictation
+        if service is None or not service.active:
+            return False
+        path = self._ready_audio.get((service.current_audio_id, rate))
+        if path is None:
+            return False
+        self._audio_source = path.as_uri()
+        try:
+            with wave.open(str(path), "rb") as audio:
+                self._audio_duration_ms = round(
+                    audio.getnframes() / audio.getframerate() * 1000
+                )
+        except (OSError, ValueError, wave.Error):
+            self._audio_duration_ms = 0
+        self._waveform_levels = []
+        self._audio_status = "ready"
+        return True
+
+    def _request_vocabulary_playback(
+        self,
+        *,
+        rate: float,
+        repetitions: int,
+    ) -> None:
+        service = self._vocabulary_dictation
+        if service is None or not service.active:
+            return
+        self._vocabulary_audio_generation += 1
+        self._vocabulary_requested_rate = rate
+        self._vocabulary_pending_repetitions = repetitions
+        self._vocabulary_audio_pass = 0
+        if self._tts is None or self._set_vocabulary_audio_source(rate=rate):
+            self._emit_vocabulary_audio_sequence(
+                generation=self._vocabulary_audio_generation,
+                repetitions=repetitions,
+            )
+            return
+        self._audio_status = "loading"
+        self._schedule_vocabulary_audio(rate=rate)
+        self.stateChanged.emit()
+
+    def _emit_vocabulary_audio_sequence(
+        self,
+        *,
+        generation: int,
+        repetitions: int,
+    ) -> None:
+        service = self._vocabulary_dictation
+        if (
+            service is None
+            or not service.active
+            or generation != self._vocabulary_audio_generation
+            or repetitions <= 0
+        ):
+            return
+        self._vocabulary_pending_repetitions = 0
+        self._vocabulary_audio_pass = 1
+        self._audio_status = "playing"
+        self.stateChanged.emit()
+        self.audioRequested.emit(
+            service.current_audio_id,
+            self._vocabulary_requested_rate,
+        )
+        if repetitions == 1:
+            return
+        delay_ms = max(0, self._audio_duration_ms) + 1500
+        QTimer.singleShot(
+            delay_ms,
+            lambda: self._emit_second_vocabulary_audio(generation),
+        )
+
+    def _emit_second_vocabulary_audio(self, generation: int) -> None:
+        service = self._vocabulary_dictation
+        if (
+            service is None
+            or not service.active
+            or generation != self._vocabulary_audio_generation
+            or self._current_page != "vocabulary-dictation"
+        ):
+            return
+        self._vocabulary_audio_pass = 2
+        self._audio_status = "playing"
+        self.stateChanged.emit()
+        self.audioRequested.emit(
+            service.current_audio_id,
+            self._vocabulary_requested_rate,
+        )
+        QTimer.singleShot(
+            max(0, self._audio_duration_ms),
+            lambda: self._finish_vocabulary_audio(generation),
+        )
+
+    def _finish_vocabulary_audio(self, generation: int) -> None:
+        if generation != self._vocabulary_audio_generation:
+            return
+        self._audio_status = "ready"
+        self.stateChanged.emit()
+
+    def _cancel_vocabulary_audio(self) -> None:
+        self._vocabulary_audio_generation += 1
+        self._vocabulary_pending_repetitions = 0
+        self._vocabulary_audio_pass = 0
+        if self._current_page == "vocabulary-dictation":
+            self._audio_status = "ready"
+
     def _request_automatic_playback(self) -> None:
         if not self._engine.items:
             return
@@ -817,6 +1112,23 @@ class PracticeController(QObject):
     @Slot(object, str)
     def _apply_tts_ready(self, item: PrefetchItem, path_text: str) -> None:
         self._ready_audio[(item.question_id, item.playback_rate)] = Path(path_text)
+        service = self._vocabulary_dictation
+        if (
+            self._current_page == "vocabulary-dictation"
+            and service is not None
+            and service.active
+            and item.question_id == service.current_audio_id
+            and item.playback_rate == self._vocabulary_requested_rate
+        ):
+            self._set_vocabulary_audio_source(rate=item.playback_rate)
+            repetitions = self._vocabulary_pending_repetitions
+            self.stateChanged.emit()
+            if repetitions:
+                self._emit_vocabulary_audio_sequence(
+                    generation=self._vocabulary_audio_generation,
+                    repetitions=repetitions,
+                )
+            return
         if item.question_id == self.currentQuestionId and item.playback_rate == self._playback_rate:
             self._set_current_audio_source()
             should_play = self._play_when_ready
@@ -827,6 +1139,20 @@ class PracticeController(QObject):
 
     @Slot(object, str)
     def _apply_tts_error(self, item: PrefetchItem, error: str) -> None:
+        service = self._vocabulary_dictation
+        if (
+            self._current_page == "vocabulary-dictation"
+            and service is not None
+            and service.active
+            and item.question_id == service.current_audio_id
+            and item.playback_rate == self._vocabulary_requested_rate
+        ):
+            self._audio_status = "error"
+            self._audio_error = error
+            self._vocabulary_error = f"语音生成失败：{error}"
+            self._vocabulary_pending_repetitions = 0
+            self.stateChanged.emit()
+            return
         if item.question_id != self.currentQuestionId or item.playback_rate != self._playback_rate:
             return
         self._audio_status = "error"

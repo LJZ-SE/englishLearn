@@ -203,6 +203,8 @@ Item {
         }
 
         function onAudioRequested(_questionId, _rate) {
+            if (!page.visible)
+                return
             if (soundEffect.source.toString() === "")
                 return
             page.restartAudioPlayback()

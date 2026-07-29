@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 VALID_SESSION_MODES = frozenset({"quantitative", "endless"})
 VALID_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 MAX_RANDOM_KEY = (1 << 63) - 1
@@ -91,6 +92,9 @@ class VocabularyEntry:
     encounter_count: int
     created_at: str
     updated_at: str
+    independent_correct_streak: int
+    mastered_at: str | None
+    last_practiced_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -655,11 +659,28 @@ def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+    """词条掌握度独立于来源句的错题掌握度，避免两套规则互相污染。"""
+    statements = (
+        "ALTER TABLE vocabulary_entries ADD COLUMN "
+        "independent_correct_streak INTEGER NOT NULL DEFAULT 0 "
+        "CHECK(independent_correct_streak >= 0 AND independent_correct_streak <= 5)",
+        "ALTER TABLE vocabulary_entries ADD COLUMN mastered_at TEXT",
+        "ALTER TABLE vocabulary_entries ADD COLUMN last_practiced_at TEXT",
+        "CREATE INDEX idx_vocabulary_dictation_selection "
+        "ON vocabulary_entries(mastered_at, independent_correct_streak, "
+        "last_practiced_at, entry_id)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _create_schema_v1,
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
     3: _migrate_v3_to_v4,
+    4: _migrate_v4_to_v5,
 }
 
 
@@ -979,6 +1000,116 @@ class UserRepository:
         with self._connection() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [_vocabulary_from_row(row) for row in rows]
+
+    def get_vocabulary_entries(self, entry_ids: Sequence[str]) -> list[VocabularyEntry]:
+        """按会话保存的顺序恢复词条；重复 ID 只保留首次，保证一轮不重复出题。"""
+        ordered_ids = list(dict.fromkeys(str(entry_id) for entry_id in entry_ids))
+        if not ordered_ids:
+            return []
+        placeholders = ", ".join("?" for _ in ordered_ids)
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM vocabulary_entries WHERE entry_id IN ({placeholders})",
+                ordered_ids,
+            ).fetchall()
+        entries_by_id = {str(row["entry_id"]): _vocabulary_from_row(row) for row in rows}
+        return [entries_by_id[entry_id] for entry_id in ordered_ids if entry_id in entries_by_id]
+
+    def select_vocabulary_dictation_entries(
+        self,
+        *,
+        source: str,
+        count: int | str,
+        rng: random.Random | None = None,
+    ) -> list[VocabularyEntry]:
+        """按词条而非来源题组卷，先保证掌握度和练习时间优先级，再随机打散完全同级项。"""
+        if source not in {"pending", "mastered"}:
+            raise ValueError("词汇听写来源只支持 pending 或 mastered")
+        if count not in {10, 20, 30, "all"}:
+            raise ValueError("词汇听写题数只支持 10、20、30 或 all")
+
+        where = "mastered_at IS NULL" if source == "pending" else "mastered_at IS NOT NULL"
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM vocabulary_entries
+                WHERE {where}
+                ORDER BY independent_correct_streak ASC,
+                         last_practiced_at IS NOT NULL ASC,
+                         last_practiced_at ASC,
+                         entry_id ASC
+                """
+            ).fetchall()
+        entries = [_vocabulary_from_row(row) for row in rows]
+        chooser = rng or random.Random()
+        selected: list[VocabularyEntry] = []
+        index = 0
+        while index < len(entries):
+            current = entries[index]
+            tier = (current.independent_correct_streak, current.last_practiced_at)
+            end = index + 1
+            while end < len(entries) and (
+                entries[end].independent_correct_streak,
+                entries[end].last_practiced_at,
+            ) == tier:
+                end += 1
+            group = entries[index:end]
+            chooser.shuffle(group)
+            selected.extend(group)
+            index = end
+        return selected if count == "all" else selected[:count]
+
+    def record_vocabulary_dictation_outcome(
+        self,
+        entry_id: str,
+        *,
+        outcome: str,
+    ) -> VocabularyEntry:
+        """只把无提示独立正确计入 5 次掌握；提示完成只刷新最近练习时间。"""
+        if outcome not in {"independent_correct", "hint_correct", "wrong", "revealed"}:
+            raise ValueError("不支持的词汇听写结果")
+        now = _utc_now()
+        with self._connection() as connection, connection:
+            row = connection.execute(
+                "SELECT * FROM vocabulary_entries WHERE entry_id = ?",
+                (entry_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(entry_id)
+            entry = _vocabulary_from_row(row)
+            streak = entry.independent_correct_streak
+            mastered_at = entry.mastered_at
+            if outcome == "independent_correct":
+                streak = min(5, streak + 1)
+                if streak == 5 and mastered_at is None:
+                    mastered_at = now
+            elif outcome in {"wrong", "revealed"}:
+                streak = 0
+                mastered_at = None
+            connection.execute(
+                """
+                UPDATE vocabulary_entries
+                SET independent_correct_streak = ?, mastered_at = ?,
+                    last_practiced_at = ?, updated_at = ?
+                WHERE entry_id = ?
+                """,
+                (streak, mastered_at, now, now, entry_id),
+            )
+            updated = self._get_vocabulary_entry(connection, entry_id)
+        return updated
+
+    def vocabulary_dictation_counts(self) -> dict[str, int]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN mastered_at IS NULL THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN mastered_at IS NOT NULL THEN 1 ELSE 0 END) AS mastered
+                FROM vocabulary_entries
+                """
+            ).fetchone()
+        return {"pending": int(row["pending"] or 0), "mastered": int(row["mastered"] or 0)}
 
     def has_vocabulary(self, term: str) -> bool:
         normalized_term = _normalize_vocabulary_term(term)
@@ -1324,6 +1455,19 @@ class UserRepository:
             raise KeyError(session_id)
         return _session_from_row(row)
 
+    @staticmethod
+    def _get_vocabulary_entry(
+        connection: sqlite3.Connection,
+        entry_id: str,
+    ) -> VocabularyEntry:
+        row = connection.execute(
+            "SELECT * FROM vocabulary_entries WHERE entry_id = ?",
+            (entry_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(entry_id)
+        return _vocabulary_from_row(row)
+
 
 def _progress_from_row(row: sqlite3.Row) -> QuestionProgress:
     raw_first_correct = row["first_correct"]
@@ -1362,6 +1506,7 @@ def _session_from_row(row: sqlite3.Row) -> SessionRecord:
 
 
 def _vocabulary_from_row(row: sqlite3.Row) -> VocabularyEntry:
+    columns = set(row.keys())
     return VocabularyEntry(
         entry_id=row["entry_id"],
         normalized_term=row["normalized_term"],
@@ -1374,6 +1519,11 @@ def _vocabulary_from_row(row: sqlite3.Row) -> VocabularyEntry:
         encounter_count=row["encounter_count"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        independent_correct_streak=(
+            row["independent_correct_streak"] if "independent_correct_streak" in columns else 0
+        ),
+        mastered_at=row["mastered_at"] if "mastered_at" in columns else None,
+        last_practiced_at=row["last_practiced_at"] if "last_practiced_at" in columns else None,
     )
 
 

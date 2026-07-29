@@ -18,7 +18,10 @@ ApplicationWindow {
     property string learningPage: "home"
     property string learningSettingsReturnPage: "home"
     readonly property string pageName: backend ? backend.currentPage : "home"
-    readonly property bool practiceShellVisible: pageName === "practice"
+    readonly property bool vocabularyPracticeVisible:
+        pageName === "vocabulary-dictation"
+    readonly property bool practiceShellVisible:
+        pageName === "practice" || vocabularyPracticeVisible
     readonly property bool learningShellVisible:
         pageName === "home" || (pageName === "settings" && learningPage === "settings")
     readonly property bool standaloneHeaderVisible:
@@ -76,6 +79,11 @@ ApplicationWindow {
         function onDictionaryRequested(term) {
             if (appWindow.dictionary)
                 appWindow.dictionary.lookup(term)
+        }
+        function onVocabularyDictationExited() {
+            appWindow.learningPage = "vocabulary"
+            if (appWindow.learning)
+                appWindow.learning.refresh()
         }
     }
 
@@ -342,6 +350,15 @@ ApplicationWindow {
                 learning: appWindow.learning
                 controller: appWindow.backend
                 dictionary: appWindow.dictionary
+                onStartDictationRequested: {
+                    appWindow.learningPage = "vocabulary-dictation-config"
+                }
+            }
+
+            VocabularyDictationConfigPage {
+                anchors.fill: parent
+                visible: appWindow.learningPage === "vocabulary-dictation-config"
+                controller: appWindow.backend
             }
 
             DictionaryPage {
@@ -404,7 +421,8 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             compact: appWindow.compactNavigation
             shortHeight: appWindow.laptopLayout
-            currentPage: "practice-config"
+            currentPage: appWindow.vocabularyPracticeVisible
+                         ? "vocabulary" : "practice-config"
             resourceStatus: appWindow.backend
                             ? appWindow.backend.resourceStatus : "checking"
             onNavigate: function(pageKey) {
@@ -461,28 +479,44 @@ ApplicationWindow {
                             Layout.alignment: Qt.AlignVCenter
                         }
                     }
-                    onClicked: appWindow.navigateFromPractice("home")
+                    onClicked: appWindow.navigateFromPractice(
+                                   appWindow.vocabularyPracticeVisible
+                                   ? "vocabulary" : "home")
                 }
 
                 ChoiceChip {
                     objectName: "headerDifficulty"
                     Layout.preferredWidth: implicitWidth
                     text: appWindow.backend
-                          ? appWindow.backend.difficultyLabel : "中等"
+                          ? (appWindow.vocabularyPracticeVisible
+                             ? "词汇听写"
+                             : appWindow.backend.difficultyLabel)
+                          : "中等"
                     selected: true
                 }
 
                 ChoiceChip {
                     objectName: "headerSceneLabel"
                     Layout.preferredWidth: implicitWidth
-                    text: appWindow.backend ? appWindow.backend.sceneLabel : ""
+                    text: appWindow.backend
+                          ? (appWindow.vocabularyPracticeVisible
+                             ? (appWindow.backend.vocabularyDictationView.source
+                                === "mastered" ? "已掌握" : "生词")
+                             : appWindow.backend.sceneLabel)
+                          : ""
                 }
 
                 ChoiceChip {
                     objectName: "headerProgress"
                     Layout.preferredWidth: implicitWidth
                     text: appWindow.backend
-                          ? appWindow.backend.progressText : "第 4 / 10 题"
+                          ? (appWindow.vocabularyPracticeVisible
+                             ? "第 "
+                               + (Number(appWindow.backend.vocabularyDictationView.index || 0) + 1)
+                               + " / "
+                               + Number(appWindow.backend.vocabularyDictationView.total || 0)
+                             : appWindow.backend.progressText)
+                          : "第 4 / 10 题"
                 }
 
                 Item { Layout.fillWidth: true }
@@ -579,6 +613,16 @@ ApplicationWindow {
             controller: appWindow.backend
             dictionary: appWindow.dictionary
             laptopLayout: appWindow.laptopLayout
+            visible: !appWindow.vocabularyPracticeVisible
+        }
+
+        VocabularyDictationPage {
+            anchors.left: practiceSidebar.right
+            anchors.right: parent.right
+            anchors.top: practiceUtilityBar.bottom
+            anchors.bottom: parent.bottom
+            controller: appWindow.backend
+            visible: appWindow.vocabularyPracticeVisible
         }
     }
 
@@ -588,12 +632,14 @@ ApplicationWindow {
                  && !appWindow.practiceShellVisible
         currentIndex: appWindow.pageName === "practice" ? 0
                     : appWindow.pageName === "summary" ? 1
-                    : appWindow.pageName === "settings" ? 2 : 3
+                    : appWindow.pageName === "settings" ? 2
+                    : appWindow.pageName === "vocabulary-dictation-summary" ? 4 : 3
 
         Item {}
         SummaryPage { controller: appWindow.backend }
         SettingsPage { controller: appWindow.backend }
         RepairPage { controller: appWindow.backend }
+        VocabularyDictationSummaryPage { controller: appWindow.backend }
     }
 
     DictionaryDrawer {

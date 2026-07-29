@@ -158,6 +158,9 @@ class LearningCenterService:
                 created_at=entry.created_at,
                 updated_at=entry.updated_at,
                 source_kind=entry.source_kind,
+                independent_correct_streak=entry.independent_correct_streak,
+                mastered_at=entry.mastered_at,
+                last_practiced_at=entry.last_practiced_at,
             )
             for entry in self._users.list_vocabulary(search_text=search_text)
         )

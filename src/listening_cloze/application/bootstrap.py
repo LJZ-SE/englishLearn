@@ -15,6 +15,9 @@ from listening_cloze.application.dictionary_models import DictionaryViewModel
 from listening_cloze.application.learning_models import LearningCenterViewModel
 from listening_cloze.application.learning_service import LearningCenterService
 from listening_cloze.application.practice_engine import PracticeEngine
+from listening_cloze.application.vocabulary_dictation import (
+    VocabularyDictationService,
+)
 from listening_cloze.infrastructure.audio_cache import AudioCache, AudioProfile
 from listening_cloze.infrastructure.database import ContentRepository, UserRepository
 from listening_cloze.infrastructure.dictionary import DictionaryRepository
@@ -79,12 +82,19 @@ def create_runtime_controller(
         content_repository,
         user_repository,
     )
-    controller = PracticeController(engine)
+    dictionary_repository = DictionaryRepository(dictionary_path)
+    controller = PracticeController(
+        engine,
+        vocabulary_dictation=VocabularyDictationService(
+            user_repository,
+            dictionary_repository,
+        ),
+    )
     learning_center = LearningCenterViewModel(
         LearningCenterService(content_repository, user_repository)
     )
     dictionary = DictionaryViewModel(
-        DictionaryRepository(dictionary_path),
+        dictionary_repository,
         interactions=DictionaryInteractionService(user_repository),
     )
     return controller, ControllerResources(

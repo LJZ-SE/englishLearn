@@ -76,9 +76,50 @@ class DictionaryRepository:
                 ).fetchall()
         return tuple(_entry_from_row(row) for row in rows)
 
+    def lookup_homophones(self, term: str, *, limit: int = 6) -> tuple[DictionaryEntry, ...]:
+        """用离线词典音标找同音候选；目标词自身不作为消歧提示重复展示。"""
+        normalized_term = " ".join(term.split())
+        if not normalized_term or limit <= 0:
+            return ()
+        with self.connect() as connection:
+            target_rows = connection.execute(
+                """
+                SELECT phonetic FROM entries
+                WHERE word = ? COLLATE NOCASE AND trim(phonetic) <> ''
+                ORDER BY id
+                """,
+                (normalized_term,),
+            ).fetchall()
+            phonetics = {
+                _normalize_phonetic(str(row["phonetic"])) for row in target_rows
+            }
+            phonetics.discard("")
+            if not phonetics:
+                return ()
+            normalized_phonetics = sorted(phonetics)
+            placeholders = ", ".join("?" for _ in normalized_phonetics)
+            rows = connection.execute(
+                f"""
+                SELECT
+                    word, phonetic, definition, translation, pos, collins,
+                    oxford, tag, bnc, frq, exchange, detail, audio
+                FROM entries
+                WHERE lower(trim(phonetic)) IN ({placeholders})
+                  AND word <> ? COLLATE NOCASE
+                ORDER BY id
+                LIMIT ?
+                """,
+                (*normalized_phonetics, normalized_term, limit),
+            ).fetchall()
+        return tuple(_entry_from_row(row) for row in rows)
+
 
 def _escaped_prefix(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _normalize_phonetic(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _entry_from_row(row: sqlite3.Row) -> DictionaryEntry:

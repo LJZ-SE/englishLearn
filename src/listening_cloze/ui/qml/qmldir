@@ -22,6 +22,11 @@ SettingsPage 1.0 SettingsPage.qml
 StatisticsPage 1.0 StatisticsPage.qml
 SummaryPage 1.0 SummaryPage.qml
 VocabularyPage 1.0 VocabularyPage.qml
+VocabularyDictionaryFeedbackCard 1.0 VocabularyDictionaryFeedbackCard.qml
+VocabularyDictationConfigPage 1.0 VocabularyDictationConfigPage.qml
+VocabularyDictationPage 1.0 VocabularyDictationPage.qml
+VocabularyDictationSummaryPage 1.0 VocabularyDictationSummaryPage.qml
+VocabularyMasteryDots 1.0 VocabularyMasteryDots.qml
 WaveMascot 1.0 WaveMascot.qml
 Waveform 1.0 Waveform.qml
 WrongBookPage 1.0 WrongBookPage.qml
